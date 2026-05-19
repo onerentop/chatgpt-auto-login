@@ -5,7 +5,7 @@ const os = require('os');
 const readline = require('readline');
 const WebSocket = require('ws');
 const { chromium } = require('playwright');
-const { loadAccounts, saveResult, saveSessionData, saveCPAAuthFile, randomDelay } = require('./utils');
+const { loadAccounts, saveResult, saveSessionData, saveCPAAuthFile, fetchTokensViaPKCE, randomDelay } = require('./utils');
 const { loginAccount } = require('./login');
 const { autoPayment } = require('./payment');
 const { registerToCPA } = require('./cpa');
@@ -228,8 +228,14 @@ async function main() {
               console.log(`${p} CPA error: ${e.message}`);
             }
           } else {
-            console.log(`${p} CPA OAuth skipped. Generating local auth file...`);
-            saveCPAAuthFile(account.email, loginResult.accessToken);
+            console.log(`${p} CPA OAuth skipped. Running PKCE to get full tokens...`);
+            const pkceTokens = await fetchTokensViaPKCE(browser, account).catch(() => null);
+            if (pkceTokens) {
+              saveCPAAuthFile(account.email, pkceTokens.access_token, pkceTokens);
+            } else {
+              console.log(`${p} PKCE failed, saving with session token only`);
+              saveCPAAuthFile(account.email, loginResult.accessToken, loginResult.session);
+            }
           }
         } else {
           // Not Plus → payment flow
@@ -272,7 +278,7 @@ async function main() {
               }
             } else {
               console.log(`${p} CPA OAuth skipped. Generating local auth file...`);
-              saveCPAAuthFile(account.email, loginResult.accessToken);
+              saveCPAAuthFile(account.email, loginResult.accessToken, loginResult.session);
             }
           } else {
             console.log(`${p} No link: ${discord.raw.slice(0, 150)}`);

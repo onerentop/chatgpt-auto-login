@@ -14,8 +14,8 @@ async function loginAccount(browser, account) {
 
   try {
     console.log(`  [1/10] Navigating to ChatGPT...`);
-    await page.goto(CHATGPT_URL, { waitUntil: 'domcontentloaded' });
-    await randomDelay(1500, 3000);
+    await page.goto(CHATGPT_URL, { waitUntil: 'networkidle', timeout: 30000 }).catch(() => {});
+    await randomDelay(1000, 2000);
 
     console.log(`  [2/10] Clicking Log in...`);
     // Try header login button first, then sidebar
@@ -39,13 +39,16 @@ async function loginAccount(browser, account) {
     if (isOutlook) {
       // ========== Outlook Login Path ==========
       console.log(`  [3/10] Entering email (Outlook)...`);
-      // Wait for login dialog with email input
+      // Wait for login dialog with email input - retry clicking login up to 3 times
       const emailField = page.locator('dialog input[type="email"], dialog input, [role="dialog"] input, input[name="email"], input[placeholder*="邮件" i], input[placeholder*="email" i]').first();
-      let emailVisible = await emailField.isVisible({ timeout: 5000 }).catch(() => false);
-      if (!emailVisible) {
-        const retryBtn = page.locator('button, a').filter({ hasText: /^(Log\s*in|登录)$/i }).first();
-        try { await retryBtn.click(); await randomDelay(2000, 3000); } catch {}
-        emailVisible = await emailField.isVisible({ timeout: 8000 }).catch(() => false);
+      let emailVisible = false;
+      for (let retry = 0; retry < 3 && !emailVisible; retry++) {
+        emailVisible = await emailField.isVisible({ timeout: 5000 }).catch(() => false);
+        if (!emailVisible) {
+          console.log(`  [3/10] Dialog not found, retrying login click (${retry + 1}/3)...`);
+          const retryBtn = page.locator('[data-testid="login-button"], button, a').filter({ hasText: /^(Log\s*in|登录)$/i }).first();
+          try { await retryBtn.click(); await randomDelay(2000, 3000); } catch {}
+        }
       }
       if (!emailVisible) throw new Error('Email input not found');
       await emailField.click();
@@ -76,6 +79,15 @@ async function loginAccount(browser, account) {
         .or(page.getByLabel(/验证码|code/i).first())
         .or(page.getByPlaceholder(/验证码|code/i).first());
       await codeInput.waitFor({ state: 'visible', timeout: 15000 });
+      // Click resend immediately to trigger a fresh code
+      try {
+        const resendBtn = page.locator('button, a').filter({ hasText: /重新发送|Resend/i }).first();
+        if (await resendBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
+          await resendBtn.click();
+          console.log(`  [4/10] Clicked resend to trigger fresh code`);
+          await randomDelay(1000, 1500);
+        }
+      } catch {}
       console.log(`  [4/10] Code input found. Fetching code from Outlook...`);
 
       // Get IMAP baseline BEFORE polling
