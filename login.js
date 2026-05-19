@@ -147,8 +147,11 @@ async function loginAccount(browser, account) {
             for await (const msg of client.fetch({ uid: `${baselineUid + 1}:*` }, { envelope: true, source: true, uid: true })) {
               if (msg.uid <= baselineUid) continue;
               const subject = msg.envelope?.subject || '';
-              if (subject.includes('openai') || subject.includes('验证') || subject.includes('ChatGPT') || subject.toLowerCase().includes('verify')) {
-                // Extract code from HTML body only (skip headers to avoid false matches)
+              if (subject.includes('openai') || subject.includes('验证') || subject.includes('ChatGPT') || subject.includes('代码') || subject.toLowerCase().includes('verify') || subject.toLowerCase().includes('openai')) {
+                // Try subject first (e.g. "你的 OpenAI 代码为 382661")
+                const subjectMatch = subject.match(/\b(\d{6})\b/);
+                if (subjectMatch) { otp = subjectMatch[1]; console.log(`  [4/10] Got code from subject: ${otp} (UID:${msg.uid})`); break; }
+                // Then try HTML body (skip headers to avoid false matches)
                 const src = msg.source?.toString() || '';
                 const htmlStart = src.indexOf('<html');
                 const bodyText = htmlStart > -1

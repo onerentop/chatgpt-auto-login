@@ -133,11 +133,15 @@ async function _fetchPkceOtp(page, account) {
         const subject = msg.envelope?.subject || '';
         const from = msg.envelope?.from?.[0]?.address || '';
         if (a === 0) console.log(`  [PKCE] New mail UID:${msg.uid} from:${from} subj:${subject.slice(0, 40)}`);
-        if (subject.includes('ChatGPT') || subject.includes('验证') || subject.includes('OpenAI') || subject.includes('code') || subject.includes('verify') || from.includes('openai')) {
+        if (subject.includes('ChatGPT') || subject.includes('验证') || subject.includes('OpenAI') || subject.includes('code') || subject.includes('verify') || subject.includes('代码') || from.includes('openai')) {
+          // Try subject first (e.g. "你的 OpenAI 代码为 382661")
+          const subjectMatch = subject.match(/\b(\d{6})\b/);
+          if (subjectMatch) { lock.release(); await client.logout(); console.log(`  [PKCE] Got OTP from subject: ${subjectMatch[1]} (UID:${msg.uid})`); return subjectMatch[1]; }
+          // Then try HTML body
           const src = msg.source?.toString() || '';
           const html = src.indexOf('<html') > -1 ? src.slice(src.indexOf('<html')).replace(/<[^>]+>/g, ' ') : src;
           const match = html.match(/\b(\d{6})\b/);
-          if (match) { lock.release(); await client.logout(); console.log(`  [PKCE] Got OTP: ${match[1]} (UID:${msg.uid})`); return match[1]; }
+          if (match) { lock.release(); await client.logout(); console.log(`  [PKCE] Got OTP from body: ${match[1]} (UID:${msg.uid})`); return match[1]; }
         }
       }
       lock.release(); await client.logout();
