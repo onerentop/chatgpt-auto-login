@@ -69,7 +69,7 @@ function launchChrome(port, tempDir) {
     '--no-default-browser-check',
     '--disable-default-apps',
     '--disable-popup-blocking',
-    '--window-size=1920,1080',
+    '--window-size=960,540', '--window-position=0,0',
     'about:blank',
   ], { stdio: 'ignore', detached: false });
 }
