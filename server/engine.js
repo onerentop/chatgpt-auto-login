@@ -397,17 +397,24 @@ class PipelineEngine extends EventEmitter {
       this._gw = gw;
       console.log('Discord connected!');
 
-      // Process each account
-      for (let i = 0; i < filtered.length; i++) {
-        if (this.stopFlag) {
-          console.log('Stop requested, breaking out of loop.');
-          break;
-        }
+      // Process accounts with concurrency pool
+      const threadCount = Math.min(PAY_CONFIG.threads || 1, 4);
+      const phoneSlots = PAY_CONFIG.phoneSlots || [{ phone: PAY_CONFIG.phone, smsApiUrl: PAY_CONFIG.smsApiUrl }];
+      console.log(`Running with ${threadCount} thread(s), ${phoneSlots.length} phone slot(s)`);
 
-        const account = filtered[i];
-        currentEmail = account.email;
-        const progress = `${i + 1}/${filtered.length}`;
-        const p = `[${progress}]`;
+      let accountIndex = 0;
+      const processNext = async (threadId) => {
+        while (accountIndex < filtered.length && !this.stopFlag) {
+          const i = accountIndex++;
+          const account = filtered[i];
+          const slot = phoneSlots[threadId % phoneSlots.length] || phoneSlots[0];
+          // Set phone/smsApiUrl for this thread
+          PAY_CONFIG.phone = slot.phone;
+          PAY_CONFIG.smsApiUrl = slot.smsApiUrl;
+
+          currentEmail = account.email;
+          const progress = `${i + 1}/${filtered.length}`;
+          const p = `[T${threadId + 1}][${progress}]`;
 
         this.emitStatus( {
           email: account.email,
@@ -572,12 +579,19 @@ class PipelineEngine extends EventEmitter {
         });
 
         // Random delay between accounts
-        if (i < accounts.length - 1 && !this.stopFlag) {
-          const wait = 5 + Math.floor(Math.random() * 3);
-          console.log(`  Waiting ${wait}s...`);
+        if (!this.stopFlag) {
+          const wait = 3 + Math.floor(Math.random() * 3);
           await randomDelay(wait * 1000, wait * 1000 + 500);
         }
+        }
+      };
+
+      // Launch thread pool
+      const threads = [];
+      for (let t = 0; t < threadCount; t++) {
+        threads.push(processNext(t));
       }
+      await Promise.all(threads);
     } finally {
       if (gw) gw.cleanup();
 

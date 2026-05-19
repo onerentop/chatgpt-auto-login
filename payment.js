@@ -7,11 +7,22 @@ const CONFIG_PATH = path.join(__dirname, 'config.json');
 function loadConfig() {
   if (!fs.existsSync(CONFIG_PATH)) {
     console.log(`config.json not found, creating template at ${CONFIG_PATH}`);
-    const tpl = { phone: '1234567890', cardNumber: '1234561234568888', cardExpiry: '03 / 30', cardCvv: '996' };
+    const tpl = { threads: 1, phoneSlots: [{ phone: '1234567890', smsApiUrl: '' }], cardNumber: '1234561234568888', cardExpiry: '03 / 30', cardCvv: '996' };
     fs.writeFileSync(CONFIG_PATH, JSON.stringify(tpl, null, 2));
     return tpl;
   }
-  return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
+  const cfg = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
+  // Backward compat: old single phone → phoneSlots array
+  if (!cfg.phoneSlots && cfg.phone) {
+    cfg.phoneSlots = [{ phone: cfg.phone, smsApiUrl: cfg.smsApiUrl || '' }];
+  }
+  if (!cfg.threads) cfg.threads = 1;
+  // Default phone/smsApiUrl from first slot (for backward compat)
+  if (cfg.phoneSlots?.length > 0) {
+    cfg.phone = cfg.phone || cfg.phoneSlots[0].phone;
+    cfg.smsApiUrl = cfg.smsApiUrl || cfg.phoneSlots[0].smsApiUrl;
+  }
+  return cfg;
 }
 
 const CONFIG = loadConfig();
