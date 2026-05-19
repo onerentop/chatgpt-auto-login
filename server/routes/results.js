@@ -28,7 +28,7 @@ router.get('/', (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// GET /statuses — get all account statuses (for execute page)
+// GET /statuses — get all account statuses map
 router.get('/statuses', (req, res) => {
   try {
     const statuses = statusDB.list();
@@ -38,6 +38,19 @@ router.get('/statuses', (req, res) => {
     }
     res.json(map);
   } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET /download-all — ZIP all auth files (MUST be before /:email routes)
+router.get('/download-all', (req, res) => {
+  if (!fs.existsSync(CPA_AUTH_DIR)) return res.status(404).json({ error: 'No auth files' });
+  const files = fs.readdirSync(CPA_AUTH_DIR).filter(f => f.endsWith('.json'));
+  if (files.length === 0) return res.status(404).json({ error: 'No auth files' });
+  res.setHeader('Content-Type', 'application/zip');
+  res.setHeader('Content-Disposition', 'attachment; filename=cpa-auth-files.zip');
+  const archive = archiver('zip');
+  archive.pipe(res);
+  for (const f of files) archive.file(path.join(CPA_AUTH_DIR, f), { name: f });
+  archive.finalize();
 });
 
 // GET /:email/logs — get logs for account
@@ -53,19 +66,6 @@ router.get('/:email/auth-file', (req, res) => {
   const filePath = path.join(CPA_AUTH_DIR, emailToAuthFilename(decodeURIComponent(req.params.email)));
   if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'Not found' });
   res.download(filePath);
-});
-
-// GET /download-all — ZIP all auth files
-router.get('/download-all', (req, res) => {
-  if (!fs.existsSync(CPA_AUTH_DIR)) return res.status(404).json({ error: 'No auth files' });
-  const files = fs.readdirSync(CPA_AUTH_DIR).filter(f => f.endsWith('.json'));
-  if (files.length === 0) return res.status(404).json({ error: 'No auth files' });
-  res.setHeader('Content-Type', 'application/zip');
-  res.setHeader('Content-Disposition', 'attachment; filename=cpa-auth-files.zip');
-  const archive = archiver('zip');
-  archive.pipe(res);
-  for (const f of files) archive.file(path.join(CPA_AUTH_DIR, f), { name: f });
-  archive.finalize();
 });
 
 // POST /:email/retry — get startFrom index for retry
