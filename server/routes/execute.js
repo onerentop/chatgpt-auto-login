@@ -35,11 +35,9 @@ module.exports = function (io) {
   });
 
   router.post('/stop', (req, res) => {
-    if (!engine || engine.getStatus() !== 'running') {
-      return res.status(400).json({ error: 'Pipeline is not running' });
-    }
+    if (!engine) return res.status(400).json({ error: 'No engine instance' });
     engine.stop();
-    res.json({ message: 'Stop requested' });
+    res.json({ message: 'Force stopped' });
   });
 
   return router;
