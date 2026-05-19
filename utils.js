@@ -187,10 +187,16 @@ async function fetchTokensViaPKCE(browser, account) {
                 const tokenRes = await fetch('https://login.microsoftonline.com/consumers/oauth2/v2.0/token', { method: 'POST', body: tokenBody });
                 const tokenData = await tokenRes.json();
                 if (tokenData.access_token) {
-                  // Click resend first
+                  // Click resend to trigger fresh code
                   try {
                     const resend = page.locator('button, a').filter({ hasText: /重新发送|Resend/i }).first();
-                    if (await resend.isVisible({ timeout: 1500 }).catch(() => false)) await resend.click();
+                    if (await resend.isVisible({ timeout: 3000 }).catch(() => false)) {
+                      await resend.click();
+                      console.log('  [PKCE] Clicked resend');
+                      await new Promise(r => setTimeout(r, 2000));
+                    } else {
+                      console.log('  [PKCE] Resend button not found, waiting for email...');
+                    }
                   } catch {}
 
                   let baseline = 0;
@@ -204,7 +210,15 @@ async function fetchTokensViaPKCE(browser, account) {
                   } catch {}
 
                   let otp = null;
+                  let lastResend = Date.now();
                   for (let a = 0; a < 20; a++) {
+                    // Auto-click resend every 45s
+                    if (Date.now() - lastResend > 45000) {
+                      try {
+                        const rb = page.locator('button, a').filter({ hasText: /重新发送|Resend/i }).first();
+                        if (await rb.isVisible({ timeout: 1000 }).catch(() => false)) { await rb.click(); lastResend = Date.now(); console.log('  [PKCE] Clicked resend'); }
+                      } catch {}
+                    }
                     let client;
                     try {
                       client = new ImapFlow({ host: 'outlook.office365.com', port: 993, secure: true, auth: { user: account.email, accessToken: tokenData.access_token }, logger: false });
