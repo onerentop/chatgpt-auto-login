@@ -33,6 +33,13 @@
           <el-tag :type="row.loginType === 'Google' ? 'danger' : 'warning'" size="small">{{ row.loginType }}</el-tag>
         </template>
       </el-table-column>
+      <el-table-column label="计划" width="80">
+        <template #default="{ row }">
+          <el-tag v-if="row._plan === 'plus'" type="success" size="small">Plus</el-tag>
+          <el-tag v-else-if="row._plan === 'free'" size="small">Free</el-tag>
+          <span v-else style="color:#c0c4cc">-</span>
+        </template>
+      </el-table-column>
       <el-table-column label="状态" width="110">
         <template #default="{ row }">
           <el-tag :type="statusType(row._status)" size="small">{{ statusLabel(row._status) }}</el-tag>
@@ -138,7 +145,8 @@ watch(() => socketState.accountStatuses, (statuses) => {
     if (row) {
       row._status = data.status || 'running'
       row._phase = data.phase || ''
-      if (data.status === 'success' || data.status === 'already_plus') row._hasAuth = true
+      if (data.status === 'success' || data.status === 'already_plus') { row._hasAuth = true; row._plan = 'plus'; }
+      if (data.status === 'error' || data.status === 'failed' || data.status === 'no_link') row._plan = 'free'
     }
   }
 }, { deep: true })
@@ -154,7 +162,7 @@ watch(() => socketState.logs.length, () => {
 async function loadAccounts() {
   try {
     const { data } = await api.get('/accounts')
-    accounts.value = data.map(a => ({ ...a, _status: 'idle', _phase: '', _hasAuth: false, _showHistory: false }))
+    accounts.value = data.map(a => ({ ...a, _status: 'idle', _phase: '', _hasAuth: false, _showHistory: false, _plan: '' }))
     loadResults()
   } catch {}
 }
@@ -168,6 +176,8 @@ async function loadResults() {
         if (r.status && r.status !== 'idle') row._status = r.status
         if (r.phase) row._phase = r.phase
         row._hasAuth = r.hasAuthFile || false
+        const st = (r.status || '').toLowerCase()
+        row._plan = ['success', 'already_plus'].includes(st) ? 'plus' : (['error', 'failed', 'no_link'].includes(st) ? 'free' : '')
       }
     }
   } catch {}
@@ -186,7 +196,7 @@ function statusType(s) {
 }
 
 function statusLabel(s) {
-  return { idle: '空闲', running: '运行中', success: '成功', failed: '失败', already_plus: 'Plus', no_link: '无链接', error: '错误' }[s] || s || '空闲'
+  return { idle: '空闲', running: '运行中', success: '成功', failed: '失败', already_plus: '已完成', no_link: '无链接', error: '错误' }[s] || s || '空闲'
 }
 
 async function startExec(emails) {
