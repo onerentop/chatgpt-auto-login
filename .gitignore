@@ -1,0 +1,9 @@
+node_modules/
+%USERPROFILE%/
+accounts.csv
+config.json
+screenshots/
+sessions/
+results.csv
+discord-results.json
+.playwright-mcp/

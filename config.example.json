@@ -1,0 +1,15 @@
+{
+  "phone": "your_phone_number",
+  "smsApiUrl": "http://your-sms-api-url/api/get_sms?key=your_key",
+  "cardNumber": "your_card_number",
+  "cardExpiry": "MM / YY",
+  "cardCvv": "CVV",
+  "enableCPA": true,
+  "cpaUrl": "https://your-cpa-domain/management.html",
+  "cpaKey": "your_cpa_management_key",
+  "discordToken": "your_discord_token",
+  "discordChannelId": "channel_id",
+  "discordMessageId": "message_id",
+  "discordGuildId": "guild_id",
+  "discordAppId": "app_id"
+}
