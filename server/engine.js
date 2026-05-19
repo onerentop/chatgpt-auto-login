@@ -351,18 +351,29 @@ class PipelineEngine extends EventEmitter {
     try { getDB().logsDB.cleanup(); } catch {}
 
     // Hook console.log → emit 'log' events + write to per-account log files
+    // Thread-aware log handler: tries to match log to thread by checking active threads
+    const threadContexts = {}; // threadId → { email, phase }
     const logHandler = (message) => {
-      const entry = {
-        email: currentEmail,
-        phase: currentPhase,
-        message,
-        timestamp: new Date().toISOString(),
-      };
+      // Find which thread this log belongs to by matching active email in message
+      let email = currentEmail;
+      let phase = currentPhase;
+      for (const [tid, ctx] of Object.entries(threadContexts)) {
+        if (ctx.email && message.includes(ctx.email.split('@')[0])) {
+          email = ctx.email;
+          phase = ctx.phase;
+          break;
+        }
+        // Match thread prefix [T1], [T2], etc.
+        if (message.includes(`[T${Number(tid) + 1}]`)) {
+          email = ctx.email;
+          phase = ctx.phase;
+          break;
+        }
+      }
+      const entry = { email, phase, message, timestamp: new Date().toISOString() };
       this.emit('log', entry);
-
-      // Save to DB
-      if (currentEmail) {
-        try { getDB().logsDB.add(currentEmail, currentPhase, message, entry.timestamp, this._runId); } catch {}
+      if (email) {
+        try { getDB().logsDB.add(email, phase, message, entry.timestamp, this._runId); } catch {}
       }
     };
     this.logCapture.onLog(logHandler);
@@ -416,7 +427,8 @@ class PipelineEngine extends EventEmitter {
           const progress = `${i + 1}/${filtered.length}`;
           const p = `[T${threadId + 1}][${progress}]`;
 
-          // Set shared vars for log handler
+          // Register thread context for log routing
+          threadContexts[threadId] = { email: threadEmail, phase: 'login' };
           currentEmail = threadEmail;
           currentPhase = 'login';
 
