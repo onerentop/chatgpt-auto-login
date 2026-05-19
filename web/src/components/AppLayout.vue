@@ -25,10 +25,6 @@
           <el-icon><VideoPlay /></el-icon>
           <span>执行控制</span>
         </el-menu-item>
-        <el-menu-item index="/results">
-          <el-icon><Document /></el-icon>
-          <span>执行结果</span>
-        </el-menu-item>
       </el-menu>
     </el-aside>
     <el-main class="main">
