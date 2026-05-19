@@ -1,75 +1,79 @@
 <template>
   <div>
+    <!-- Toolbar -->
     <el-row style="margin-bottom: 16px" :gutter="12" align="middle">
       <el-col :span="24">
-        <el-button type="success" :disabled="running" @click="handleStart">
-          开始执行
-        </el-button>
-        <el-button type="danger" :disabled="!running" @click="handleStop">
-          停止
-        </el-button>
-        <span style="margin-left: 16px">起始序号：</span>
-        <el-input-number
-          v-model="startFrom"
-          :min="0"
-          :disabled="running"
-          style="width: 120px"
-        />
-        <el-tag
-          :type="running ? 'success' : 'info'"
-          style="margin-left: 16px"
-        >
-          {{ running ? '运行中' : '空闲' }}
-        </el-tag>
-        <el-tag v-if="socketState.connected" type="success" style="margin-left: 8px">
-          WS 已连接
-        </el-tag>
-        <el-tag v-else type="danger" style="margin-left: 8px">
-          WS 断开
-        </el-tag>
+        <el-button type="success" :disabled="running" @click="execSelected">执行选中 ({{ selectedEmails.length }})</el-button>
+        <el-button type="primary" :disabled="running" @click="execAll">执行全部</el-button>
+        <el-button type="warning" :disabled="running || failedEmails.length === 0" @click="retryFailed">重试失败 ({{ failedEmails.length }})</el-button>
+        <el-button type="danger" :disabled="!running" @click="handleStop">停止</el-button>
+        <el-tag :type="running ? 'warning' : 'info'" style="margin-left: 12px">{{ running ? '运行中' : '空闲' }}</el-tag>
+        <el-tag v-if="socketState.connected" type="success" style="margin-left: 8px">WS</el-tag>
       </el-col>
     </el-row>
 
-    <!-- Account Progress -->
-    <el-row :gutter="12" style="margin-bottom: 16px">
-      <el-col
-        v-for="(account, email) in socketState.accountStatuses"
-        :key="email"
-        :span="8"
-        style="margin-bottom: 12px"
-      >
-        <el-card shadow="hover" body-style="padding: 12px">
-          <div style="font-weight: bold; margin-bottom: 8px">{{ email }}</div>
-          <el-tag :type="phaseType(account.phase)" size="small">
-            {{ account.phase }}
-          </el-tag>
-          <el-progress
-            :percentage="account.progress"
-            :status="progressStatus(account.status)"
-            style="margin-top: 8px"
-          />
-        </el-card>
-      </el-col>
-    </el-row>
+    <!-- Account Table with Checkboxes + Status -->
+    <el-table
+      ref="tableRef"
+      :data="accountRows"
+      stripe border size="small"
+      @selection-change="onSelectionChange"
+      style="margin-bottom: 16px"
+    >
+      <el-table-column type="selection" width="45" :selectable="() => !running" />
+      <el-table-column prop="email" label="邮箱" min-width="220" />
+      <el-table-column prop="loginType" label="类型" width="85">
+        <template #default="{ row }">
+          <el-tag :type="row.loginType === 'Google' ? 'danger' : 'warning'" size="small">{{ row.loginType }}</el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column label="状态" width="110">
+        <template #default="{ row }">
+          <el-tag :type="statusType(row._status)" size="small">{{ statusLabel(row._status) }}</el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column label="阶段" width="100">
+        <template #default="{ row }">
+          <span style="color:#909399">{{ row._phase || '-' }}</span>
+        </template>
+      </el-table-column>
+      <el-table-column label="操作" width="80">
+        <template #default="{ row }">
+          <el-button
+            v-if="row._status === 'failed' || row._status === 'idle'"
+            size="small" text type="primary"
+            :disabled="running"
+            @click="execOne(row.email)"
+          >{{ row._status === 'failed' ? '重试' : '执行' }}</el-button>
+        </template>
+      </el-table-column>
+      <!-- Expandable log per account -->
+      <el-table-column type="expand">
+        <template #default="{ row }">
+          <div style="font-family:monospace;font-size:12px;max-height:200px;overflow-y:auto;padding:8px;background:#1e1e1e;color:#d4d4d4;border-radius:4px">
+            <div v-for="(log, i) in getAccountLogs(row.email)" :key="i">
+              <span style="color:#808080">{{ log.timestamp?.slice(11,19) }}</span>
+              <span> {{ log.message }}</span>
+            </div>
+            <div v-if="getAccountLogs(row.email).length === 0" style="color:#808080">暂无日志</div>
+          </div>
+        </template>
+      </el-table-column>
+    </el-table>
 
-    <!-- Log Stream -->
+    <!-- Global Log Stream -->
     <el-card>
       <template #header>
-        <div style="display: flex; justify-content: space-between; align-items: center">
-          <span>日志流 ({{ socketState.logs.length }})</span>
-          <el-button size="small" @click="clearLogs">清除</el-button>
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <span>实时日志 ({{ socketState.logs.length }})</span>
+          <el-button size="small" @click="socketState.logs.splice(0)">清空</el-button>
         </div>
       </template>
-      <div ref="logContainer" class="log-container">
-        <div
-          v-for="(log, idx) in socketState.logs"
-          :key="idx"
-          class="log-line"
-          :class="'log-' + log.level"
-        >
-          <span class="log-time">{{ formatTime(log.timestamp) }}</span>
-          <span v-if="log.email" class="log-email">[{{ log.email }}]</span>
-          <span class="log-msg">{{ log.message }}</span>
+      <div ref="logBox" style="height:350px;overflow-y:auto;font-family:monospace;font-size:12px;background:#1e1e1e;color:#d4d4d4;padding:12px;border-radius:4px">
+        <div v-for="(log, i) in socketState.logs" :key="i">
+          <span style="color:#808080">{{ log.timestamp?.slice(11,19) }}</span>
+          <span v-if="log.email" style="color:#569cd6"> [{{ log.email.split('@')[0] }}]</span>
+          <span> {{ log.message }}</span>
         </div>
       </div>
     </el-card>
@@ -77,128 +81,98 @@
 </template>
 
 <script setup>
-import { ref, watch, nextTick } from 'vue'
+import { ref, computed, watch, nextTick, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import api from '../api'
 import { socketState } from '../socket'
 
+const tableRef = ref(null)
+const logBox = ref(null)
 const running = ref(false)
-const startFrom = ref(0)
-const logContainer = ref(null)
+const accounts = ref([])
+const selected = ref([])
 
-function phaseType(phase) {
-  const map = {
-    login: 'primary',
-    payment: 'warning',
-    verify: 'success',
-    idle: 'info',
-    error: 'danger',
-  }
-  return map[phase] || 'info'
+const selectedEmails = computed(() => selected.value.map(r => r.email))
+const failedEmails = computed(() => accounts.value.filter(a => a._status === 'failed').map(a => a.email))
+
+const accountRows = computed(() => accounts.value)
+
+function getAccountLogs(email) {
+  return socketState.logs.filter(l => l.email === email)
 }
 
-function progressStatus(status) {
-  if (status === 'success') return 'success'
-  if (status === 'error') return 'exception'
-  return undefined
-}
-
-function formatTime(ts) {
-  if (!ts) return ''
-  const d = new Date(ts)
-  return d.toLocaleTimeString('zh-CN')
-}
-
-function clearLogs() {
-  socketState.logs.splice(0, socketState.logs.length)
-}
-
-// Auto-scroll log container
-watch(
-  () => socketState.logs.length,
-  async () => {
-    await nextTick()
-    if (logContainer.value) {
-      logContainer.value.scrollTop = logContainer.value.scrollHeight
+// Status from Socket.IO
+watch(() => socketState.accountStatuses, (statuses) => {
+  for (const [email, data] of Object.entries(statuses)) {
+    const row = accounts.value.find(a => a.email === email)
+    if (row) {
+      row._status = data.status || 'running'
+      row._phase = data.phase || ''
     }
   }
-)
+}, { deep: true })
 
-async function handleStart() {
+// Auto-scroll log
+watch(() => socketState.logs.length, () => {
+  nextTick(() => { if (logBox.value) logBox.value.scrollTop = logBox.value.scrollHeight })
+})
+
+// Check completion
+watch(() => socketState.logs.length, () => {
+  const last = socketState.logs[socketState.logs.length - 1]
+  if (last?.message?.includes('Execution complete')) running.value = false
+})
+
+async function loadAccounts() {
   try {
-    running.value = true
-    await api.post('/execute', { startFrom: startFrom.value })
-    ElMessage.success('执行已启动')
-  } catch (err) {
-    running.value = false
-    ElMessage.error(err.response?.data?.error || '启动失败')
-  }
+    const { data } = await api.get('/accounts')
+    accounts.value = data.map(a => ({ ...a, _status: 'idle', _phase: '' }))
+  } catch {}
 }
+
+async function checkStatus() {
+  try { const { data } = await api.get('/execute/status'); running.value = data.status === 'running' } catch {}
+}
+
+onMounted(() => { loadAccounts(); checkStatus() })
+
+function onSelectionChange(rows) { selected.value = rows }
+
+function statusType(s) {
+  const map = { idle: 'info', running: 'warning', success: 'success', failed: 'danger', 'already_plus': 'success', 'no_link': 'warning', error: 'danger' }
+  return map[s] || 'info'
+}
+
+function statusLabel(s) {
+  const map = { idle: '空闲', running: '运行中', success: '成功', failed: '失败', 'already_plus': 'Plus', 'no_link': '无链接', error: '错误' }
+  return map[s] || s || '空闲'
+}
+
+async function startExec(emails) {
+  try {
+    socketState.logs.splice(0)
+    socketState.accountStatuses = {}
+    // Reset statuses for selected
+    for (const a of accounts.value) {
+      if (!emails || emails.includes(a.email)) { a._status = 'idle'; a._phase = '' }
+    }
+    await api.post('/execute', { emails: emails || undefined })
+    running.value = true
+    ElMessage.success('执行已启动')
+  } catch (e) { ElMessage.error(e.response?.data?.error || '启动失败') }
+}
+
+function execSelected() {
+  if (selectedEmails.value.length === 0) return ElMessage.warning('请先选择账号')
+  startExec(selectedEmails.value)
+}
+
+function execAll() { startExec(null) }
+function retryFailed() { startExec(failedEmails.value) }
+function execOne(email) { startExec([email]) }
 
 async function handleStop() {
-  try {
-    await api.post('/execute/stop')
-    running.value = false
-    ElMessage.success('已停止')
-  } catch (err) {
-    ElMessage.error(err.response?.data?.error || '停止失败')
-  }
+  try { await api.post('/execute/stop'); ElMessage.info('正在停止...') }
+  catch { ElMessage.error('停止失败') }
 }
-
-// Listen for execution-complete to reset running state
-watch(
-  () => socketState.logs,
-  (logs) => {
-    const last = logs[logs.length - 1]
-    if (last && last.message && last.message.startsWith('Execution complete')) {
-      running.value = false
-    }
-  },
-  { deep: true }
-)
 </script>
-
-<style scoped>
-.log-container {
-  background-color: #1e1e1e;
-  color: #d4d4d4;
-  font-family: 'Consolas', 'Courier New', monospace;
-  font-size: 13px;
-  line-height: 1.6;
-  height: 400px;
-  overflow-y: auto;
-  padding: 12px;
-  border-radius: 4px;
-}
-
-.log-line {
-  white-space: pre-wrap;
-  word-break: break-all;
-}
-
-.log-time {
-  color: #808080;
-  margin-right: 8px;
-}
-
-.log-email {
-  color: #569cd6;
-  margin-right: 8px;
-}
-
-.log-msg {
-  color: #d4d4d4;
-}
-
-.log-error .log-msg {
-  color: #f44747;
-}
-
-.log-success .log-msg {
-  color: #6a9955;
-}
-
-.log-warning .log-msg {
-  color: #ce9178;
-}
-</style>

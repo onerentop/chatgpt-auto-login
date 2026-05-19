@@ -151,8 +151,11 @@ router.post('/import', (req, res) => {
 
     const lines = text.trim().split('\n').filter((l) => l.trim());
     for (const line of lines) {
-      const parts = line.split('----').map((p) => p.trim().replace(/\s+/g, ''));
-      const [email, password, thirdField, fourthField] = parts;
+      const parts = line.split('----').map((p) => p.trim());
+      const email = (parts[0] || '').replace(/\s+/g, '');
+      const password = (parts[1] || '').trim();
+      const thirdField = (parts[2] || '').replace(/\s+/g, '');
+      const fourthField = (parts[3] || '').replace(/\s+/g, '');
       if (!email || !password) continue;
       if (existingEmails.has(email.toLowerCase())) { skipped++; continue; }
 

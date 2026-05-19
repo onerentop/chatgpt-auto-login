@@ -301,7 +301,7 @@ class PipelineEngine extends EventEmitter {
    * Run the full pipeline starting from the given account index.
    * @param {number} startFrom - Zero-based account index to start from.
    */
-  async start(startFrom = 0) {
+  async start(startFrom = 0, filterEmails = null) {
     if (this.status !== 'idle') {
       throw new Error(`Engine is already ${this.status}`);
     }
@@ -335,7 +335,15 @@ class PipelineEngine extends EventEmitter {
       if (!findChrome()) throw new Error('Chrome not found!');
       if (!fs.existsSync(SESSIONS_DIR)) fs.mkdirSync(SESSIONS_DIR, { recursive: true });
 
-      console.log(`Loaded ${accounts.length} accounts. Starting from #${startFrom + 1}.`);
+      // Filter by selected emails if provided
+      let filtered = accounts;
+      if (filterEmails && filterEmails.length > 0) {
+        const emailSet = new Set(filterEmails.map(e => e.toLowerCase()));
+        filtered = accounts.filter(a => emailSet.has(a.email.toLowerCase()));
+      }
+      if (filtered.length === 0) throw new Error('No matching accounts to execute');
+
+      console.log(`Loaded ${filtered.length} accounts to process.`);
 
       // Connect Discord Gateway
       currentPhase = 'discord-connect';
@@ -344,15 +352,15 @@ class PipelineEngine extends EventEmitter {
       console.log('Discord connected!');
 
       // Process each account
-      for (let i = startFrom; i < accounts.length; i++) {
+      for (let i = 0; i < filtered.length; i++) {
         if (this.stopFlag) {
           console.log('Stop requested, breaking out of loop.');
           break;
         }
 
-        const account = accounts[i];
+        const account = filtered[i];
         currentEmail = account.email;
-        const progress = `${i + 1}/${accounts.length}`;
+        const progress = `${i + 1}/${filtered.length}`;
         const p = `[${progress}]`;
 
         this.emit('account-status', {
