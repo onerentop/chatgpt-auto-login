@@ -20,6 +20,7 @@
     <el-table
       ref="tableRef"
       :data="accountRows"
+      row-key="email"
       stripe border size="small"
       @selection-change="onSelectionChange"
       @expand-change="onExpand"
