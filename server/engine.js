@@ -272,8 +272,7 @@ async function getPaymentLink(gw, accessToken) {
 }
 
 // ========== PipelineEngine ==========
-let statusDB, logsDB;
-try { ({ statusDB, logsDB } = require('./db')); } catch {}
+function getDB() { return require('./db'); }
 
 class PipelineEngine extends EventEmitter {
   constructor() {
@@ -286,7 +285,7 @@ class PipelineEngine extends EventEmitter {
 
   emitStatus(data) {
     this.emit('account-status', data);
-    statusDB.set(data.email, data);
+    try { getDB().statusDB.set(data.email, data); } catch {}
   }
 
   /**
@@ -349,7 +348,7 @@ class PipelineEngine extends EventEmitter {
     let currentPhase = '';
 
     // Cleanup old logs
-    logsDB.cleanup();
+    try { getDB().logsDB.cleanup(); } catch {}
 
     // Hook console.log → emit 'log' events + write to per-account log files
     const logHandler = (message) => {
@@ -363,7 +362,7 @@ class PipelineEngine extends EventEmitter {
 
       // Save to DB
       if (currentEmail) {
-        logsDB.add(currentEmail, currentPhase, message, entry.timestamp, this._runId);
+        try { getDB().logsDB.add(currentEmail, currentPhase, message, entry.timestamp, this._runId); } catch {}
       }
     };
     this.logCapture.onLog(logHandler);
@@ -605,6 +604,9 @@ class PipelineEngine extends EventEmitter {
       console.log('========================================');
 
       this.emit('complete', { summary });
+
+      // Flush logs to DB
+      try { getDB().logsDB.flush(); } catch {}
 
       // Reset state
       this.status = 'idle';
