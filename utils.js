@@ -141,18 +141,39 @@ async function fetchTokensViaPKCE(browser, account) {
         loginDone = true;
         console.log('  [PKCE] Login page detected, entering email...');
         try {
+          // Wait for page to fully load (button may be disabled initially)
+          await page.waitForLoadState('networkidle').catch(() => {});
+          await new Promise(r => setTimeout(r, 2000));
+
           // Enter email
           const emailField = page.locator('input[type="email"], input[name="email"]').first();
-          if (await emailField.isVisible({ timeout: 3000 }).catch(() => false)) {
+          const emailVisible = await emailField.isVisible({ timeout: 3000 }).catch(() => false);
+          console.log('  [PKCE] Email field visible:', emailVisible);
+          if (emailVisible) {
             await emailField.click();
             await emailField.fill(account.email);
-            await new Promise(r => setTimeout(r, 500));
+            console.log('  [PKCE] Email filled:', account.email);
+            await new Promise(r => setTimeout(r, 1000));
+
+            // Click continue with force (button may be momentarily disabled)
             const contBtn = page.locator('button').filter({ hasText: /继续|Continue/i }).first();
-            await contBtn.click();
-            console.log('  [PKCE] Email submitted');
+            const btnVisible = await contBtn.isVisible({ timeout: 2000 }).catch(() => false);
+            console.log('  [PKCE] Continue button visible:', btnVisible);
+            if (btnVisible) {
+              await contBtn.click({ force: true });
+              console.log('  [PKCE] Email submitted');
+            } else {
+              // Fallback: submit via JS
+              await page.evaluate(() => {
+                const btns = document.querySelectorAll('button');
+                for (const b of btns) { if (b.textContent.includes('继续') || b.textContent.includes('Continue')) { b.click(); return; } }
+              });
+              console.log('  [PKCE] Email submitted (JS fallback)');
+            }
             await new Promise(r => setTimeout(r, 3000));
             await page.waitForLoadState('domcontentloaded').catch(() => {});
             await new Promise(r => setTimeout(r, 2000));
+            console.log('  [PKCE] After submit URL:', page.url().slice(0, 80));
 
             // Check page content for OTP input (URL might still be the same)
             const hasOtpInput = await page.locator('input[name="code"], input[type="text"]').first().isVisible({ timeout: 3000 }).catch(() => false);
