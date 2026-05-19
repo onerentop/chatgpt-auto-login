@@ -287,7 +287,6 @@ class PipelineEngine extends EventEmitter {
     this.logCapture = new LogCapture();
     this._runId = '';
     this._activeProcs = []; // { chromeProc, browser, tempDir }
-    this._discordLock = Promise.resolve(); // Queue for Discord bot requests
   }
 
   emitStatus(data) {
@@ -409,10 +408,13 @@ class PipelineEngine extends EventEmitter {
       this._gw = gw;
       console.log('Discord connected!');
 
-      // Process accounts with concurrency pool
+      // Process: login in parallel, then Discord+payment+PKCE in serial queue
       const threadCount = Math.min(PAY_CONFIG.threads || 1, 4);
       const phoneSlots = PAY_CONFIG.phoneSlots || [{ phone: PAY_CONFIG.phone, smsApiUrl: PAY_CONFIG.smsApiUrl }];
-      console.log(`Running with ${threadCount} thread(s), ${phoneSlots.length} phone slot(s)`);
+      console.log(`Running with ${threadCount} thread(s) for login, serial for payment`);
+
+      // Serial queue for post-login steps (Discord + payment + PKCE)
+      let serialQueue = Promise.resolve();
 
       let accountIndex = 0;
       const processNext = async (threadId) => {
@@ -422,12 +424,10 @@ class PipelineEngine extends EventEmitter {
           const i = accountIndex++;
           const account = filtered[i];
 
-          // Thread-local state (not shared)
           const threadEmail = account.email;
           const progress = `${i + 1}/${filtered.length}`;
           const p = `[T${threadId + 1}][${progress}]`;
 
-          // Register thread context for log routing
           threadContexts[threadId] = { email: threadEmail, phase: 'login' };
           currentEmail = threadEmail;
           currentPhase = 'login';
@@ -512,98 +512,77 @@ class PipelineEngine extends EventEmitter {
               }
             }
           } else {
-            // Not Plus → full payment flow
-            // Phase 2: Discord bot → payment link
-            currentPhase = 'discord';
-            console.log(`${p} Phase 2: Discord bot...`);
-            // Queue Discord requests (single connection, must be sequential)
-            const discord = await new Promise((resolve) => {
-              this._discordLock = this._discordLock.then(async () => {
-                console.log(`${p} Queued for Discord bot...`);
-                const result = await getPaymentLink(gw, loginResult.accessToken);
-                resolve(result);
-              }).catch((e) => resolve({ link: null, raw: e.message }));
-            });
-
-            if (discord.link) {
-              console.log(`${p} ${discord.title}`);
-              console.log(`${p} Link: ${discord.link.slice(0, 80)}...`);
-              finalResult = { email: account.email, status: 'PENDING', paymentLink: discord.link, reason: '' };
-
-              // Phase 3: Open payment link & auto-fill
-              currentPhase = 'payment';
-              console.log(`${p} Phase 3: Opening payment page...`);
-              const ctx = browser.contexts()[0];
-              const pages = ctx.pages();
-              const page = pages.length > 0 ? pages[0] : await ctx.newPage();
-              await page.goto(discord.link, { waitUntil: 'networkidle', timeout: 30000 }).catch(() => {});
-              await randomDelay(3000, 5000);
-
-              console.log(`${p} Phase 3: Auto-filling payment...`);
-              try {
-                await autoPayment(page, { phone: slot.phone, smsApiUrl: slot.smsApiUrl });
-              } catch (e) {
-                console.log(`${p} Auto-fill error: ${e.message?.slice(0, 80)}`);
-                // If page crashed, try to recover
+            // Not Plus → serial queue for Discord + payment + PKCE
+            await new Promise((resolveSerial) => {
+              serialQueue = serialQueue.then(async () => {
                 try {
-                  const ctx2 = browser.contexts()[0];
-                  if (ctx2) {
-                    const p2 = ctx2.pages();
-                    if (p2.length === 0) await ctx2.newPage();
+                  currentEmail = threadEmail;
+                  currentPhase = 'discord';
+                  console.log(`${p} Phase 2: Discord bot...`);
+                  const discord = await getPaymentLink(gw, loginResult.accessToken);
+
+                  if (discord.link) {
+                    console.log(`${p} ${discord.title}`);
+                    console.log(`${p} Link: ${discord.link.slice(0, 80)}...`);
+                    finalResult = { email: account.email, status: 'PENDING', paymentLink: discord.link, reason: '' };
+
+                    currentPhase = 'payment';
+                    console.log(`${p} Phase 3: Opening payment page...`);
+                    const ctx = browser.contexts()[0];
+                    const pgs = ctx.pages();
+                    const page = pgs.length > 0 ? pgs[0] : await ctx.newPage();
+                    await page.goto(discord.link, { waitUntil: 'networkidle', timeout: 30000 }).catch(() => {});
+                    await randomDelay(3000, 5000);
+
+                    console.log(`${p} Phase 3: Auto-filling payment...`);
+                    try {
+                      await autoPayment(page, { phone: slot.phone, smsApiUrl: slot.smsApiUrl });
+                    } catch (e) {
+                      console.log(`${p} Auto-fill error: ${e.message?.slice(0, 80)}`);
+                    }
+
+                    console.log(`${p} Payment flow completed. Verifying plan...`);
+                    await randomDelay(10000, 12000);
+
+                    try {
+                      const ctx3 = browser.contexts()[0];
+                      const vp = ctx3?.pages()[0] || await ctx3.newPage();
+                      await vp.goto('https://chatgpt.com/api/auth/session', { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {});
+                      const st = await vp.locator('pre, body').first().textContent({ timeout: 5000 }).catch(() => '{}');
+                      const s2 = JSON.parse(st);
+                      const np = s2?.account?.planType || 'free';
+                      if (['plus', 'pro', 'team'].includes(np.toLowerCase())) {
+                        console.log(`${p} Plan verified: ${np} — payment successful!`);
+                        finalResult.status = 'SUCCESS';
+                      } else {
+                        console.log(`${p} Plan still ${np} — payment may not have completed`);
+                        finalResult.status = 'PENDING';
+                        finalResult.reason = 'Payment not confirmed';
+                      }
+                    } catch (e) {
+                      console.log(`${p} Plan verify failed: ${e.message?.slice(0, 50)}`);
+                      finalResult.status = 'PENDING';
+                    }
+
+                    currentPhase = 'cpa';
+                    if (PAY_CONFIG.enableCPA !== false) {
+                      console.log(`${p} Phase 4: CPA OAuth...`);
+                      try { await registerToCPA(browser, account.email, account); } catch (e) { console.log(`${p} CPA error: ${e.message}`); }
+                    } else {
+                      console.log(`${p} PKCE...`);
+                      const pkce = await fetchTokensViaPKCE(browser, account, loginResult.lastOtp).catch(() => null);
+                      saveCPAAuthFile(account.email, pkce?.access_token || loginResult.accessToken, pkce || loginResult.session);
+                    }
+                  } else {
+                    console.log(`${p} No link: ${discord.raw?.slice(0, 150)}`);
+                    finalResult = { email: account.email, status: 'NO_LINK', paymentLink: '', reason: discord.raw?.slice(0, 200) || '' };
                   }
-                } catch {}
-              }
-
-              console.log(`${p} Payment flow completed. Verifying plan...`);
-              await randomDelay(10000, 12000);
-
-              // Re-check plan after payment
-              try {
-                const ctx3 = browser.contexts()[0];
-                const verifyPage = ctx3?.pages()[0] || await ctx3.newPage();
-                await verifyPage.goto('https://chatgpt.com/api/auth/session', { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {});
-                const sessionText = await verifyPage.locator('pre, body').first().textContent({ timeout: 5000 }).catch(() => '{}');
-                const session2 = JSON.parse(sessionText);
-                const newPlan = session2?.account?.planType || 'free';
-                if (['plus', 'pro', 'team'].includes(newPlan.toLowerCase())) {
-                  console.log(`${p} Plan verified: ${newPlan} — payment successful!`);
-                  finalResult.status = 'SUCCESS';
-                } else {
-                  console.log(`${p} Plan still ${newPlan} — payment may not have completed`);
-                  finalResult.status = 'PENDING';
-                  finalResult.reason = 'Payment not confirmed';
-                }
-              } catch (e) {
-                console.log(`${p} Plan verify failed: ${e.message?.slice(0, 50)}`);
-                finalResult.status = 'PENDING';
-              }
-
-              // Phase 4: CPA OAuth or local auth file
-              currentPhase = 'cpa';
-              if (PAY_CONFIG.enableCPA !== false) {
-                console.log(`${p} Phase 4: CPA OAuth...`);
-                try {
-                  const cpaOk = await registerToCPA(browser, account.email, account);
-                  if (cpaOk) console.log(`${p} CPA OAuth done.`);
-                  else console.log(`${p} CPA OAuth may have issues, check manually.`);
                 } catch (e) {
-                  console.log(`${p} CPA error: ${e.message}`);
+                  console.log(`${p} Serial queue error: ${e.message?.slice(0, 80)}`);
                 }
-              } else {
-                console.log(`${p} CPA OAuth skipped. Running PKCE to get full tokens...`);
-                this.emitStatus( { email: account.email, status: 'running', phase: 'pkce', progress });
-                const pkceTokens = await fetchTokensViaPKCE(browser, account, loginResult.lastOtp).catch((e) => { console.log(`  [PKCE] Failed: ${e.message}`); return null; });
-                if (pkceTokens) {
-                  saveCPAAuthFile(account.email, pkceTokens.access_token, pkceTokens);
-                } else {
-                  console.log(`${p} PKCE failed, saving with session token only`);
-                  saveCPAAuthFile(account.email, loginResult.accessToken, loginResult.session);
-                }
-              }
-            } else {
-              console.log(`${p} No link: ${discord.raw.slice(0, 150)}`);
-              finalResult = { email: account.email, status: 'NO_LINK', paymentLink: '', reason: discord.raw.slice(0, 200) };
-            }
+                resolveSerial();
+              });
+            });
           }
         } catch (error) {
           console.log(`${p} ERROR: ${error.message}`);
