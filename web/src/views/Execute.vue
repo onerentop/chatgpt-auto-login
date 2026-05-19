@@ -61,22 +61,6 @@
       </el-table-column>
     </el-table>
 
-    <!-- Global Log Stream -->
-    <el-card>
-      <template #header>
-        <div style="display:flex;justify-content:space-between;align-items:center">
-          <span>实时日志 ({{ socketState.logs.length }})</span>
-          <el-button size="small" @click="socketState.logs.splice(0)">清空</el-button>
-        </div>
-      </template>
-      <div ref="logBox" style="height:350px;overflow-y:auto;font-family:monospace;font-size:12px;background:#1e1e1e;color:#d4d4d4;padding:12px;border-radius:4px">
-        <div v-for="(log, i) in socketState.logs" :key="i">
-          <span style="color:#808080">{{ log.timestamp?.slice(11,19) }}</span>
-          <span v-if="log.email" style="color:#569cd6"> [{{ log.email.split('@')[0] }}]</span>
-          <span> {{ log.message }}</span>
-        </div>
-      </div>
-    </el-card>
   </div>
 </template>
 
@@ -87,7 +71,6 @@ import api from '../api'
 import { socketState } from '../socket'
 
 const tableRef = ref(null)
-const logBox = ref(null)
 const running = ref(false)
 const accounts = ref([])
 const selected = ref([])
@@ -112,10 +95,6 @@ watch(() => socketState.accountStatuses, (statuses) => {
   }
 }, { deep: true })
 
-// Auto-scroll log
-watch(() => socketState.logs.length, () => {
-  nextTick(() => { if (logBox.value) logBox.value.scrollTop = logBox.value.scrollHeight })
-})
 
 // Check completion
 watch(() => socketState.logs.length, () => {
