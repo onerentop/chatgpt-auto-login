@@ -288,6 +288,7 @@ class PipelineEngine extends EventEmitter {
     this.stopFlag = false;
     this.logCapture = new LogCapture();
     this._runId = '';
+    this._activeProcs = []; // { chromeProc, browser, tempDir }
   }
 
   emitStatus(data) {
@@ -311,25 +312,18 @@ class PipelineEngine extends EventEmitter {
       this.status = 'stopping';
       console.log('Force stopping pipeline...');
 
-      // Kill Chrome processes launched by this engine
-      if (this._chromeProc) {
-        try { this._chromeProc.kill(); } catch {}
-        this._chromeProc = null;
+      // Kill ALL active Chrome processes and browsers
+      for (const proc of this._activeProcs) {
+        try { proc.browser?.close(); } catch {}
+        try { proc.chromeProc?.kill(); } catch {}
+        try { if (proc.tempDir) fs.rmSync(proc.tempDir, { recursive: true, force: true }); } catch {}
       }
-      // Close browser CDP connection
-      if (this._browser) {
-        try { this._browser.close(); } catch {}
-        this._browser = null;
-      }
+      this._activeProcs = [];
+
       // Close Discord Gateway
       if (this._gw) {
         try { this._gw.cleanup(); } catch {}
         this._gw = null;
-      }
-      // Clean temp dir
-      if (this._tempDir) {
-        try { fs.rmSync(this._tempDir, { recursive: true, force: true }); } catch {}
-        this._tempDir = null;
       }
 
       this.logCapture.stop();
@@ -447,6 +441,8 @@ class PipelineEngine extends EventEmitter {
           console.log(`${p} Phase 1: Login...`);
           chromeProc = launchChrome(port, tempDir, threadId);
           browser = await waitForCDP(port);
+          const procRef = { chromeProc, browser, tempDir };
+          this._activeProcs.push(procRef);
           const loginResult = await loginAccount(browser, account);
           saveResult(RESULTS_PATH, loginResult);
           saveSessionData(SESSIONS_DIR, loginResult);
@@ -567,6 +563,7 @@ class PipelineEngine extends EventEmitter {
           if (browser) try { await browser.close(); } catch {}
           if (chromeProc) try { chromeProc.kill(); } catch {}
           try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {}
+          this._activeProcs = this._activeProcs.filter(p => p.chromeProc !== chromeProc);
         }
 
         allResults.push(finalResult);
