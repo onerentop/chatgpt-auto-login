@@ -17,6 +17,13 @@
           <el-tag :type="row.loginType === 'Google' ? 'danger' : 'warning'" size="small">{{ row.loginType }}</el-tag>
         </template>
       </el-table-column>
+      <el-table-column label="计划" width="80">
+        <template #default="{ row }">
+          <el-tag v-if="row._plan === 'plus'" type="success" size="small">Plus</el-tag>
+          <el-tag v-else-if="row._plan === 'free'" size="small">Free</el-tag>
+          <span v-else style="color:#c0c4cc">-</span>
+        </template>
+      </el-table-column>
       <el-table-column label="密码" width="150">
         <template #default="{ row }">
           <span style="font-family:monospace">{{ row._showPw ? row.password : '••••••' }}</span>
@@ -84,8 +91,16 @@ const editOrigEmail = ref('')
 
 async function load() {
   try {
-    const { data } = await api.get('/accounts/raw')
-    accounts.value = data.map(a => ({ ...a, _showPw: false }))
+    const [acctRes, statusRes] = await Promise.all([api.get('/accounts/raw'), api.get('/results').catch(() => ({ data: [] }))])
+    const statusMap = {}
+    for (const s of (statusRes.data || [])) {
+      statusMap[s.email] = s.status
+    }
+    accounts.value = acctRes.data.map(a => {
+      const st = (statusMap[a.email] || '').toLowerCase()
+      const plan = ['success', 'already_plus'].includes(st) ? 'plus' : (st === 'error' || st === 'failed' || st === 'no_link' ? 'free' : '')
+      return { ...a, _showPw: false, _plan: plan }
+    })
   } catch {}
 }
 onMounted(load)
