@@ -409,8 +409,10 @@ class PipelineEngine extends EventEmitter {
       console.log('Discord connected!');
 
       // Process: login in parallel, then Discord+payment+PKCE in serial queue
-      const threadCount = Math.min(PAY_CONFIG.threads || 1, 4);
-      const phoneSlots = PAY_CONFIG.phoneSlots || [{ phone: PAY_CONFIG.phone, smsApiUrl: PAY_CONFIG.smsApiUrl }];
+      // Re-read config fresh (not cached) so changes take effect without restart
+      const freshConfig = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf-8'));
+      const threadCount = Math.min(freshConfig.threads || 1, 4);
+      const phoneSlots = freshConfig.phoneSlots || [{ phone: freshConfig.phone, smsApiUrl: freshConfig.smsApiUrl }];
       console.log(`Running with ${threadCount} thread(s) for login, serial for payment`);
 
       // Serial queue for post-login steps (Discord + payment + PKCE)
