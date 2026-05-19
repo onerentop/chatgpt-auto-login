@@ -17,14 +17,20 @@
           <el-tag :type="row.loginType === 'Google' ? 'danger' : 'warning'" size="small">{{ row.loginType }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column prop="password" label="密码" width="130">
+      <el-table-column label="密码" width="150">
         <template #default="{ row }">
           <span style="font-family:monospace">{{ row._showPw ? row.password : '••••••' }}</span>
-          <el-button size="small" text @click="row._showPw = !row._showPw">{{ row._showPw ? '隐' : '显' }}</el-button>
+          <el-button size="small" text @click.stop="row._showPw = !row._showPw">{{ row._showPw ? '隐' : '显' }}</el-button>
         </template>
       </el-table-column>
-      <el-table-column label="2FA / Client ID" min-width="160">
-        <template #default="{ row }">{{ row.totp_secret || row.client_id || '-' }}</template>
+      <el-table-column prop="totp_secret" label="TOTP" min-width="120" show-overflow-tooltip>
+        <template #default="{ row }">{{ row.totp_secret || '-' }}</template>
+      </el-table-column>
+      <el-table-column prop="client_id" label="Client ID" min-width="120" show-overflow-tooltip>
+        <template #default="{ row }">{{ row.client_id || '-' }}</template>
+      </el-table-column>
+      <el-table-column label="Refresh Token" min-width="120" show-overflow-tooltip>
+        <template #default="{ row }">{{ row.refresh_token ? row.refresh_token.slice(0, 20) + '...' : '-' }}</template>
       </el-table-column>
       <el-table-column label="操作" width="140">
         <template #default="{ row }">
@@ -78,7 +84,7 @@ const editOrigEmail = ref('')
 
 async function load() {
   try {
-    const { data } = await api.get('/accounts')
+    const { data } = await api.get('/accounts/raw')
     accounts.value = data.map(a => ({ ...a, _showPw: false }))
   } catch {}
 }
