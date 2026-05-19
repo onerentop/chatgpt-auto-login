@@ -61,12 +61,25 @@
       <el-table-column type="expand">
         <template #default="{ row }">
           <div style="font-family:'Consolas','Courier New',monospace;font-size:13px;max-height:calc(100vh - 350px);overflow-y:auto;padding:12px;background:#1e1e1e;color:#d4d4d4;border-radius:4px;line-height:1.6">
-            <!-- Historical logs (last 3 runs) -->
-            <div v-for="(log, i) in getAllLogs(row.email)" :key="i" style="white-space:pre-wrap;word-break:break-all">
-              <span style="color:#808080">{{ formatTs(log.timestamp) }}</span>
-              <span> {{ log.message }}</span>
+            <!-- Historical logs — collapsed -->
+            <div v-if="getHistoryLogs(row.email).length > 0">
+              <el-collapse style="--el-collapse-header-bg-color:#2d2d2d;--el-collapse-content-bg-color:#1e1e1e;--el-collapse-header-text-color:#808080;--el-collapse-content-text-color:#d4d4d4;border:none">
+                <el-collapse-item :title="`历史日志 (${getHistoryLogs(row.email).length} 条)`">
+                  <div v-for="(log, i) in getHistoryLogs(row.email)" :key="'h'+i" style="white-space:pre-wrap;word-break:break-all">
+                    <span style="color:#606060">{{ formatTs(log.timestamp) }}</span>
+                    <span style="color:#808080"> {{ log.message }}</span>
+                  </div>
+                </el-collapse-item>
+              </el-collapse>
             </div>
-            <div v-if="getAllLogs(row.email).length === 0 && !row._logsLoading" style="color:#808080;padding:10px;text-align:center">暂无日志 — 点击展开自动加载历史</div>
+            <!-- Realtime logs — always visible -->
+            <div v-if="getRealtimeLogs(row.email).length > 0" :style="getHistoryLogs(row.email).length > 0 ? 'border-top:1px solid #404040;margin-top:8px;padding-top:8px' : ''">
+              <div v-for="(log, i) in getRealtimeLogs(row.email)" :key="'r'+i" style="white-space:pre-wrap;word-break:break-all">
+                <span style="color:#808080">{{ formatTs(log.timestamp) }}</span>
+                <span> {{ log.message }}</span>
+              </div>
+            </div>
+            <div v-if="getHistoryLogs(row.email).length === 0 && getRealtimeLogs(row.email).length === 0 && !row._logsLoading" style="color:#808080;padding:10px;text-align:center">暂无日志</div>
             <div v-if="row._logsLoading" style="color:#808080;padding:10px;text-align:center">加载中...</div>
           </div>
         </template>
@@ -92,13 +105,12 @@ const accountRows = computed(() => accounts.value)
 
 const historyLogs = ref({})
 
-function getAllLogs(email) {
-  const history = historyLogs.value[email] || []
-  const realtime = socketState.logs.filter(l => l.email === email)
-  // Merge: history first, then realtime (dedup by timestamp)
-  const historyTs = new Set(history.map(l => l.timestamp))
-  const merged = [...history, ...realtime.filter(l => !historyTs.has(l.timestamp))]
-  return merged
+function getHistoryLogs(email) {
+  return historyLogs.value[email] || []
+}
+
+function getRealtimeLogs(email) {
+  return socketState.logs.filter(l => l.email === email)
 }
 
 function formatTs(ts) {
