@@ -206,23 +206,12 @@ async function main() {
         }
         console.log(`${p} Login OK, accessToken obtained.`);
 
-        // PKCE immediately after login (auth session is fresh)
-        const { CONFIG: payConfig } = require('./payment');
-        if (payConfig.enableCPA === false) {
-          console.log(`${p} Running PKCE for auth file (session still fresh)...`);
-          const pkceTokens = await fetchTokensViaPKCE(browser, account).catch((e) => { console.log(`  [PKCE] Failed: ${e.message}`); return null; });
-          if (pkceTokens) {
-            saveCPAAuthFile(account.email, pkceTokens.access_token, pkceTokens);
-          } else {
-            console.log(`${p} PKCE failed, saving with session token only`);
-            saveCPAAuthFile(account.email, loginResult.accessToken, loginResult.session);
-          }
-        }
-
         // Check plan type from session
         const planType = loginResult.session?.account?.planType || loginResult.session?.chatgpt_plan_type || 'free';
         const isPlusOrAbove = ['plus', 'pro', 'team', 'enterprise'].includes(planType.toLowerCase());
         console.log(`${p} Plan: ${planType} (${isPlusOrAbove ? 'Plus member' : 'Not Plus'})`);
+
+        const { CONFIG: payConfig } = require('./payment');
 
         if (isPlusOrAbove) {
           console.log(`${p} Already Plus! Skipping payment flow.`);
@@ -236,6 +225,15 @@ async function main() {
               else console.log(`${p} CPA OAuth may have issues, check manually.`);
             } catch (e) {
               console.log(`${p} CPA error: ${e.message}`);
+            }
+          } else {
+            console.log(`${p} CPA OAuth skipped. Running PKCE to get full tokens...`);
+            const pkceTokens = await fetchTokensViaPKCE(browser, account).catch((e) => { console.log(`  [PKCE] Failed: ${e.message}`); return null; });
+            if (pkceTokens) {
+              saveCPAAuthFile(account.email, pkceTokens.access_token, pkceTokens);
+            } else {
+              console.log(`${p} PKCE failed, saving with session token only`);
+              saveCPAAuthFile(account.email, loginResult.accessToken, loginResult.session);
             }
           }
         } else {
@@ -278,8 +276,14 @@ async function main() {
                 console.log(`${p} CPA error: ${e.message}`);
               }
             } else {
-              console.log(`${p} CPA OAuth skipped. Generating local auth file...`);
-              saveCPAAuthFile(account.email, loginResult.accessToken, loginResult.session);
+              console.log(`${p} CPA OAuth skipped. Running PKCE to get full tokens...`);
+              const pkceTokens = await fetchTokensViaPKCE(browser, account).catch((e) => { console.log(`  [PKCE] Failed: ${e.message}`); return null; });
+              if (pkceTokens) {
+                saveCPAAuthFile(account.email, pkceTokens.access_token, pkceTokens);
+              } else {
+                console.log(`${p} PKCE failed, saving with session token only`);
+                saveCPAAuthFile(account.email, loginResult.accessToken, loginResult.session);
+              }
             }
           } else {
             console.log(`${p} No link: ${discord.raw.slice(0, 150)}`);

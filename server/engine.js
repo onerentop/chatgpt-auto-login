@@ -457,19 +457,6 @@ class PipelineEngine extends EventEmitter {
           }
           console.log(`${p} Login OK, accessToken obtained.`);
 
-          // PKCE immediately after login (auth session is fresh — best chance of auto-auth)
-          if (PAY_CONFIG.enableCPA === false) {
-            console.log(`${p} Running PKCE for auth file (session still fresh)...`);
-            this.emit('account-status', { email: account.email, status: 'running', phase: 'pkce', progress });
-            const pkceTokens = await fetchTokensViaPKCE(browser, account).catch((e) => { console.log(`  [PKCE] Failed: ${e.message}`); return null; });
-            if (pkceTokens) {
-              saveCPAAuthFile(account.email, pkceTokens.access_token, pkceTokens);
-            } else {
-              console.log(`${p} PKCE failed, saving with session token only`);
-              saveCPAAuthFile(account.email, loginResult.accessToken, loginResult.session);
-            }
-          }
-
           // Check plan type from session
           const planType =
             loginResult.session?.account?.planType ||
@@ -491,6 +478,18 @@ class PipelineEngine extends EventEmitter {
                 else console.log(`${p} CPA OAuth may have issues, check manually.`);
               } catch (e) {
                 console.log(`${p} CPA error: ${e.message}`);
+              }
+            } else {
+              console.log(`${p} CPA OAuth skipped. Running PKCE to get full tokens...`);
+              this.emit('account-status', { email: account.email, status: 'running', phase: 'pkce', progress });
+              const pkceTokens = await fetchTokensViaPKCE(browser, account).catch((e) => { console.log(`  [PKCE] Failed: ${e.message}`); return null; });
+              if (pkceTokens) {
+                saveCPAAuthFile(account.email, pkceTokens.access_token, pkceTokens);
+                this.emit('account-status', { email: account.email, status: 'already_plus', phase: 'done', progress });
+              } else {
+                console.log(`${p} PKCE failed, saving with session token only`);
+                saveCPAAuthFile(account.email, loginResult.accessToken, loginResult.session);
+                this.emit('account-status', { email: account.email, status: 'already_plus', phase: 'done (no PKCE)', progress });
               }
             }
           } else {
@@ -536,8 +535,15 @@ class PipelineEngine extends EventEmitter {
                   console.log(`${p} CPA error: ${e.message}`);
                 }
               } else {
-                console.log(`${p} CPA OAuth skipped. Generating local auth file...`);
-                saveCPAAuthFile(account.email, loginResult.accessToken, loginResult.session);
+                console.log(`${p} CPA OAuth skipped. Running PKCE to get full tokens...`);
+                this.emit('account-status', { email: account.email, status: 'running', phase: 'pkce', progress });
+                const pkceTokens = await fetchTokensViaPKCE(browser, account).catch((e) => { console.log(`  [PKCE] Failed: ${e.message}`); return null; });
+                if (pkceTokens) {
+                  saveCPAAuthFile(account.email, pkceTokens.access_token, pkceTokens);
+                } else {
+                  console.log(`${p} PKCE failed, saving with session token only`);
+                  saveCPAAuthFile(account.email, loginResult.accessToken, loginResult.session);
+                }
               }
             } else {
               console.log(`${p} No link: ${discord.raw.slice(0, 150)}`);
