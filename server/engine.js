@@ -504,7 +504,12 @@ class PipelineEngine extends EventEmitter {
               console.log(`${p} CPA OAuth skipped. Running PKCE to get full tokens...`);
               this.emitStatus( { email: account.email, status: 'running', phase: 'pkce', progress });
               const pkceTokens = await fetchTokensViaPKCE(browser, account, loginResult.lastOtp).catch((e) => { console.log(`  [PKCE] Failed: ${e.message}`); return null; });
-              if (pkceTokens) {
+              if (pkceTokens?.needsPhone) {
+                console.log(`${p} PKCE requires phone verification, saving with session token only`);
+                saveCPAAuthFile(account.email, loginResult.accessToken, loginResult.session);
+                finalResult.status = 'NEEDS_PHONE';
+                this.emitStatus( { email: account.email, status: 'needs_phone', phase: 'done (needs phone)', progress });
+              } else if (pkceTokens) {
                 saveCPAAuthFile(account.email, pkceTokens.access_token, pkceTokens);
                 this.emitStatus( { email: account.email, status: 'already_plus', phase: 'done', progress });
               } else {
@@ -533,8 +538,9 @@ class PipelineEngine extends EventEmitter {
                     const ctx = browser.contexts()[0];
                     const pgs = ctx.pages();
                     const page = pgs.length > 0 ? pgs[0] : await ctx.newPage();
-                    await page.goto(discord.link, { waitUntil: 'networkidle', timeout: 30000 }).catch(() => {});
-                    await randomDelay(3000, 5000);
+                    await page.goto(discord.link, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
+                    try { await page.locator('text=PayPal').first().waitFor({ state: 'visible', timeout: 15000 }); } catch {}
+                    await randomDelay(1000, 2000);
 
                     console.log(`${p} Phase 3: Auto-filling payment...`);
                     try {
@@ -544,7 +550,7 @@ class PipelineEngine extends EventEmitter {
                     }
 
                     console.log(`${p} Payment flow completed. Verifying plan...`);
-                    await randomDelay(10000, 12000);
+                    await randomDelay(5000, 7000);
 
                     try {
                       const ctx3 = browser.contexts()[0];
@@ -573,7 +579,13 @@ class PipelineEngine extends EventEmitter {
                     } else {
                       console.log(`${p} PKCE...`);
                       const pkce = await fetchTokensViaPKCE(browser, account, loginResult.lastOtp).catch(() => null);
-                      saveCPAAuthFile(account.email, pkce?.access_token || loginResult.accessToken, pkce || loginResult.session);
+                      if (pkce?.needsPhone) {
+                        console.log(`${p} PKCE requires phone verification`);
+                        saveCPAAuthFile(account.email, loginResult.accessToken, loginResult.session);
+                        finalResult.status = 'NEEDS_PHONE';
+                      } else {
+                        saveCPAAuthFile(account.email, pkce?.access_token || loginResult.accessToken, pkce || loginResult.session);
+                      }
                     }
                   } else {
                     console.log(`${p} No link: ${discord.raw?.slice(0, 150)}`);

@@ -125,8 +125,9 @@ async function _fetchPkceOtp(page, account) {
 
   // THEN click resend to trigger fresh code
   try {
-    const resend = page.locator('button, a').filter({ hasText: /重新发送|Resend/i }).first();
-    if (await resend.isVisible({ timeout: 2000 }).catch(() => false)) { await resend.click(); console.log('  [PKCE] Clicked resend'); await new Promise(r => setTimeout(r, 2000)); }
+    const resend = page.locator('button, a').filter({ hasText: /重新发送|重新傳送|Resend/i }).first();
+    if (await resend.isVisible({ timeout: 2000 }).catch(() => false)) { await resend.click(); console.log('  [PKCE] Clicked resend'); await new Promise(r => setTimeout(r, 3000)); }
+    else { console.log('  [PKCE] Resend button not found, trying JS click...'); await page.evaluate(() => { for (const a of document.querySelectorAll('a, button')) { const t = a.textContent; if (t.includes('重新') || t.includes('Resend') || t.includes('resend')) { a.click(); return; } } }).catch(() => {}); await new Promise(r => setTimeout(r, 3000)); }
   } catch {}
 
   console.log(`  [PKCE] Baseline UID: ${baseline}`);
@@ -135,7 +136,7 @@ async function _fetchPkceOtp(page, account) {
   let lastResend = Date.now();
   for (let a = 0; a < 20; a++) {
     if (Date.now() - lastResend > 45000) {
-      try { const rb = page.locator('button, a').filter({ hasText: /重新发送|Resend/i }).first(); if (await rb.isVisible({ timeout: 1000 }).catch(() => false)) { await rb.click(); lastResend = Date.now(); console.log('  [PKCE] Resend clicked'); } } catch {}
+      try { const rb = page.locator('button, a').filter({ hasText: /重新发送|重新傳送|Resend/i }).first(); if (await rb.isVisible({ timeout: 1000 }).catch(() => false)) { await rb.click(); lastResend = Date.now(); console.log('  [PKCE] Resend clicked'); } } catch {}
     }
     let client;
     try {
@@ -182,22 +183,20 @@ async function fetchTokensViaPKCE(browser, account, lastOtp) {
 
   const authUrl = `https://auth.openai.com/oauth/authorize?client_id=${clientId}&code_challenge=${codeChallenge}&code_challenge_method=S256&codex_cli_simplified_flow=true&id_token_add_organizations=true&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=openid+email+profile+offline_access&state=${state}`;
 
-  // Navigate to chatgpt.com/api/auth/session to refresh session cookies on both domains
-  // Close extra tabs (PayPal etc.) that may block navigation
+  // Close ALL existing pages (PayPal pages may block navigation due to cross-origin/beforeunload)
+  // Then open a fresh page for PKCE
+  console.log('  [PKCE] Closing old pages and creating fresh page...');
   const allPages = context.pages();
-  if (allPages.length > 1) {
-    for (let i = 1; i < allPages.length; i++) await allPages[i].close().catch(() => {});
+  for (const p of allPages) {
+    try { await p.evaluate(() => { window.onbeforeunload = null; }); } catch {}
+    await p.close().catch(() => {});
   }
-  const mainPage = context.pages()[0] || await context.newPage();
+  const freshPage = await context.newPage();
 
-  // Force navigate away from PayPal (bypass beforeunload dialogs)
   console.log('  [PKCE] Refreshing session cookies...');
-  try {
-    await mainPage.evaluate(() => { window.onbeforeunload = null; });
-  } catch {}
-  await mainPage.goto('https://chatgpt.com/api/auth/session', { waitUntil: 'domcontentloaded', timeout: 10000 }).catch(() => {});
+  await freshPage.goto('https://chatgpt.com/api/auth/session', { waitUntil: 'domcontentloaded', timeout: 15000 }).catch((e) => { console.log(`  [PKCE] Session nav error: ${e.message?.slice(0, 60)}`); });
   await new Promise(r => setTimeout(r, 1000));
-  await mainPage.goto('https://chatgpt.com', { waitUntil: 'domcontentloaded', timeout: 10000 }).catch(() => {});
+  await freshPage.goto('https://chatgpt.com', { waitUntil: 'domcontentloaded', timeout: 15000 }).catch((e) => { console.log(`  [PKCE] ChatGPT nav error: ${e.message?.slice(0, 60)}`); });
   await new Promise(r => setTimeout(r, 1500));
 
   // Intercept localhost redirect to capture the authorization code
@@ -208,10 +207,10 @@ async function fetchTokensViaPKCE(browser, account, lastOtp) {
     route.abort();
   });
 
-  // Use current page (same tab, user already logged in)
-  const pages = context.pages();
-  const page = pages.length > 0 ? pages[0] : await context.newPage();
+  // Use the fresh page for PKCE auth flow
+  const page = freshPage;
   try {
+    console.log('  [PKCE] Navigating to auth page...');
     await page.goto(authUrl, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
 
     // State machine for auth.openai.com pages
@@ -263,7 +262,7 @@ async function fetchTokensViaPKCE(browser, account, lastOtp) {
         handled.otp = true;
         console.log('  [PKCE] State: email-verification');
 
-        // Try reusing login OTP first (OpenAI sends same code for same session)
+        // Try reusing login OTP first, fallback to fresh IMAP fetch
         let otp = lastOtp || null;
         if (otp) {
           console.log(`  [PKCE] Reusing login OTP: ${otp}`);
@@ -278,12 +277,45 @@ async function fetchTokensViaPKCE(browser, account, lastOtp) {
             await new Promise(r => setTimeout(r, 800));
             await page.evaluate(() => { for (const b of document.querySelectorAll('button')) if (['继续','Continue'].includes(b.textContent.trim())) { b.click(); return; } });
             console.log('  [PKCE] OTP submitted');
+
+            // Check if OTP was accepted (page should navigate away from email-verification)
+            await new Promise(r => setTimeout(r, 3000));
+            const stillOnVerify = page.url().includes('email-verification') || page.url().includes('log-in');
+            if (stillOnVerify && lastOtp && account.client_id && account.refresh_token) {
+              console.log('  [PKCE] Reused OTP expired, fetching fresh OTP from IMAP...');
+              // Clear the old code input first
+              await page.evaluate(() => {
+                const inp = document.querySelector('input[name="code"], input[type="text"]');
+                if (inp) { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(inp, ''); inp.dispatchEvent(new Event('input', { bubbles: true })); }
+              }).catch(() => {});
+              // _fetchPkceOtp will handle resend click + baseline + wait for new email
+              const freshOtp = await _fetchPkceOtp(page, account);
+              if (freshOtp) {
+                console.log(`  [PKCE] Fresh OTP: ${freshOtp}`);
+                await page.evaluate((code) => {
+                  const inp = document.querySelector('input[name="code"], input[type="text"]');
+                  if (inp) { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(inp, code); inp.dispatchEvent(new Event('input', { bubbles: true })); inp.dispatchEvent(new Event('change', { bubbles: true })); }
+                }, freshOtp);
+                await new Promise(r => setTimeout(r, 800));
+                await page.evaluate(() => { for (const b of document.querySelectorAll('button')) if (['继续','Continue'].includes(b.textContent.trim())) { b.click(); return; } });
+                console.log('  [PKCE] Fresh OTP submitted');
+              } else {
+                console.log('  [PKCE] Failed to get fresh OTP');
+              }
+              handled.otp = false;
+            }
         } else {
           console.log('  [PKCE] No OTP available, giving up');
           break;
         }
         await new Promise(r => setTimeout(r, 3000));
         continue;
+      }
+
+      // STATE: add-phone (OpenAI requires phone verification for Codex)
+      if (url.includes('add-phone') || url.includes('phone-required')) {
+        console.log('  [PKCE] State: add-phone — phone verification required, skipping PKCE');
+        return { needsPhone: true };
       }
 
       // STATE 4: about-you (first-time registration)

@@ -156,7 +156,7 @@ watch(() => socketState.accountStatuses, (statuses) => {
     if (row) {
       row._status = data.status || 'running'
       row._phase = data.phase || ''
-      if (data.status === 'success' || data.status === 'already_plus') { row._hasAuth = true; row._plan = 'plus'; }
+      if (data.status === 'success' || data.status === 'already_plus' || data.status === 'needs_phone') { row._hasAuth = true; row._plan = 'plus'; }
       if (data.status === 'error' || data.status === 'failed' || data.status === 'no_link') row._plan = 'free'
     }
   }
@@ -188,7 +188,7 @@ async function loadResults() {
         if (r.phase) row._phase = r.phase
         row._hasAuth = r.hasAuthFile || false
         const st = (r.status || '').toLowerCase()
-        row._plan = ['success', 'already_plus'].includes(st) ? 'plus' : (['error', 'failed', 'no_link', 'pending'].includes(st) ? 'free' : '')
+        row._plan = ['success', 'already_plus', 'needs_phone'].includes(st) ? 'plus' : (['error', 'failed', 'no_link', 'pending'].includes(st) ? 'free' : '')
       }
     }
   } catch {}
@@ -203,11 +203,11 @@ onMounted(() => { loadAccounts(); checkStatus() })
 function onSelectionChange(rows) { selected.value = rows }
 
 function statusType(s) {
-  return { idle: 'info', running: 'warning', success: 'success', failed: 'danger', already_plus: 'success', no_link: 'warning', error: 'danger', pending: '' }[s] || 'info'
+  return { idle: 'info', running: 'warning', success: 'success', failed: 'danger', already_plus: 'success', no_link: 'warning', error: 'danger', pending: '', needs_phone: 'warning' }[s] || 'info'
 }
 
 function statusLabel(s) {
-  return { idle: '空闲', running: '运行中', success: '成功', failed: '失败', already_plus: '已完成', no_link: '无链接', error: '错误', pending: '待确认' }[s] || s || '空闲'
+  return { idle: '空闲', running: '运行中', success: '成功', failed: '失败', already_plus: '已完成', no_link: '无链接', error: '错误', pending: '待确认', needs_phone: '需手机验证' }[s] || s || '空闲'
 }
 
 async function startExec(emails) {

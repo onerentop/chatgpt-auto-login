@@ -120,7 +120,7 @@ async function clickSubmit(page) {
         }
       } catch {}
     }
-    const texts = ['下一页', 'Next', 'Subscribe', 'Pay', 'Continue', 'Agree', '订阅', '同意'];
+    const texts = ['訂閱', '订阅', '下一页', 'Next', 'Subscribe', 'Pay', 'Continue', 'Agree', '同意'];
     for (const t of texts) {
       try {
         const btn = page.locator(`button:has-text("${t}")`).first();
@@ -138,49 +138,45 @@ async function clickSubmit(page) {
 
 async function handleOpenAIPage(page) {
   console.log('    [Pay] OpenAI/Stripe page detected');
-  await randomDelay(2000, 3000);
 
   // Step 0: Inject CSS to hide Google autocomplete (before any interaction)
   await page.addStyleTag({ content: '.AddressAutocomplete-results,.pac-container{display:none!important;height:0!important;overflow:hidden!important;pointer-events:none!important}' }).catch(() => {});
 
-  // Step 1: Click PayPal with real Playwright mouse event (not JS .click())
+  // Step 1: Select PayPal via JS .click() on data-testid (proven to expand accordion)
   console.log('    [Pay] Selecting PayPal...');
-  let ppClicked = false;
-  // Find the PayPal text element and get its bounding box for a real click
-  const ppLoc = page.locator('text=PayPal').first();
-  try {
-    await ppLoc.waitFor({ state: 'visible', timeout: 5000 });
-    const box = await ppLoc.boundingBox();
-    if (box) {
-      // Click the center of the PayPal text
-      await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-      ppClicked = true;
-      console.log('    [Pay] PayPal clicked (mouse)');
+  let ppClicked = await page.evaluate(() => {
+    var sels = [
+      '[data-testid="paypal-accordion-item-button"]',
+      '#payment-method-accordion-item-title-paypal',
+      '[id*="paypal"]',
+      '[data-testid*="paypal"]',
+    ];
+    for (var i = 0; i < sels.length; i++) {
+      var el = document.querySelector(sels[i]);
+      if (el) { el.click(); return sels[i]; }
     }
-  } catch {}
-  if (!ppClicked) {
-    // Fallback: try clicking parent containers
-    try { await page.locator('div:has(> span:text("PayPal"))').first().click(); ppClicked = true; } catch {}
-  }
-  if (!ppClicked) {
-    try { await page.getByText('PayPal', { exact: true }).click(); ppClicked = true; } catch {}
-  }
-  console.log('    [Pay] PayPal selected:', ppClicked);
+    return null;
+  }).catch(() => null);
+  console.log('    [Pay] PayPal clicked:', ppClicked || 'FAILED');
+  // Double click like userscript
+  if (ppClicked) { await new Promise(r => setTimeout(r, 500)); await page.evaluate(() => { var el = document.querySelector('[data-testid="paypal-accordion-item-button"]') || document.querySelector('#payment-method-accordion-item-title-paypal'); if (el) el.click(); }).catch(() => {}); }
 
-  // Verify PayPal is actually selected — if not, reload and retry once
-  await randomDelay(1000, 1500);
-  const hasError = await page.locator('text=支付方式 必填').or(page.locator('text=Payment method required')).isVisible({ timeout: 1000 }).catch(() => false);
-  if (hasError || !ppClicked) {
-    console.log('    [Pay] PayPal not selected, reloading page to retry...');
-    await page.reload({ waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {});
+  // Verify billing form appears
+  await randomDelay(2000, 3000);
+  let formFound = false;
+  for (let w = 0; w < 10; w++) {
+    const hasForm = await page.locator('#billingAddressLine1').isVisible({ timeout: 1000 }).catch(() => false);
+    if (hasForm) { formFound = true; break; }
+    await new Promise(r => setTimeout(r, 1000));
+  }
+  if (!formFound) {
+    console.log('    [Pay] Billing form not visible, reloading to retry...');
+    await page.reload({ waitUntil: 'networkidle', timeout: 30000 }).catch(() => {});
+    await randomDelay(3000, 4000);
+    ppClicked = await page.evaluate(() => { var el = document.querySelector('[data-testid="paypal-accordion-item-button"]') || document.querySelector('#payment-method-accordion-item-title-paypal'); if (el) { el.click(); return true; } return false; }).catch(() => false);
+    console.log('    [Pay] PayPal retry:', ppClicked);
+    if (ppClicked) { await new Promise(r => setTimeout(r, 500)); await page.evaluate(() => { var el = document.querySelector('[data-testid="paypal-accordion-item-button"]') || document.querySelector('#payment-method-accordion-item-title-paypal'); if (el) el.click(); }).catch(() => {}); }
     await randomDelay(2000, 3000);
-    const ppRetry = page.locator('text=PayPal').first();
-    try {
-      const box = await ppRetry.boundingBox();
-      if (box) await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-      console.log('    [Pay] PayPal retry clicked');
-    } catch {}
-    await randomDelay(1000, 1500);
   }
 
   const addr = await fetchAddress();
@@ -188,10 +184,10 @@ async function handleOpenAIPage(page) {
 
   // Wait for billing address form to appear after PayPal selection
   console.log('    [Pay] Waiting for billing form...');
-  for (let w = 0; w < 6; w++) {
-    const hasForm = await page.locator('#billingAddressLine1, input[name*="addressLine1"]').first().isVisible({ timeout: 800 }).catch(() => false);
+  for (let w = 0; w < 10; w++) {
+    const hasForm = await page.locator('#billingAddressLine1, input[name*="addressLine1"]').first().isVisible({ timeout: 1000 }).catch(() => false);
     if (hasForm) break;
-    await new Promise(r => setTimeout(r, 500));
+    await new Promise(r => setTimeout(r, 1000));
   }
 
   // Step 2: Fill address fields (after PayPal form has loaded)

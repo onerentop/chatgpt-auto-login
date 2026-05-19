@@ -105,7 +105,7 @@ async function load() {
     }
     accounts.value = acctRes.data.map(a => {
       const st = (statusMap[a.email] || '').toLowerCase()
-      const plan = ['success', 'already_plus'].includes(st) ? 'plus' : (st === 'error' || st === 'failed' || st === 'no_link' ? 'free' : '')
+      const plan = ['success', 'already_plus', 'needs_phone', 'pending'].includes(st) ? 'plus' : (['error', 'failed', 'no_link'].includes(st) ? 'free' : '')
       return { ...a, _showPw: false, _plan: plan }
     })
   } catch {}
