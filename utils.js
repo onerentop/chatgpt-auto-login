@@ -50,20 +50,25 @@ function randomDelay(minMs, maxMs) {
 }
 
 function saveResult(resultsPath, result) {
-  const header = 'email,status,duration_s,failure_reason,checkout_url\n';
-  const checkoutUrl = (result.checkoutUrl || '').replace(/,/g, '%2C');
-  const reason = (result.reason || '').replace(/,/g, ';');
-  const line = `${result.email},${result.status},${result.duration},${reason},${checkoutUrl}\n`;
+  try {
+    const header = 'email,status,duration_s,failure_reason,checkout_url\n';
+    const checkoutUrl = (result.checkoutUrl || '').replace(/,/g, '%2C');
+    const reason = (result.reason || '').replace(/,/g, ';');
+    const line = `${result.email},${result.status},${result.duration},${reason},${checkoutUrl}\n`;
 
-  if (!fs.existsSync(resultsPath)) {
-    fs.writeFileSync(resultsPath, header + line);
-  } else {
-    fs.appendFileSync(resultsPath, line);
+    if (!fs.existsSync(resultsPath)) {
+      fs.writeFileSync(resultsPath, header + line);
+    } else {
+      fs.appendFileSync(resultsPath, line);
+    }
+  } catch (e) {
+    console.log(`[WARN] Failed to write results.csv: ${e.message.slice(0, 60)}`);
   }
 }
 
 function saveSessionData(sessionsDir, result) {
   if (!result.session || !result.accessToken) return;
+  try {
   const sanitized = result.email.replace(/[@.]/g, '_');
   const filePath = path.join(sessionsDir, `${sanitized}.json`);
   const data = {
@@ -75,6 +80,9 @@ function saveSessionData(sessionsDir, result) {
     timestamp: new Date().toISOString(),
   };
   fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
+  } catch (e) {
+    console.log(`[WARN] Failed to write session: ${e.message.slice(0, 60)}`);
+  }
 }
 
 function screenshotPath(email) {

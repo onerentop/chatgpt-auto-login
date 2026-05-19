@@ -111,7 +111,7 @@ async function loginAccount(browser, account) {
       // Poll IMAP + auto-click "重新发送" every 15s
       let otp = null;
       let lastResendTime = 0;
-      for (let attempt = 0; attempt < 30; attempt++) {
+      for (let attempt = 0; attempt < 20; attempt++) {
         // Auto-click "重新发送" every 45 seconds
         const now = Date.now();
         if (now - lastResendTime > 45000) {
@@ -154,7 +154,7 @@ async function loginAccount(browser, account) {
         }
 
         if (otp) break;
-        if (attempt % 5 === 4) console.log(`  [4/10] Attempt ${attempt + 1}/30 - waiting...`);
+        if (attempt % 5 === 4) console.log(`  [4/10] Attempt ${attempt + 1}/20 - waiting...`);
         await new Promise((r) => setTimeout(r, 3000));
       }
       if (!otp) throw new Error('Failed to get verification code from Outlook');

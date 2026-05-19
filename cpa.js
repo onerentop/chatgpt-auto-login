@@ -175,7 +175,21 @@ async function registerToCPA(browser, email, account) {
             } catch {}
 
             let otp = null;
+            let lastResend = 0;
             for (let a = 0; a < 20; a++) {
+              // Auto-click resend every 45s
+              const now = Date.now();
+              if (now - lastResend > 45000) {
+                try {
+                  const resend = authPage.locator('button, a').filter({ hasText: /重新发送|Resend/i }).first();
+                  if (await resend.isVisible({ timeout: 1000 }).catch(() => false)) {
+                    await resend.click();
+                    lastResend = now;
+                    if (a > 0) console.log('    [CPA] Clicked resend');
+                  }
+                } catch {}
+              }
+
               let client;
               try {
                 client = new ImapFlow({ host: 'outlook.office365.com', port: 993, secure: true, auth: { user: account.email, accessToken: tokenData.access_token }, logger: false });
@@ -349,4 +363,11 @@ async function registerToCPA(browser, email, account) {
   }
 }
 
-module.exports = { registerToCPA };
+async function registerToCPAWithTimeout(browser, email, account) {
+  return Promise.race([
+    registerToCPA(browser, email, account),
+    new Promise((_, reject) => setTimeout(() => reject(new Error('CPA OAuth timeout (3min)')), 180000)),
+  ]);
+}
+
+module.exports = { registerToCPA: registerToCPAWithTimeout };
