@@ -1,7 +1,7 @@
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
-const archiver = require('archiver');
+const { ZipArchive } = require('archiver');
 const { statusDB, logsDB } = require('../db');
 
 const router = express.Router();
@@ -47,7 +47,7 @@ router.get('/download-all', (req, res) => {
   if (files.length === 0) return res.status(404).json({ error: 'No auth files' });
   res.setHeader('Content-Type', 'application/zip');
   res.setHeader('Content-Disposition', 'attachment; filename=cpa-auth-files.zip');
-  const archive = archiver('zip');
+  const archive = new ZipArchive();
   archive.pipe(res);
   for (const f of files) archive.file(path.join(CPA_AUTH_DIR, f), { name: f });
   archive.finalize();
