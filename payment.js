@@ -163,8 +163,22 @@ async function handleOpenAIPage(page) {
   }
   console.log('    [Pay] PayPal selected:', ppClicked);
 
-  // Wait for PayPal billing form to render
+  // Verify PayPal is actually selected — if not, reload and retry once
   await randomDelay(2000, 3000);
+  const hasError = await page.locator('text=支付方式 必填').or(page.locator('text=Payment method required')).isVisible({ timeout: 1000 }).catch(() => false);
+  if (hasError || !ppClicked) {
+    console.log('    [Pay] PayPal not selected, reloading page to retry...');
+    await page.reload({ waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {});
+    await randomDelay(3000, 4000);
+    // Retry PayPal click
+    const ppRetry = page.locator('text=PayPal').first();
+    try {
+      const box = await ppRetry.boundingBox();
+      if (box) await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+      console.log('    [Pay] PayPal retry clicked');
+    } catch {}
+    await randomDelay(2000, 3000);
+  }
 
   const addr = await fetchAddress();
   console.log('    [Pay] Address:', JSON.stringify(addr));
