@@ -129,14 +129,16 @@ async function fetchTokensViaPKCE(browser, account) {
     await page.goto(authUrl, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
 
     // Handle auth pages: choose-an-account, login, consent
-    for (let i = 0; i < 10; i++) {
+    let loginDone = false;
+    for (let i = 0; i < 15; i++) {
       if (authCode) break;
       const url = page.url();
       if (i === 0) console.log('  [PKCE] Auth page URL:', url.slice(0, 80));
       if (url.includes('localhost:1455')) { try { const u = new URL(url); authCode = u.searchParams.get('code'); } catch {} break; }
 
-      // log-in page → enter email, then handle OTP
-      if (url.includes('auth.openai.com') && (url.includes('log-in') || url.includes('login'))) {
+      // log-in page → enter email, then handle OTP (only once)
+      if (!loginDone && url.includes('auth.openai.com') && (url.includes('log-in') || url.includes('login'))) {
+        loginDone = true;
         console.log('  [PKCE] Login page detected, entering email...');
         try {
           // Enter email
@@ -149,10 +151,13 @@ async function fetchTokensViaPKCE(browser, account) {
             await contBtn.click();
             console.log('  [PKCE] Email submitted');
             await new Promise(r => setTimeout(r, 3000));
+            await page.waitForLoadState('domcontentloaded').catch(() => {});
+            await new Promise(r => setTimeout(r, 2000));
 
-            // Handle OTP or password page
+            // Check page content for OTP input (URL might still be the same)
+            const hasOtpInput = await page.locator('input[name="code"], input[type="text"]').first().isVisible({ timeout: 3000 }).catch(() => false);
             const pageUrl = page.url();
-            if (pageUrl.includes('email-verification') || pageUrl.includes('check-your-email')) {
+            if (hasOtpInput || pageUrl.includes('email-verification') || pageUrl.includes('check-your-email')) {
               // OTP needed — use IMAP to get code
               if (account.client_id && account.refresh_token) {
                 console.log('  [PKCE] Fetching OTP for PKCE auth...');
