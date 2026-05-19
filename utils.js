@@ -155,15 +155,14 @@ async function fetchTokensViaPKCE(browser, account) {
 
   const authUrl = `https://auth.openai.com/oauth/authorize?client_id=${clientId}&code_challenge=${codeChallenge}&code_challenge_method=S256&codex_cli_simplified_flow=true&id_token_add_organizations=true&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=openid+email+profile+offline_access&state=${state}`;
 
-  // Ensure we're on chatgpt.com first (session cookies needed for auto-auth)
+  // Navigate to chatgpt.com/api/auth/session to refresh session cookies on both domains
   const ctxPages = context.pages();
   const mainPage = ctxPages.length > 0 ? ctxPages[0] : await context.newPage();
-  const currentUrl = mainPage.url();
-  if (!currentUrl.includes('chatgpt.com') && !currentUrl.includes('auth.openai.com')) {
-    console.log('  [PKCE] Navigating back to chatgpt.com first...');
-    await mainPage.goto('https://chatgpt.com', { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {});
-    await new Promise(r => setTimeout(r, 2000));
-  }
+  console.log('  [PKCE] Refreshing session cookies...');
+  await mainPage.goto('https://chatgpt.com/api/auth/session', { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {});
+  await new Promise(r => setTimeout(r, 1000));
+  await mainPage.goto('https://chatgpt.com', { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {});
+  await new Promise(r => setTimeout(r, 2000));
 
   // Intercept localhost redirect to capture the authorization code
   let authCode = null;
@@ -202,46 +201,10 @@ async function fetchTokensViaPKCE(browser, account) {
         continue;
       }
 
-      // STATE 2: log-in (enter email)
-      if (!handled.login && url.includes('auth.openai.com') && (url.includes('log-in') || url.includes('login')) && !url.includes('email-verification')) {
-        handled.login = true;
-        console.log('  [PKCE] State: log-in');
-        await page.waitForLoadState('networkidle').catch(() => {});
-        await new Promise(r => setTimeout(r, 2000));
-        const emailField = page.locator('input[type="email"], input[name="email"]').first();
-        if (await emailField.isVisible({ timeout: 3000 }).catch(() => false)) {
-          await emailField.click();
-          await emailField.fill(account.email);
-          await new Promise(r => setTimeout(r, 800));
-          // Click continue (force + JS fallback)
-          const btn = page.locator('button').filter({ hasText: /继续|Continue/i }).first();
-          if (await btn.isVisible({ timeout: 2000 }).catch(() => false)) await btn.click({ force: true });
-          else await page.evaluate(() => { for (const b of document.querySelectorAll('button')) if (b.textContent.includes('继续') || b.textContent.includes('Continue')) { b.click(); return; } });
-          console.log('  [PKCE] Email submitted');
-        }
-        await new Promise(r => setTimeout(r, 3000));
-        continue;
-      }
-
-      // STATE 3: email-verification (OTP)
-      if (url.includes('email-verification') || url.includes('check-your-email') || await page.locator('input[name="code"]').isVisible({ timeout: 1000 }).catch(() => false)) {
-        if (handled.otp) { await new Promise(r => setTimeout(r, 2000)); continue; }
-        handled.otp = true;
-        console.log('  [PKCE] State: email-verification');
-        if (account.client_id && account.refresh_token) {
-          const otp = await _fetchPkceOtp(page, account);
-          if (otp) {
-            await page.evaluate((code) => {
-              const inp = document.querySelector('input[name="code"], input[type="text"]');
-              if (inp) { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(inp, code); inp.dispatchEvent(new Event('input', { bubbles: true })); inp.dispatchEvent(new Event('change', { bubbles: true })); }
-            }, otp);
-            await new Promise(r => setTimeout(r, 800));
-            await page.evaluate(() => { for (const b of document.querySelectorAll('button')) if (['继续','Continue'].includes(b.textContent.trim())) { b.click(); return; } });
-            console.log('  [PKCE] OTP submitted');
-          }
-        } else { console.log('  [PKCE] No IMAP credentials, cannot get OTP'); }
-        await new Promise(r => setTimeout(r, 3000));
-        continue;
+      // STATE 2: log-in page — session not shared, skip OTP (rate-limited)
+      if (url.includes('auth.openai.com') && (url.includes('log-in') || url.includes('login')) && !url.includes('email-verification')) {
+        console.log('  [PKCE] State: log-in — auth session not shared, skipping (OTP rate-limited)');
+        break;
       }
 
       // STATE 4: about-you (first-time registration)
