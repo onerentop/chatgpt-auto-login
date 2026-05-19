@@ -21,7 +21,6 @@ const { LogCapture } = require('./logger');
 
 // Re-use the same modules the CLI uses
 const {
-  loadAccounts,
   saveResult,
   saveSessionData,
   saveCPAAuthFile,
@@ -35,7 +34,6 @@ const { registerToCPA } = require('../cpa');
 
 // ========== Paths ==========
 const ROOT = path.join(__dirname, '..');
-const CSV_PATH = path.join(ROOT, 'accounts.csv');
 const RESULTS_PATH = path.join(ROOT, 'results.csv');
 const SESSIONS_DIR = path.join(ROOT, 'sessions');
 const DISCORD_RESULTS = path.join(ROOT, 'discord-results.json');
@@ -375,8 +373,10 @@ class PipelineEngine extends EventEmitter {
 
     try {
       // Load accounts
-      const accounts = loadAccounts(CSV_PATH);
-      if (accounts.length === 0) throw new Error('No accounts in accounts.csv');
+      // Read accounts from DB
+      const { accountsDB } = getDB();
+      const accounts = accountsDB.list().map(a => ({ ...a, loginType: a.login_type }));
+      if (accounts.length === 0) throw new Error('No accounts in database');
       if (!findChrome()) throw new Error('Chrome not found!');
       if (!fs.existsSync(SESSIONS_DIR)) fs.mkdirSync(SESSIONS_DIR, { recursive: true });
 
