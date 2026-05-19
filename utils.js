@@ -90,4 +90,30 @@ function screenshotPath(email) {
   return path.join(__dirname, 'screenshots', `${sanitized}.png`);
 }
 
-module.exports = { loadAccounts, generateTOTP, randomDelay, saveResult, saveSessionData, screenshotPath };
+function saveCPAAuthFile(email, accessToken) {
+  const authDir = path.join(__dirname, 'cpa-auth');
+  if (!fs.existsSync(authDir)) fs.mkdirSync(authDir, { recursive: true });
+  const sanitized = email.replace(/@/g, '-at-').replace(/\./g, '-');
+  const filePath = path.join(authDir, `codex-${sanitized}.json`);
+  const data = {
+    type: 'codex',
+    email: email,
+    refresh_token: '',
+    access_token: accessToken,
+    expired: new Date(Date.now() + 3600000).toISOString(),
+    proxy_url: '',
+    proxy_strict: false,
+    prefix: '',
+    refresh_interval_seconds: 300,
+  };
+  try {
+    fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
+    console.log(`  [CPA-Auth] Saved: ${filePath}`);
+    return filePath;
+  } catch (e) {
+    console.log(`  [CPA-Auth] Failed: ${e.message.slice(0, 60)}`);
+    return null;
+  }
+}
+
+module.exports = { loadAccounts, generateTOTP, randomDelay, saveResult, saveSessionData, screenshotPath, saveCPAAuthFile };

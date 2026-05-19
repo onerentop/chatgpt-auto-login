@@ -5,7 +5,7 @@ const os = require('os');
 const readline = require('readline');
 const WebSocket = require('ws');
 const { chromium } = require('playwright');
-const { loadAccounts, saveResult, saveSessionData, randomDelay } = require('./utils');
+const { loadAccounts, saveResult, saveSessionData, saveCPAAuthFile, randomDelay } = require('./utils');
 const { loginAccount } = require('./login');
 const { autoPayment } = require('./payment');
 const { registerToCPA } = require('./cpa');
@@ -228,7 +228,8 @@ async function main() {
               console.log(`${p} CPA error: ${e.message}`);
             }
           } else {
-            console.log(`${p} CPA OAuth skipped (enableCPA=false)`);
+            console.log(`${p} CPA OAuth skipped. Generating local auth file...`);
+            saveCPAAuthFile(account.email, loginResult.accessToken);
           }
         } else {
           // Not Plus → payment flow
@@ -259,7 +260,7 @@ async function main() {
             console.log(`${p} Payment flow completed. Waiting 10s...`);
             await randomDelay(10000, 12000);
 
-            // Phase 4: CPA OAuth
+            // Phase 4: CPA OAuth or local auth file
             if (payConfig.enableCPA !== false) {
               console.log(`${p} Phase 4: CPA OAuth...`);
               try {
@@ -269,6 +270,9 @@ async function main() {
               } catch (e) {
                 console.log(`${p} CPA error: ${e.message}`);
               }
+            } else {
+              console.log(`${p} CPA OAuth skipped. Generating local auth file...`);
+              saveCPAAuthFile(account.email, loginResult.accessToken);
             }
           } else {
             console.log(`${p} No link: ${discord.raw.slice(0, 150)}`);
