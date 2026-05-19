@@ -428,11 +428,10 @@ class PipelineEngine extends EventEmitter {
 
         console.log(`${p} === ${account.email} ===`);
 
-        const port = basePort + i;
-        const tempDir = path.join(os.tmpdir(), `chatgpt-login-${Date.now()}`);
-        this._chromeProc = null;
-        this._browser = null;
-        this._tempDir = tempDir;
+        const port = basePort + (threadId * 100) + i;
+        const tempDir = path.join(os.tmpdir(), `chatgpt-login-t${threadId}-${Date.now()}`);
+        let chromeProc = null;
+        let browser = null;
         let finalResult = { email: account.email, status: 'ERROR', paymentLink: '', reason: '' };
 
         try {
@@ -440,9 +439,8 @@ class PipelineEngine extends EventEmitter {
           // Phase 1: Login & get accessToken
           currentPhase = 'login';
           console.log(`${p} Phase 1: Login...`);
-          this._chromeProc = launchChrome(port, tempDir);
-          this._browser = await waitForCDP(port);
-          const browser = this._browser;
+          chromeProc = launchChrome(port, tempDir);
+          browser = await waitForCDP(port);
           const loginResult = await loginAccount(browser, account);
           saveResult(RESULTS_PATH, loginResult);
           saveSessionData(SESSIONS_DIR, loginResult);
@@ -560,12 +558,9 @@ class PipelineEngine extends EventEmitter {
           console.log(`${p} ERROR: ${error.message}`);
           finalResult.reason = error.message.slice(0, 200);
         } finally {
-          if (this._browser) try { await this._browser.close(); } catch {}
-          if (this._chromeProc) try { this._chromeProc.kill(); } catch {}
+          if (browser) try { await browser.close(); } catch {}
+          if (chromeProc) try { chromeProc.kill(); } catch {}
           try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {}
-          this._browser = null;
-          this._chromeProc = null;
-          this._tempDir = null;
         }
 
         allResults.push(finalResult);
