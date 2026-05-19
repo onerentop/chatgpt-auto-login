@@ -104,6 +104,16 @@ async function fetchTokensViaPKCE(browser, account) {
 
   const authUrl = `https://auth.openai.com/oauth/authorize?client_id=${clientId}&code_challenge=${codeChallenge}&code_challenge_method=S256&codex_cli_simplified_flow=true&id_token_add_organizations=true&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=openid+email+profile+offline_access&state=${state}`;
 
+  // Ensure we're on chatgpt.com first (session cookies needed for auto-auth)
+  const ctxPages = context.pages();
+  const mainPage = ctxPages.length > 0 ? ctxPages[0] : await context.newPage();
+  const currentUrl = mainPage.url();
+  if (!currentUrl.includes('chatgpt.com') && !currentUrl.includes('auth.openai.com')) {
+    console.log('  [PKCE] Navigating back to chatgpt.com first...');
+    await mainPage.goto('https://chatgpt.com', { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {});
+    await new Promise(r => setTimeout(r, 2000));
+  }
+
   // Intercept localhost redirect to capture the authorization code
   let authCode = null;
   await context.route('http://localhost:1455/**', (route) => {
