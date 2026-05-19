@@ -5,6 +5,7 @@ config.json
 screenshots/
 sessions/
 cpa-auth/
+logs/
 results.csv
 discord-results.json
 .playwright-mcp/

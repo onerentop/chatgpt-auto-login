@@ -312,14 +312,37 @@ class PipelineEngine extends EventEmitter {
     let currentEmail = '';
     let currentPhase = '';
 
-    // Hook console.log → emit 'log' events
+    // Ensure logs directory exists
+    const LOGS_DIR = path.join(ROOT, 'logs');
+    if (!fs.existsSync(LOGS_DIR)) fs.mkdirSync(LOGS_DIR, { recursive: true });
+
+    // Hook console.log → emit 'log' events + write to per-account log files
     const logHandler = (message) => {
-      this.emit('log', {
+      const entry = {
         email: currentEmail,
         phase: currentPhase,
         message,
         timestamp: new Date().toISOString(),
-      });
+      };
+      this.emit('log', entry);
+
+      // Append to per-account log file
+      if (currentEmail) {
+        const sanitized = currentEmail.replace(/[@.]/g, '_');
+        const logFile = path.join(LOGS_DIR, `${sanitized}.json`);
+        let logs = [];
+        try { logs = JSON.parse(fs.readFileSync(logFile, 'utf-8')); } catch {}
+        logs.push(entry);
+        // Keep last 3 runs: find run boundaries (entries where phase changes to 'login') and keep last 3
+        const runStarts = [];
+        for (let i = 0; i < logs.length; i++) {
+          if (logs[i].message?.includes('[1/10] Navigating')) runStarts.push(i);
+        }
+        if (runStarts.length > 3) {
+          logs = logs.slice(runStarts[runStarts.length - 3]);
+        }
+        try { fs.writeFileSync(logFile, JSON.stringify(logs)); } catch {}
+      }
     };
     this.logCapture.onLog(logHandler);
     this.logCapture.start();

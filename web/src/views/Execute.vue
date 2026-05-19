@@ -1,5 +1,5 @@
 <template>
-  <div class="execute-page">
+  <div>
     <!-- Toolbar -->
     <el-row style="margin-bottom: 12px" :gutter="12" align="middle">
       <el-col :span="24">
@@ -16,14 +16,13 @@
       </el-col>
     </el-row>
 
-    <!-- Account Table -->
+    <!-- Account Table with expandable logs -->
     <el-table
       ref="tableRef"
       :data="accountRows"
       stripe border size="small"
       @selection-change="onSelectionChange"
-      style="margin-bottom: 12px"
-      max-height="280"
+      @expand-change="onExpand"
     >
       <el-table-column type="selection" width="45" />
       <el-table-column prop="email" label="邮箱" min-width="220" />
@@ -58,28 +57,31 @@
           >{{ row._status === 'failed' ? '重试' : '执行' }}</el-button>
         </template>
       </el-table-column>
+      <!-- Expandable log per account -->
+      <el-table-column type="expand">
+        <template #default="{ row }">
+          <div style="font-family:'Consolas','Courier New',monospace;font-size:13px;max-height:calc(100vh - 350px);overflow-y:auto;padding:12px;background:#1e1e1e;color:#d4d4d4;border-radius:4px;line-height:1.6">
+            <!-- Historical logs (last 3 runs) -->
+            <div v-for="(log, i) in getAllLogs(row.email)" :key="i" style="white-space:pre-wrap;word-break:break-all">
+              <span style="color:#808080">{{ formatTs(log.timestamp) }}</span>
+              <span> {{ log.message }}</span>
+            </div>
+            <div v-if="getAllLogs(row.email).length === 0 && !row._logsLoading" style="color:#808080;padding:10px;text-align:center">暂无日志 — 点击展开自动加载历史</div>
+            <div v-if="row._logsLoading" style="color:#808080;padding:10px;text-align:center">加载中...</div>
+          </div>
+        </template>
+      </el-table-column>
     </el-table>
-
-    <!-- Log Area — fills remaining space -->
-    <div ref="logBox" class="log-area">
-      <div v-for="(log, i) in socketState.logs" :key="i" class="log-line">
-        <span class="log-time">{{ log.timestamp?.slice(11,19) }}</span>
-        <span v-if="log.email" class="log-email">[{{ log.email.split('@')[0] }}]</span>
-        <span> {{ log.message }}</span>
-      </div>
-      <div v-if="socketState.logs.length === 0" style="color:#808080;padding:20px;text-align:center">等待执行...</div>
-    </div>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, watch, nextTick, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import api from '../api'
 import { socketState } from '../socket'
 
 const tableRef = ref(null)
-const logBox = ref(null)
 const running = ref(false)
 const accounts = ref([])
 const selected = ref([])
@@ -88,10 +90,32 @@ const selectedEmails = computed(() => selected.value.map(r => r.email))
 const failedEmails = computed(() => accounts.value.filter(a => a._status === 'failed').map(a => a.email))
 const accountRows = computed(() => accounts.value)
 
-// Auto-scroll log
-watch(() => socketState.logs.length, () => {
-  nextTick(() => { if (logBox.value) logBox.value.scrollTop = logBox.value.scrollHeight })
-})
+const historyLogs = ref({})
+
+function getAllLogs(email) {
+  const history = historyLogs.value[email] || []
+  const realtime = socketState.logs.filter(l => l.email === email)
+  // Merge: history first, then realtime (dedup by timestamp)
+  const historyTs = new Set(history.map(l => l.timestamp))
+  const merged = [...history, ...realtime.filter(l => !historyTs.has(l.timestamp))]
+  return merged
+}
+
+function formatTs(ts) {
+  if (!ts) return ''
+  return ts.slice(0, 19).replace('T', ' ')
+}
+
+async function onExpand(row, expanded) {
+  if (expanded.length && !historyLogs.value[row.email]) {
+    row._logsLoading = true
+    try {
+      const { data } = await api.get(`/results/${encodeURIComponent(row.email)}/logs`)
+      historyLogs.value[row.email] = data
+    } catch {}
+    row._logsLoading = false
+  }
+}
 
 watch(() => socketState.accountStatuses, (statuses) => {
   for (const [email, data] of Object.entries(statuses)) {
@@ -184,39 +208,3 @@ function downloadSelected() {
   }
 }
 </script>
-
-<style scoped>
-.execute-page {
-  display: flex;
-  flex-direction: column;
-  height: calc(100vh - 60px);
-}
-
-.log-area {
-  flex: 1;
-  min-height: 200px;
-  overflow-y: auto;
-  background: #1e1e1e;
-  color: #d4d4d4;
-  font-family: 'Consolas', 'Courier New', monospace;
-  font-size: 13px;
-  line-height: 1.6;
-  padding: 12px;
-  border-radius: 4px;
-}
-
-.log-line {
-  white-space: pre-wrap;
-  word-break: break-all;
-}
-
-.log-time {
-  color: #808080;
-  margin-right: 6px;
-}
-
-.log-email {
-  color: #569cd6;
-  margin-right: 6px;
-}
-</style>

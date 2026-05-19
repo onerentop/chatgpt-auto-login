@@ -9,6 +9,7 @@ const router = express.Router();
 const DISCORD_RESULTS = path.join(__dirname, '..', '..', 'discord-results.json');
 const SESSIONS_DIR = path.join(__dirname, '..', '..', 'sessions');
 const CPA_AUTH_DIR = path.join(__dirname, '..', '..', 'cpa-auth');
+const LOGS_DIR = path.join(__dirname, '..', '..', 'logs');
 const CSV_PATH = path.join(__dirname, '..', '..', 'accounts.csv');
 
 /**
@@ -115,6 +116,19 @@ router.post('/:email/retry', (req, res) => {
   } catch (err) {
     res.status(500).json({ error: `Failed to read accounts: ${err.message}` });
   }
+});
+
+/**
+ * GET /:email/logs — get saved logs for an account (last 3 runs)
+ */
+router.get('/:email/logs', (req, res) => {
+  const sanitized = decodeURIComponent(req.params.email).replace(/[@.]/g, '_');
+  const logFile = path.join(LOGS_DIR, `${sanitized}.json`);
+  try {
+    if (!fs.existsSync(logFile)) return res.json([]);
+    const logs = JSON.parse(fs.readFileSync(logFile, 'utf-8'));
+    res.json(logs);
+  } catch { res.json([]); }
 });
 
 module.exports = router;
