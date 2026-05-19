@@ -43,8 +43,17 @@ router.get('/statuses', (req, res) => {
 // GET /download-all — ZIP all auth files (MUST be before /:email routes)
 router.get('/download-all', (req, res) => {
   if (!fs.existsSync(CPA_AUTH_DIR)) return res.status(404).json({ error: 'No auth files' });
-  const files = fs.readdirSync(CPA_AUTH_DIR).filter(f => f.endsWith('.json'));
-  if (files.length === 0) return res.status(404).json({ error: 'No auth files' });
+  // Only include auth files for accounts in the current account list
+  const { accountsDB } = require('../db');
+  const accountEmails = new Set(accountsDB.list().map(a => a.email));
+  const allFiles = fs.readdirSync(CPA_AUTH_DIR).filter(f => f.endsWith('.json'));
+  const files = allFiles.filter(f => {
+    for (const email of accountEmails) {
+      if (f === emailToAuthFilename(email)) return true;
+    }
+    return false;
+  });
+  if (files.length === 0) return res.status(404).json({ error: 'No auth files for current accounts' });
   res.setHeader('Content-Type', 'application/zip');
   res.setHeader('Content-Disposition', 'attachment; filename=cpa-auth-files.zip');
   const archive = new ZipArchive();
