@@ -4,7 +4,10 @@
   "description": "Automated ChatGPT login via Gmail with TOTP 2FA support",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "web": "node server/index.js",
+    "web:dev": "cd web && npm run dev",
+    "web:build": "cd web && npm run build"
   },
   "dependencies": {
     "archiver": "^8.0.0",
