@@ -187,6 +187,14 @@ async function handleOpenAIPage(page) {
   const addr = await fetchAddress();
   console.log('    [Pay] Address:', JSON.stringify(addr));
 
+  // Wait for billing address form to appear after PayPal selection
+  console.log('    [Pay] Waiting for billing form...');
+  for (let w = 0; w < 10; w++) {
+    const hasForm = await page.locator('#billingAddressLine1, input[name*="addressLine1"]').first().isVisible({ timeout: 1000 }).catch(() => false);
+    if (hasForm) break;
+    await new Promise(r => setTimeout(r, 1000));
+  }
+
   // Step 2: Fill address fields (after PayPal form has loaded)
   const fillResult = await page.evaluate((addr) => {
     var log = [];
