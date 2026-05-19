@@ -97,20 +97,21 @@ async function _fetchPkceOtp(page, account) {
   const tokenData = await tokenRes.json();
   if (!tokenData.access_token) { console.log('  [PKCE] IMAP token failed'); return null; }
 
-  // Click resend
-  try {
-    const resend = page.locator('button, a').filter({ hasText: /重新发送|Resend/i }).first();
-    if (await resend.isVisible({ timeout: 2000 }).catch(() => false)) { await resend.click(); console.log('  [PKCE] Clicked resend'); await new Promise(r => setTimeout(r, 2000)); }
-  } catch {}
-
-  // Get baseline UID
+  // Get baseline UID FIRST (before triggering new email)
   let baseline = 0;
   try {
     const pre = new ImapFlow({ host: 'outlook.office365.com', port: 993, secure: true, auth: { user: account.email, accessToken: tokenData.access_token }, logger: false });
     await pre.connect(); const lock = await pre.getMailboxLock('INBOX');
+    console.log(`  [PKCE] INBOX total: ${pre.mailbox.exists}`);
     const s = Math.max(1, pre.mailbox.exists - 9);
     for await (const m of pre.fetch({ seq: `${s}:*` }, { uid: true })) { if (m.uid > baseline) baseline = m.uid; }
     lock.release(); await pre.logout();
+  } catch (e) { console.log(`  [PKCE] Baseline error: ${e.message?.slice(0, 50)}`); }
+
+  // THEN click resend to trigger fresh code
+  try {
+    const resend = page.locator('button, a').filter({ hasText: /重新发送|Resend/i }).first();
+    if (await resend.isVisible({ timeout: 2000 }).catch(() => false)) { await resend.click(); console.log('  [PKCE] Clicked resend'); await new Promise(r => setTimeout(r, 2000)); }
   } catch {}
 
   console.log(`  [PKCE] Baseline UID: ${baseline}`);
