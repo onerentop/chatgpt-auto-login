@@ -61,7 +61,13 @@ function findChrome() {
   return null;
 }
 
-function launchChrome(port, tempDir) {
+function launchChrome(port, tempDir, threadId = 0) {
+  const q = getScreenQuarter();
+  // Tile windows: T0=top-left, T1=top-right, T2=bottom-left, T3=bottom-right
+  const col = threadId % 2;
+  const row = Math.floor(threadId / 2);
+  const x = col * q.w;
+  const y = row * q.h;
   return spawn(findChrome(), [
     `--remote-debugging-port=${port}`,
     '--incognito',
@@ -70,7 +76,7 @@ function launchChrome(port, tempDir) {
     '--no-default-browser-check',
     '--disable-default-apps',
     '--disable-popup-blocking',
-    `--window-size=${getScreenQuarter().w},${getScreenQuarter().h}`, '--window-position=0,0',
+    `--window-size=${q.w},${q.h}`, `--window-position=${x},${y}`,
     'about:blank',
   ], { stdio: 'ignore', detached: false });
 }
@@ -439,7 +445,7 @@ class PipelineEngine extends EventEmitter {
           // Phase 1: Login & get accessToken
           currentPhase = 'login';
           console.log(`${p} Phase 1: Login...`);
-          chromeProc = launchChrome(port, tempDir);
+          chromeProc = launchChrome(port, tempDir, threadId);
           browser = await waitForCDP(port);
           const loginResult = await loginAccount(browser, account);
           saveResult(RESULTS_PATH, loginResult);
