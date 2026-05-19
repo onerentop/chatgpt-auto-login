@@ -5,11 +5,12 @@
         <el-button type="primary" @click="showImport = true">批量导入</el-button>
         <el-button @click="exportAccounts">导出</el-button>
         <el-button type="success" @click="openAdd">添加单个</el-button>
-        <el-tag style="margin-left: 12px">共 {{ accounts.length }} 个账号</el-tag>
+        <el-input v-model="search" placeholder="搜索邮箱..." clearable style="width:220px;margin-left:12px" />
+        <el-tag style="margin-left: 12px">{{ filteredAccounts.length }} / {{ accounts.length }}</el-tag>
       </el-col>
     </el-row>
 
-    <el-table :data="accounts" stripe border size="small">
+    <el-table :data="filteredAccounts" stripe border size="small">
       <el-table-column type="index" label="#" width="50" />
       <el-table-column prop="email" label="邮箱" min-width="220" />
       <el-table-column prop="loginType" label="类型" width="90">
@@ -77,11 +78,17 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import api from '../api'
 
 const accounts = ref([])
+const search = ref('')
+const filteredAccounts = computed(() => {
+  if (!search.value) return accounts.value
+  const q = search.value.toLowerCase()
+  return accounts.value.filter(a => a.email.toLowerCase().includes(q))
+})
 const showImport = ref(false)
 const showEdit = ref(false)
 const editMode = ref(false)

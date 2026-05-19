@@ -15,11 +15,17 @@
         <el-tag v-if="socketState.connected" type="success" style="margin-left: 8px">WS</el-tag>
       </el-col>
     </el-row>
+    <el-row style="margin-bottom: 12px">
+      <el-col :span="24">
+        <el-input v-model="search" placeholder="搜索邮箱..." clearable style="width:220px" />
+        <el-tag style="margin-left: 12px">{{ filteredRows.length }} / {{ accounts.length }}</el-tag>
+      </el-col>
+    </el-row>
 
     <!-- Account Table with expandable logs -->
     <el-table
       ref="tableRef"
-      :data="accountRows"
+      :data="filteredRows"
       row-key="email"
       stripe border size="small"
       @selection-change="onSelectionChange"
@@ -108,9 +114,14 @@ const running = ref(false)
 const accounts = ref([])
 const selected = ref([])
 
+const search = ref('')
 const selectedEmails = computed(() => selected.value.map(r => r.email))
 const failedEmails = computed(() => accounts.value.filter(a => a._status === 'failed').map(a => a.email))
-const accountRows = computed(() => accounts.value)
+const filteredRows = computed(() => {
+  if (!search.value) return accounts.value
+  const q = search.value.toLowerCase()
+  return accounts.value.filter(a => a.email.toLowerCase().includes(q))
+})
 
 const historyLogs = ref({})
 
