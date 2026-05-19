@@ -228,7 +228,7 @@ async function main() {
             }
           } else {
             console.log(`${p} CPA OAuth skipped. Running PKCE to get full tokens...`);
-            const pkceTokens = await fetchTokensViaPKCE(browser, account).catch((e) => { console.log(`  [PKCE] Failed: ${e.message}`); return null; });
+            const pkceTokens = await fetchTokensViaPKCE(browser, account, loginResult.lastOtp).catch((e) => { console.log(`  [PKCE] Failed: ${e.message}`); return null; });
             if (pkceTokens) {
               saveCPAAuthFile(account.email, pkceTokens.access_token, pkceTokens);
             } else {
@@ -277,7 +277,7 @@ async function main() {
               }
             } else {
               console.log(`${p} CPA OAuth skipped. Running PKCE to get full tokens...`);
-              const pkceTokens = await fetchTokensViaPKCE(browser, account).catch((e) => { console.log(`  [PKCE] Failed: ${e.message}`); return null; });
+              const pkceTokens = await fetchTokensViaPKCE(browser, account, loginResult.lastOtp).catch((e) => { console.log(`  [PKCE] Failed: ${e.message}`); return null; });
               if (pkceTokens) {
                 saveCPAAuthFile(account.email, pkceTokens.access_token, pkceTokens);
               } else {

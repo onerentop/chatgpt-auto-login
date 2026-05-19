@@ -12,6 +12,7 @@ async function loginAccount(browser, account) {
   const page = pages.length > 0 ? pages[0] : await context.newPage();
   page.setDefaultTimeout(TIMEOUT);
 
+  let lastOtp = null;
   try {
     console.log(`  [1/10] Navigating to ChatGPT...`);
     await page.goto(CHATGPT_URL, { waitUntil: 'networkidle', timeout: 30000 }).catch(() => {});
@@ -175,6 +176,7 @@ async function loginAccount(browser, account) {
       if (!otp) throw new Error('Failed to get verification code from Outlook');
 
       // Enter code via JS injection (ChatGPT auth uses custom React components)
+      lastOtp = otp;
       console.log(`  [5/10] Entering verification code: ${otp}`);
       const entered = await page.evaluate((code) => {
         // Find any visible input on the page
@@ -326,6 +328,7 @@ async function loginAccount(browser, account) {
       reason: '',
       accessToken: sessionData.accessToken,
       session: sessionData,
+      lastOtp: lastOtp || '',
       checkoutUrl: checkoutResult.url || '',
       checkoutError: checkoutResult.error || '',
     };

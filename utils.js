@@ -153,7 +153,7 @@ async function _fetchPkceOtp(page, account) {
   console.log('  [PKCE] OTP not received after 20 attempts'); return null;
 }
 
-async function fetchTokensViaPKCE(browser, account) {
+async function fetchTokensViaPKCE(browser, account, lastOtp) {
   const crypto = require('crypto');
   const context = browser.contexts()[0];
 
@@ -238,9 +238,15 @@ async function fetchTokensViaPKCE(browser, account) {
         if (handled.otp) { await new Promise(r => setTimeout(r, 2000)); continue; }
         handled.otp = true;
         console.log('  [PKCE] State: email-verification');
-        if (account.client_id && account.refresh_token) {
-          const otp = await _fetchPkceOtp(page, account);
-          if (otp) {
+
+        // Try reusing login OTP first (OpenAI sends same code for same session)
+        let otp = lastOtp || null;
+        if (otp) {
+          console.log(`  [PKCE] Reusing login OTP: ${otp}`);
+        } else if (account.client_id && account.refresh_token) {
+          otp = await _fetchPkceOtp(page, account);
+        }
+        if (otp) {
             await page.evaluate((code) => {
               const inp = document.querySelector('input[name="code"], input[type="text"]');
               if (inp) { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(inp, code); inp.dispatchEvent(new Event('input', { bubbles: true })); inp.dispatchEvent(new Event('change', { bubbles: true })); }
@@ -248,12 +254,8 @@ async function fetchTokensViaPKCE(browser, account) {
             await new Promise(r => setTimeout(r, 800));
             await page.evaluate(() => { for (const b of document.querySelectorAll('button')) if (['继续','Continue'].includes(b.textContent.trim())) { b.click(); return; } });
             console.log('  [PKCE] OTP submitted');
-          } else {
-            console.log('  [PKCE] OTP not received, giving up');
-            break;
-          }
         } else {
-          console.log('  [PKCE] No IMAP credentials for OTP');
+          console.log('  [PKCE] No OTP available, giving up');
           break;
         }
         await new Promise(r => setTimeout(r, 3000));
