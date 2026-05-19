@@ -90,6 +90,57 @@ function screenshotPath(email) {
   return path.join(__dirname, 'screenshots', `${sanitized}.png`);
 }
 
+async function _fetchPkceOtp(page, account) {
+  const { ImapFlow } = require('imapflow');
+  const tokenBody = new URLSearchParams({ client_id: account.client_id, grant_type: 'refresh_token', refresh_token: account.refresh_token, scope: 'https://outlook.office.com/IMAP.AccessAsUser.All' });
+  const tokenRes = await fetch('https://login.microsoftonline.com/consumers/oauth2/v2.0/token', { method: 'POST', body: tokenBody });
+  const tokenData = await tokenRes.json();
+  if (!tokenData.access_token) { console.log('  [PKCE] IMAP token failed'); return null; }
+
+  // Click resend
+  try {
+    const resend = page.locator('button, a').filter({ hasText: /重新发送|Resend/i }).first();
+    if (await resend.isVisible({ timeout: 2000 }).catch(() => false)) { await resend.click(); console.log('  [PKCE] Clicked resend'); await new Promise(r => setTimeout(r, 2000)); }
+  } catch {}
+
+  // Get baseline UID
+  let baseline = 0;
+  try {
+    const pre = new ImapFlow({ host: 'outlook.office365.com', port: 993, secure: true, auth: { user: account.email, accessToken: tokenData.access_token }, logger: false });
+    await pre.connect(); const lock = await pre.getMailboxLock('INBOX');
+    const s = Math.max(1, pre.mailbox.exists - 9);
+    for await (const m of pre.fetch({ seq: `${s}:*` }, { uid: true })) { if (m.uid > baseline) baseline = m.uid; }
+    lock.release(); await pre.logout();
+  } catch {}
+
+  // Poll for OTP
+  let lastResend = Date.now();
+  for (let a = 0; a < 20; a++) {
+    if (Date.now() - lastResend > 45000) {
+      try { const rb = page.locator('button, a').filter({ hasText: /重新发送|Resend/i }).first(); if (await rb.isVisible({ timeout: 1000 }).catch(() => false)) { await rb.click(); lastResend = Date.now(); console.log('  [PKCE] Resend clicked'); } } catch {}
+    }
+    let client;
+    try {
+      client = new ImapFlow({ host: 'outlook.office365.com', port: 993, secure: true, auth: { user: account.email, accessToken: tokenData.access_token }, logger: false });
+      await client.connect(); const lock = await client.getMailboxLock('INBOX');
+      for await (const msg of client.fetch({ uid: `${baseline + 1}:*` }, { envelope: true, source: true, uid: true })) {
+        if (msg.uid <= baseline) continue;
+        const subject = msg.envelope?.subject || '';
+        if (subject.includes('ChatGPT') || subject.includes('验证') || subject.includes('OpenAI')) {
+          const src = msg.source?.toString() || '';
+          const html = src.indexOf('<html') > -1 ? src.slice(src.indexOf('<html')).replace(/<[^>]+>/g, ' ') : src;
+          const match = html.match(/\b(\d{6})\b/);
+          if (match) { lock.release(); await client.logout(); console.log(`  [PKCE] Got OTP: ${match[1]}`); return match[1]; }
+        }
+      }
+      lock.release(); await client.logout();
+    } catch { try { await client?.logout(); } catch {} }
+    if (a % 5 === 4) console.log(`  [PKCE] OTP attempt ${a + 1}/20...`);
+    await new Promise(r => setTimeout(r, 3000));
+  }
+  console.log('  [PKCE] OTP not received'); return null;
+}
+
 async function fetchTokensViaPKCE(browser, account) {
   const crypto = require('crypto');
   const context = browser.contexts()[0];
@@ -128,165 +179,90 @@ async function fetchTokensViaPKCE(browser, account) {
   try {
     await page.goto(authUrl, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
 
-    // Handle auth pages: choose-an-account, login, consent
-    let loginDone = false;
-    for (let i = 0; i < 15; i++) {
+    // State machine for auth.openai.com pages
+    const handled = {};
+    for (let i = 0; i < 20; i++) {
       if (authCode) break;
       const url = page.url();
-      if (i === 0) console.log('  [PKCE] Auth page URL:', url.slice(0, 80));
-      if (url.includes('localhost:1455')) { try { const u = new URL(url); authCode = u.searchParams.get('code'); } catch {} break; }
+      if (i === 0) console.log('  [PKCE] Auth page:', url.slice(0, 80));
 
-      // log-in page → enter email, then handle OTP (only once)
-      if (!loginDone && url.includes('auth.openai.com') && (url.includes('log-in') || url.includes('login'))) {
-        loginDone = true;
-        console.log('  [PKCE] Login page detected, entering email...');
-        try {
-          // Wait for page to fully load (button may be disabled initially)
-          await page.waitForLoadState('networkidle').catch(() => {});
-          await new Promise(r => setTimeout(r, 2000));
-
-          // Enter email
-          const emailField = page.locator('input[type="email"], input[name="email"]').first();
-          const emailVisible = await emailField.isVisible({ timeout: 3000 }).catch(() => false);
-          console.log('  [PKCE] Email field visible:', emailVisible);
-          if (emailVisible) {
-            await emailField.click();
-            await emailField.fill(account.email);
-            console.log('  [PKCE] Email filled:', account.email);
-            await new Promise(r => setTimeout(r, 1000));
-
-            // Click continue with force (button may be momentarily disabled)
-            const contBtn = page.locator('button').filter({ hasText: /继续|Continue/i }).first();
-            const btnVisible = await contBtn.isVisible({ timeout: 2000 }).catch(() => false);
-            console.log('  [PKCE] Continue button visible:', btnVisible);
-            if (btnVisible) {
-              await contBtn.click({ force: true });
-              console.log('  [PKCE] Email submitted');
-            } else {
-              // Fallback: submit via JS
-              await page.evaluate(() => {
-                const btns = document.querySelectorAll('button');
-                for (const b of btns) { if (b.textContent.includes('继续') || b.textContent.includes('Continue')) { b.click(); return; } }
-              });
-              console.log('  [PKCE] Email submitted (JS fallback)');
-            }
-            await new Promise(r => setTimeout(r, 3000));
-            await page.waitForLoadState('domcontentloaded').catch(() => {});
-            await new Promise(r => setTimeout(r, 2000));
-            console.log('  [PKCE] After submit URL:', page.url().slice(0, 80));
-
-            // Check page content for OTP input (URL might still be the same)
-            const hasOtpInput = await page.locator('input[name="code"], input[type="text"]').first().isVisible({ timeout: 3000 }).catch(() => false);
-            const pageUrl = page.url();
-            if (hasOtpInput || pageUrl.includes('email-verification') || pageUrl.includes('check-your-email')) {
-              // OTP needed — use IMAP to get code
-              if (account.client_id && account.refresh_token) {
-                console.log('  [PKCE] Fetching OTP for PKCE auth...');
-                const { ImapFlow } = require('imapflow');
-                const tokenBody = new URLSearchParams({ client_id: account.client_id, grant_type: 'refresh_token', refresh_token: account.refresh_token, scope: 'https://outlook.office.com/IMAP.AccessAsUser.All' });
-                const tokenRes = await fetch('https://login.microsoftonline.com/consumers/oauth2/v2.0/token', { method: 'POST', body: tokenBody });
-                const tokenData = await tokenRes.json();
-                if (tokenData.access_token) {
-                  // Click resend to trigger fresh code
-                  try {
-                    const resend = page.locator('button, a').filter({ hasText: /重新发送|Resend/i }).first();
-                    if (await resend.isVisible({ timeout: 3000 }).catch(() => false)) {
-                      await resend.click();
-                      console.log('  [PKCE] Clicked resend');
-                      await new Promise(r => setTimeout(r, 2000));
-                    } else {
-                      console.log('  [PKCE] Resend button not found, waiting for email...');
-                    }
-                  } catch {}
-
-                  let baseline = 0;
-                  try {
-                    const pre = new ImapFlow({ host: 'outlook.office365.com', port: 993, secure: true, auth: { user: account.email, accessToken: tokenData.access_token }, logger: false });
-                    await pre.connect();
-                    const lock = await pre.getMailboxLock('INBOX');
-                    const s = Math.max(1, pre.mailbox.exists - 9);
-                    for await (const m of pre.fetch({ seq: `${s}:*` }, { uid: true })) { if (m.uid > baseline) baseline = m.uid; }
-                    lock.release(); await pre.logout();
-                  } catch {}
-
-                  let otp = null;
-                  let lastResend = Date.now();
-                  for (let a = 0; a < 20; a++) {
-                    // Auto-click resend every 45s
-                    if (Date.now() - lastResend > 45000) {
-                      try {
-                        const rb = page.locator('button, a').filter({ hasText: /重新发送|Resend/i }).first();
-                        if (await rb.isVisible({ timeout: 1000 }).catch(() => false)) { await rb.click(); lastResend = Date.now(); console.log('  [PKCE] Clicked resend'); }
-                      } catch {}
-                    }
-                    let client;
-                    try {
-                      client = new ImapFlow({ host: 'outlook.office365.com', port: 993, secure: true, auth: { user: account.email, accessToken: tokenData.access_token }, logger: false });
-                      await client.connect();
-                      const lock = await client.getMailboxLock('INBOX');
-                      for await (const msg of client.fetch({ uid: `${baseline + 1}:*` }, { envelope: true, source: true, uid: true })) {
-                        if (msg.uid <= baseline) continue;
-                        const subject = msg.envelope?.subject || '';
-                        if (subject.includes('ChatGPT') || subject.includes('验证') || subject.includes('OpenAI')) {
-                          const src = msg.source?.toString() || '';
-                          const html = src.indexOf('<html') > -1 ? src.slice(src.indexOf('<html')).replace(/<[^>]+>/g, ' ') : src;
-                          const match = html.match(/\b(\d{6})\b/);
-                          if (match) { otp = match[1]; console.log(`  [PKCE] Got OTP: ${otp}`); }
-                        }
-                      }
-                      lock.release(); await client.logout();
-                    } catch { try { await client?.logout(); } catch {} }
-                    if (otp) break;
-                    if (a % 5 === 4) console.log(`  [PKCE] OTP attempt ${a + 1}/20...`);
-                    await new Promise(r => setTimeout(r, 3000));
-                  }
-
-                  if (otp) {
-                    await page.evaluate((code) => {
-                      const inp = document.querySelector('input[name="code"], input[type="text"]');
-                      if (inp) { const ns = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; ns.call(inp, code); inp.dispatchEvent(new Event('input', { bubbles: true })); inp.dispatchEvent(new Event('change', { bubbles: true })); }
-                    }, otp);
-                    await new Promise(r => setTimeout(r, 800));
-                    await page.evaluate(() => { const b = document.querySelectorAll('button'); for (const btn of b) { if (btn.textContent.trim() === '继续' || btn.textContent.trim() === 'Continue') { btn.click(); return; } } });
-                    console.log('  [PKCE] OTP submitted');
-                    await new Promise(r => setTimeout(r, 3000));
-                  }
-                }
-              }
-            }
-            continue;
-          }
-        } catch (e) { console.log('  [PKCE] Login error:', e.message?.slice(0, 60)); }
+      // SUCCESS: redirected to localhost
+      if (url.includes('localhost:1455')) {
+        try { authCode = new URL(url).searchParams.get('code'); } catch {}
+        break;
       }
 
-      // choose-an-account → click matching account
+      // STATE 1: choose-an-account
       if (url.includes('choose-an-account')) {
-        try {
-          const acct = page.locator('button, a, div[role="button"]').filter({ hasText: new RegExp(account.email.split('@')[0], 'i') }).first();
-          if (await acct.isVisible({ timeout: 1500 }).catch(() => false)) {
-            await acct.click();
-            console.log('  [PKCE] Selected account');
-            await new Promise(r => setTimeout(r, 2000));
-            continue;
-          }
-          // Fallback: first clickable account
-          const first = page.locator('button, div[role="button"]').first();
-          if (await first.isVisible({ timeout: 1000 }).catch(() => false)) { await first.click(); await new Promise(r => setTimeout(r, 2000)); continue; }
-        } catch {}
+        console.log('  [PKCE] State: choose-an-account');
+        const acct = page.locator('button, a, div[role="button"]').filter({ hasText: new RegExp(account.email.split('@')[0], 'i') }).first();
+        if (await acct.isVisible({ timeout: 2000 }).catch(() => false)) { await acct.click(); console.log('  [PKCE] Selected account'); }
+        else { const f = page.locator('button, div[role="button"]').first(); await f.click().catch(() => {}); console.log('  [PKCE] Clicked first account'); }
+        await new Promise(r => setTimeout(r, 3000));
+        continue;
       }
 
-      // Continue/Authorize buttons
-      const btnTexts = ['继续', 'Continue', 'Authorize', '允许', '同意', '계속'];
-      for (const txt of btnTexts) {
-        try {
-          const btn = page.getByRole('button', { name: txt });
-          if (await btn.isVisible({ timeout: 1000 }).catch(() => false)) {
-            await btn.click();
-            console.log(`  [PKCE] Clicked "${txt}"`);
-            break;
-          }
-        } catch {}
+      // STATE 2: log-in (enter email)
+      if (!handled.login && url.includes('auth.openai.com') && (url.includes('log-in') || url.includes('login')) && !url.includes('email-verification')) {
+        handled.login = true;
+        console.log('  [PKCE] State: log-in');
+        await page.waitForLoadState('networkidle').catch(() => {});
+        await new Promise(r => setTimeout(r, 2000));
+        const emailField = page.locator('input[type="email"], input[name="email"]').first();
+        if (await emailField.isVisible({ timeout: 3000 }).catch(() => false)) {
+          await emailField.click();
+          await emailField.fill(account.email);
+          await new Promise(r => setTimeout(r, 800));
+          // Click continue (force + JS fallback)
+          const btn = page.locator('button').filter({ hasText: /继续|Continue/i }).first();
+          if (await btn.isVisible({ timeout: 2000 }).catch(() => false)) await btn.click({ force: true });
+          else await page.evaluate(() => { for (const b of document.querySelectorAll('button')) if (b.textContent.includes('继续') || b.textContent.includes('Continue')) { b.click(); return; } });
+          console.log('  [PKCE] Email submitted');
+        }
+        await new Promise(r => setTimeout(r, 3000));
+        continue;
       }
+
+      // STATE 3: email-verification (OTP)
+      if (url.includes('email-verification') || url.includes('check-your-email') || await page.locator('input[name="code"]').isVisible({ timeout: 1000 }).catch(() => false)) {
+        if (handled.otp) { await new Promise(r => setTimeout(r, 2000)); continue; }
+        handled.otp = true;
+        console.log('  [PKCE] State: email-verification');
+        if (account.client_id && account.refresh_token) {
+          const otp = await _fetchPkceOtp(page, account);
+          if (otp) {
+            await page.evaluate((code) => {
+              const inp = document.querySelector('input[name="code"], input[type="text"]');
+              if (inp) { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(inp, code); inp.dispatchEvent(new Event('input', { bubbles: true })); inp.dispatchEvent(new Event('change', { bubbles: true })); }
+            }, otp);
+            await new Promise(r => setTimeout(r, 800));
+            await page.evaluate(() => { for (const b of document.querySelectorAll('button')) if (['继续','Continue'].includes(b.textContent.trim())) { b.click(); return; } });
+            console.log('  [PKCE] OTP submitted');
+          }
+        } else { console.log('  [PKCE] No IMAP credentials, cannot get OTP'); }
+        await new Promise(r => setTimeout(r, 3000));
+        continue;
+      }
+
+      // STATE 4: about-you (first-time registration)
+      if (url.includes('about-you') || url.includes('about')) {
+        if (!handled.about) {
+          handled.about = true;
+          console.log('  [PKCE] State: about-you (skipping — already handled at login)');
+        }
+        await new Promise(r => setTimeout(r, 2000));
+        continue;
+      }
+
+      // STATE 5: consent / any page with Continue button
+      const clicked = await page.evaluate(() => {
+        for (const b of document.querySelectorAll('button')) {
+          const t = b.textContent.trim();
+          if (['继续','Continue','Authorize','允许','同意','Accept'].includes(t)) { b.click(); return t; }
+        }
+        return null;
+      });
+      if (clicked) console.log(`  [PKCE] Clicked "${clicked}"`);
       await new Promise(r => setTimeout(r, 2000));
     }
   } finally {
