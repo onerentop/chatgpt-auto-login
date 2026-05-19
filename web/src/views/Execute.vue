@@ -118,8 +118,9 @@ function formatTs(ts) {
   return ts.slice(0, 19).replace('T', ' ')
 }
 
-async function onExpand(row, expanded) {
-  if (expanded.length && !historyLogs.value[row.email]) {
+async function onExpand(row, expandedRows) {
+  const isExpanded = expandedRows.some(r => r.email === row.email)
+  if (isExpanded) {
     row._logsLoading = true
     try {
       const { data } = await api.get(`/results/${encodeURIComponent(row.email)}/logs`)

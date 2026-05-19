@@ -44,7 +44,7 @@ router.get('/statuses', (req, res) => {
 router.get('/:email/logs', (req, res) => {
   try {
     const logs = logsDB.getByEmail(decodeURIComponent(req.params.email));
-    res.json(logs.reverse());
+    res.json(logs);
   } catch { res.json([]); }
 });
 
