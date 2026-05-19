@@ -201,10 +201,51 @@ async function fetchTokensViaPKCE(browser, account) {
         continue;
       }
 
-      // STATE 2: log-in page — session not shared, skip OTP (rate-limited)
-      if (url.includes('auth.openai.com') && (url.includes('log-in') || url.includes('login')) && !url.includes('email-verification')) {
-        console.log('  [PKCE] State: log-in — auth session not shared, skipping (OTP rate-limited)');
-        break;
+      // STATE 2: log-in (enter email → OTP)
+      if (!handled.login && url.includes('auth.openai.com') && (url.includes('log-in') || url.includes('login')) && !url.includes('email-verification')) {
+        handled.login = true;
+        console.log('  [PKCE] State: log-in');
+        await page.waitForLoadState('networkidle').catch(() => {});
+        await new Promise(r => setTimeout(r, 2000));
+        const emailField = page.locator('input[type="email"], input[name="email"]').first();
+        if (await emailField.isVisible({ timeout: 3000 }).catch(() => false)) {
+          await emailField.click();
+          await emailField.fill(account.email);
+          await new Promise(r => setTimeout(r, 800));
+          const btn = page.locator('button').filter({ hasText: /继续|Continue/i }).first();
+          if (await btn.isVisible({ timeout: 2000 }).catch(() => false)) await btn.click({ force: true });
+          else await page.evaluate(() => { for (const b of document.querySelectorAll('button')) if (b.textContent.includes('继续') || b.textContent.includes('Continue')) { b.click(); return; } });
+          console.log('  [PKCE] Email submitted');
+        }
+        await new Promise(r => setTimeout(r, 3000));
+        continue;
+      }
+
+      // STATE 3: email-verification (OTP)
+      if (url.includes('email-verification') || url.includes('check-your-email') || await page.locator('input[name="code"]').isVisible({ timeout: 1000 }).catch(() => false)) {
+        if (handled.otp) { await new Promise(r => setTimeout(r, 2000)); continue; }
+        handled.otp = true;
+        console.log('  [PKCE] State: email-verification');
+        if (account.client_id && account.refresh_token) {
+          const otp = await _fetchPkceOtp(page, account);
+          if (otp) {
+            await page.evaluate((code) => {
+              const inp = document.querySelector('input[name="code"], input[type="text"]');
+              if (inp) { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(inp, code); inp.dispatchEvent(new Event('input', { bubbles: true })); inp.dispatchEvent(new Event('change', { bubbles: true })); }
+            }, otp);
+            await new Promise(r => setTimeout(r, 800));
+            await page.evaluate(() => { for (const b of document.querySelectorAll('button')) if (['继续','Continue'].includes(b.textContent.trim())) { b.click(); return; } });
+            console.log('  [PKCE] OTP submitted');
+          } else {
+            console.log('  [PKCE] OTP not received, giving up');
+            break;
+          }
+        } else {
+          console.log('  [PKCE] No IMAP credentials for OTP');
+          break;
+        }
+        await new Promise(r => setTimeout(r, 3000));
+        continue;
       }
 
       // STATE 4: about-you (first-time registration)
