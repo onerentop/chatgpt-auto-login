@@ -528,7 +528,7 @@ class PipelineEngine extends EventEmitter {
             if (discord.link) {
               console.log(`${p} ${discord.title}`);
               console.log(`${p} Link: ${discord.link.slice(0, 80)}...`);
-              finalResult = { email: account.email, status: 'SUCCESS', paymentLink: discord.link, reason: '' };
+              finalResult = { email: account.email, status: 'PENDING', paymentLink: discord.link, reason: '' };
 
               // Phase 3: Open payment link & auto-fill
               currentPhase = 'payment';
@@ -554,8 +554,29 @@ class PipelineEngine extends EventEmitter {
                 } catch {}
               }
 
-              console.log(`${p} Payment flow completed. Waiting 10s...`);
+              console.log(`${p} Payment flow completed. Verifying plan...`);
               await randomDelay(10000, 12000);
+
+              // Re-check plan after payment
+              try {
+                const ctx3 = browser.contexts()[0];
+                const verifyPage = ctx3?.pages()[0] || await ctx3.newPage();
+                await verifyPage.goto('https://chatgpt.com/api/auth/session', { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {});
+                const sessionText = await verifyPage.locator('pre, body').first().textContent({ timeout: 5000 }).catch(() => '{}');
+                const session2 = JSON.parse(sessionText);
+                const newPlan = session2?.account?.planType || 'free';
+                if (['plus', 'pro', 'team'].includes(newPlan.toLowerCase())) {
+                  console.log(`${p} Plan verified: ${newPlan} — payment successful!`);
+                  finalResult.status = 'SUCCESS';
+                } else {
+                  console.log(`${p} Plan still ${newPlan} — payment may not have completed`);
+                  finalResult.status = 'PENDING';
+                  finalResult.reason = 'Payment not confirmed';
+                }
+              } catch (e) {
+                console.log(`${p} Plan verify failed: ${e.message?.slice(0, 50)}`);
+                finalResult.status = 'PENDING';
+              }
 
               // Phase 4: CPA OAuth or local auth file
               currentPhase = 'cpa';
