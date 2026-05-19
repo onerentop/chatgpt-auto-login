@@ -10,6 +10,7 @@
     </el-row>
 
     <el-table :data="accounts" stripe border size="small">
+      <el-table-column type="index" label="#" width="50" />
       <el-table-column prop="email" label="邮箱" min-width="220" />
       <el-table-column prop="loginType" label="类型" width="90">
         <template #default="{ row }">

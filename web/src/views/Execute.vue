@@ -26,6 +26,7 @@
       @expand-change="onExpand"
     >
       <el-table-column type="selection" width="45" />
+      <el-table-column type="index" label="#" width="50" />
       <el-table-column prop="email" label="邮箱" min-width="220" />
       <el-table-column prop="loginType" label="类型" width="85">
         <template #default="{ row }">
