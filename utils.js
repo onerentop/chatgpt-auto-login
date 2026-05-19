@@ -183,13 +183,22 @@ async function fetchTokensViaPKCE(browser, account, lastOtp) {
   const authUrl = `https://auth.openai.com/oauth/authorize?client_id=${clientId}&code_challenge=${codeChallenge}&code_challenge_method=S256&codex_cli_simplified_flow=true&id_token_add_organizations=true&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=openid+email+profile+offline_access&state=${state}`;
 
   // Navigate to chatgpt.com/api/auth/session to refresh session cookies on both domains
-  const ctxPages = context.pages();
-  const mainPage = ctxPages.length > 0 ? ctxPages[0] : await context.newPage();
+  // Close extra tabs (PayPal etc.) that may block navigation
+  const allPages = context.pages();
+  if (allPages.length > 1) {
+    for (let i = 1; i < allPages.length; i++) await allPages[i].close().catch(() => {});
+  }
+  const mainPage = context.pages()[0] || await context.newPage();
+
+  // Force navigate away from PayPal (bypass beforeunload dialogs)
   console.log('  [PKCE] Refreshing session cookies...');
-  await mainPage.goto('https://chatgpt.com/api/auth/session', { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {});
+  try {
+    await mainPage.evaluate(() => { window.onbeforeunload = null; });
+  } catch {}
+  await mainPage.goto('https://chatgpt.com/api/auth/session', { waitUntil: 'domcontentloaded', timeout: 10000 }).catch(() => {});
   await new Promise(r => setTimeout(r, 1000));
-  await mainPage.goto('https://chatgpt.com', { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {});
-  await new Promise(r => setTimeout(r, 2000));
+  await mainPage.goto('https://chatgpt.com', { waitUntil: 'domcontentloaded', timeout: 10000 }).catch(() => {});
+  await new Promise(r => setTimeout(r, 1500));
 
   // Intercept localhost redirect to capture the authorization code
   let authCode = null;

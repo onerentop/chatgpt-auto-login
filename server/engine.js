@@ -428,7 +428,7 @@ class PipelineEngine extends EventEmitter {
 
           const threadEmail = account.email;
           const progress = `${i + 1}/${filtered.length}`;
-          const p = `[T${threadId + 1}][${progress}]`;
+          const p = threadCount > 1 ? `[T${threadId + 1}][${progress}]` : `[${progress}]`;
 
           threadContexts[threadId] = { email: threadEmail, phase: 'login' };
           currentEmail = threadEmail;
