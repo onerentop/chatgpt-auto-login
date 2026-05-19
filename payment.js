@@ -43,23 +43,27 @@ function randPass() {
 }
 
 async function fetchAddress() {
-  try {
-    const res = await fetch('https://www.meiguodizhi.com/api/v1/dz', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ path: '/', method: 'address' }),
-    });
-    const d = await res.json();
-    const a = d.address || d;
-    return {
-      street: a.Address || a.street || '123 Main St',
-      city: a.City || a.city || 'New York',
-      state: a.State_Full || a.State || a.state || 'New York',
-      zip: (a.Zip_Code || a.zip || '10001').substring(0, 5),
-    };
-  } catch {
-    return { street: '123 Main St', city: 'New York', state: 'New York', zip: '10001' };
+  // Retry up to 3 times (multi-thread may hit rate limit)
+  for (let retry = 0; retry < 3; retry++) {
+    try {
+      const res = await fetch('https://www.meiguodizhi.com/api/v1/dz', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: '/', method: 'address' }),
+      });
+      const d = await res.json();
+      const a = d.address || d;
+      return {
+        street: a.Address || a.street || '123 Main St',
+        city: a.City || a.city || 'New York',
+        state: a.State_Full || a.State || a.state || 'New York',
+        zip: (a.Zip_Code || a.zip || '10001').substring(0, 5),
+      };
+    } catch {
+      if (retry < 2) await new Promise(r => setTimeout(r, 2000));
+    }
   }
+  return { street: '123 Main St', city: 'New York', state: 'New York', zip: '10001' };
 }
 
 async function fillInput(page, selector, value) {

@@ -524,14 +524,22 @@ class PipelineEngine extends EventEmitter {
               const ctx = browser.contexts()[0];
               const pages = ctx.pages();
               const page = pages.length > 0 ? pages[0] : await ctx.newPage();
-              await page.goto(discord.link, { waitUntil: 'domcontentloaded', timeout: 30000 });
-              await randomDelay(2000, 3000);
+              await page.goto(discord.link, { waitUntil: 'networkidle', timeout: 30000 }).catch(() => {});
+              await randomDelay(3000, 5000);
 
               console.log(`${p} Phase 3: Auto-filling payment...`);
               try {
                 await autoPayment(page, { phone: slot.phone, smsApiUrl: slot.smsApiUrl });
               } catch (e) {
-                console.log(`${p} Auto-fill error: ${e.message}`);
+                console.log(`${p} Auto-fill error: ${e.message?.slice(0, 80)}`);
+                // If page crashed, try to recover
+                try {
+                  const ctx2 = browser.contexts()[0];
+                  if (ctx2) {
+                    const p2 = ctx2.pages();
+                    if (p2.length === 0) await ctx2.newPage();
+                  }
+                } catch {}
               }
 
               console.log(`${p} Payment flow completed. Waiting 10s...`);
