@@ -105,6 +105,13 @@ router.put('/', (req, res) => {
       current[key] = value;
     }
 
+    // Validate: phoneSlots count must >= threads
+    const threads = current.threads || 1;
+    const slots = current.phoneSlots || [];
+    if (slots.length < threads) {
+      return res.status(400).json({ error: `需要 ${threads} 个手机号/接码API，当前只有 ${slots.length} 个` });
+    }
+
     writeConfig(current);
     res.json({ message: 'Config updated', config: maskConfig(current) });
   } catch (err) {

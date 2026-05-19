@@ -404,17 +404,20 @@ class PipelineEngine extends EventEmitter {
 
       let accountIndex = 0;
       const processNext = async (threadId) => {
+        const slot = phoneSlots[threadId % phoneSlots.length] || phoneSlots[0];
+
         while (accountIndex < filtered.length && !this.stopFlag) {
           const i = accountIndex++;
           const account = filtered[i];
-          const slot = phoneSlots[threadId % phoneSlots.length] || phoneSlots[0];
-          // Set phone/smsApiUrl for this thread
-          PAY_CONFIG.phone = slot.phone;
-          PAY_CONFIG.smsApiUrl = slot.smsApiUrl;
 
-          currentEmail = account.email;
+          // Thread-local state (not shared)
+          const threadEmail = account.email;
           const progress = `${i + 1}/${filtered.length}`;
           const p = `[T${threadId + 1}][${progress}]`;
+
+          // Set shared vars for log handler
+          currentEmail = threadEmail;
+          currentPhase = 'login';
 
         this.emitStatus( {
           email: account.email,
@@ -518,7 +521,7 @@ class PipelineEngine extends EventEmitter {
 
               console.log(`${p} Phase 3: Auto-filling payment...`);
               try {
-                await autoPayment(page);
+                await autoPayment(page, { phone: slot.phone, smsApiUrl: slot.smsApiUrl });
               } catch (e) {
                 console.log(`${p} Auto-fill error: ${e.message}`);
               }

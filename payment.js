@@ -274,7 +274,7 @@ async function handlePayPalLogin(page) {
   console.log('    [Pay] PayPal login submitted');
 }
 
-async function handlePayPalCheckout(page) {
+async function handlePayPalCheckout(page, phoneOverride, smsOverride) {
   console.log('    [Pay] PayPal checkout page detected');
   await randomDelay(2000, 3000);
 
@@ -300,7 +300,7 @@ async function handlePayPalCheckout(page) {
   console.log('    [Pay] Address:', JSON.stringify(addr));
 
   await fillInput(page, '#email', email);
-  await fillInput(page, '#phone', CONFIG.phone);
+  await fillInput(page, '#phone', phoneOverride || CONFIG.phone);
   await fillInput(page, '#cardNumber', CONFIG.cardNumber);
   await fillInput(page, '#cardExpiry', CONFIG.cardExpiry);
   await fillInput(page, '#cardCvv', CONFIG.cardCvv);
@@ -317,11 +317,12 @@ async function handlePayPalCheckout(page) {
   console.log('    [Pay] PayPal checkout submitted');
 
   // Handle SMS verification code dialog
-  await handleSmsVerification(page);
+  await handleSmsVerification(page, smsOverride);
 }
 
-async function handleSmsVerification(page) {
-  if (!CONFIG.smsApiUrl) return;
+async function handleSmsVerification(page, smsOverride) {
+  const SMS_URL = smsOverride || CONFIG.smsApiUrl;
+  if (!SMS_URL) return;
 
   await randomDelay(2000, 3000);
 
@@ -339,7 +340,7 @@ async function handleSmsVerification(page) {
   let smsCode = null;
   for (let attempt = 0; attempt < 30; attempt++) {
     try {
-      const res = await fetch(CONFIG.smsApiUrl);
+      const res = await fetch(SMS_URL);
       const text = await res.text();
       console.log(`    [Pay] SMS API attempt ${attempt + 1}: ${text.slice(0, 100)}`);
 
@@ -389,7 +390,10 @@ async function handleSmsVerification(page) {
 
 // ========== Main Auto-Pay ==========
 
-async function autoPayment(page) {
+async function autoPayment(page, phoneConfig) {
+  // phoneConfig: { phone, smsApiUrl } — thread-local override
+  const PHONE = phoneConfig?.phone || CONFIG.phone;
+  const SMS_API = phoneConfig?.smsApiUrl || CONFIG.smsApiUrl;
   console.log('    [Pay] Starting auto-payment flow...');
 
   // Inject CSS to hide CAPTCHA
@@ -411,7 +415,7 @@ async function autoPayment(page) {
     if (currentUrl.includes('paypal.com/pay')) {
       await handlePayPalLogin(page);
     } else if (currentUrl.includes('paypal.com') && (currentUrl.includes('checkoutweb') || currentUrl.includes('signup'))) {
-      await handlePayPalCheckout(page);
+      await handlePayPalCheckout(page, PHONE, SMS_API);
       paypalHandled = true;
       break;
     } else if (currentUrl.includes('pay.openai.com') || currentUrl.includes('checkout.stripe.com')) {
