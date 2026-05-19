@@ -391,7 +391,9 @@ async function autoPayment(page) {
   }
 
   // Wait and handle PayPal pages as they come
-  for (let round = 0; round < 5; round++) {
+  // After OpenAI submit, PayPal redirect can take 5-15 seconds
+  let paypalHandled = false;
+  for (let round = 0; round < 15; round++) {
     await randomDelay(2000, 3000);
     const currentUrl = page.url();
 
@@ -399,13 +401,19 @@ async function autoPayment(page) {
       await handlePayPalLogin(page);
     } else if (currentUrl.includes('paypal.com') && (currentUrl.includes('checkoutweb') || currentUrl.includes('signup'))) {
       await handlePayPalCheckout(page);
+      paypalHandled = true;
       break;
     } else if (currentUrl.includes('pay.openai.com') || currentUrl.includes('checkout.stripe.com')) {
+      // Still on OpenAI/Stripe, waiting for redirect
+      if (round % 3 === 2) console.log('    [Pay] Waiting for PayPal redirect...');
       continue;
     } else {
-      break;
+      // Unknown URL — might be mid-redirect, keep waiting
+      if (round % 3 === 2) console.log('    [Pay] Page: ' + currentUrl.slice(0, 60) + '...');
+      continue;
     }
   }
+  if (!paypalHandled) console.log('    [Pay] PayPal flow not detected, continuing...');
 
   console.log('    [Pay] Auto-payment flow completed');
 }
