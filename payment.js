@@ -168,20 +168,19 @@ async function handleOpenAIPage(page) {
   console.log('    [Pay] PayPal selected:', ppClicked);
 
   // Verify PayPal is actually selected — if not, reload and retry once
-  await randomDelay(2000, 3000);
+  await randomDelay(1000, 1500);
   const hasError = await page.locator('text=支付方式 必填').or(page.locator('text=Payment method required')).isVisible({ timeout: 1000 }).catch(() => false);
   if (hasError || !ppClicked) {
     console.log('    [Pay] PayPal not selected, reloading page to retry...');
     await page.reload({ waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {});
-    await randomDelay(3000, 4000);
-    // Retry PayPal click
+    await randomDelay(2000, 3000);
     const ppRetry = page.locator('text=PayPal').first();
     try {
       const box = await ppRetry.boundingBox();
       if (box) await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
       console.log('    [Pay] PayPal retry clicked');
     } catch {}
-    await randomDelay(2000, 3000);
+    await randomDelay(1000, 1500);
   }
 
   const addr = await fetchAddress();
@@ -189,10 +188,10 @@ async function handleOpenAIPage(page) {
 
   // Wait for billing address form to appear after PayPal selection
   console.log('    [Pay] Waiting for billing form...');
-  for (let w = 0; w < 10; w++) {
-    const hasForm = await page.locator('#billingAddressLine1, input[name*="addressLine1"]').first().isVisible({ timeout: 1000 }).catch(() => false);
+  for (let w = 0; w < 6; w++) {
+    const hasForm = await page.locator('#billingAddressLine1, input[name*="addressLine1"]').first().isVisible({ timeout: 800 }).catch(() => false);
     if (hasForm) break;
-    await new Promise(r => setTimeout(r, 1000));
+    await new Promise(r => setTimeout(r, 500));
   }
 
   // Step 2: Fill address fields (after PayPal form has loaded)
