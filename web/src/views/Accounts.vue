@@ -1,187 +1,129 @@
 <template>
   <div>
     <el-row style="margin-bottom: 16px" :gutter="12" align="middle">
-      <el-col :span="18">
-        <el-button type="primary" @click="showAddDialog = true">添加账号</el-button>
-        <el-button @click="showImportDialog = true">批量导入</el-button>
-        <el-button @click="handleExport">导出</el-button>
-        <el-tag style="margin-left: 12px" type="info">共 {{ accounts.length }} 个账号</el-tag>
+      <el-col :span="24">
+        <el-button type="primary" @click="showImport = true">批量导入</el-button>
+        <el-button @click="exportAccounts">导出</el-button>
+        <el-button type="success" @click="openAdd">添加单个</el-button>
+        <el-tag style="margin-left: 12px">共 {{ accounts.length }} 个账号</el-tag>
       </el-col>
     </el-row>
 
-    <el-table :data="accounts" stripe style="width: 100%">
+    <el-table :data="accounts" stripe border size="small">
       <el-table-column prop="email" label="邮箱" min-width="220" />
-      <el-table-column prop="loginType" label="类型" width="100">
+      <el-table-column prop="loginType" label="类型" width="90">
         <template #default="{ row }">
-          <el-tag :type="row.loginType === 'plus' ? 'success' : 'info'" size="small">
-            {{ row.loginType || 'normal' }}
-          </el-tag>
+          <el-tag :type="row.loginType === 'Google' ? 'danger' : 'warning'" size="small">{{ row.loginType }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="密码" width="150">
+      <el-table-column prop="password" label="密码" width="130">
         <template #default="{ row }">
-          {{ row.password ? '******' : '-' }}
+          <span style="font-family:monospace">{{ row._showPw ? row.password : '••••••' }}</span>
+          <el-button size="small" text @click="row._showPw = !row._showPw">{{ row._showPw ? '隐' : '显' }}</el-button>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="100" fixed="right">
+      <el-table-column label="2FA / Client ID" min-width="160">
+        <template #default="{ row }">{{ row.totp_secret || row.client_id || '-' }}</template>
+      </el-table-column>
+      <el-table-column label="操作" width="140">
         <template #default="{ row }">
-          <el-popconfirm title="确认删除该账号？" @confirm="handleDelete(row.email)">
-            <template #reference>
-              <el-button type="danger" size="small" link>删除</el-button>
-            </template>
+          <el-button size="small" text type="primary" @click="openEdit(row)">编辑</el-button>
+          <el-popconfirm title="确定删除?" @confirm="del(row.email)">
+            <template #reference><el-button size="small" text type="danger">删除</el-button></template>
           </el-popconfirm>
         </template>
       </el-table-column>
     </el-table>
 
-    <!-- Add Dialog -->
-    <el-dialog v-model="showAddDialog" title="添加账号" width="500px">
-      <el-form :model="addForm" label-width="120px">
-        <el-form-item label="邮箱" required>
-          <el-input v-model="addForm.email" placeholder="账号邮箱" />
-        </el-form-item>
-        <el-form-item label="密码">
-          <el-input v-model="addForm.password" type="password" show-password placeholder="登录密码" />
-        </el-form-item>
-        <el-form-item label="TOTP Secret">
-          <el-input v-model="addForm.totp_secret" placeholder="两步验证密钥（可选）" />
-        </el-form-item>
-        <el-form-item label="Client ID">
-          <el-input v-model="addForm.client_id" placeholder="OAuth Client ID（可选）" />
-        </el-form-item>
-        <el-form-item label="Refresh Token">
-          <el-input v-model="addForm.refresh_token" type="password" show-password placeholder="Refresh Token（可选）" />
-        </el-form-item>
-      </el-form>
+    <!-- Import Dialog -->
+    <el-dialog v-model="showImport" title="批量导入" width="650">
+      <p style="color:#909399;margin-bottom:12px">每行一个账号，格式：<code>邮箱----密码----2FA/ClientID----RefreshToken</code><br>空白符会自动去除</p>
+      <el-input v-model="importText" type="textarea" :rows="12" placeholder="email----password----2fa----token&#10;email2----password2----clientId----refreshToken" />
       <template #footer>
-        <el-button @click="showAddDialog = false">取消</el-button>
-        <el-button type="primary" :loading="addLoading" @click="handleAdd">添加</el-button>
+        <el-button @click="showImport = false">取消</el-button>
+        <el-button type="primary" @click="doImport">导入</el-button>
       </template>
     </el-dialog>
 
-    <!-- Import Dialog -->
-    <el-dialog v-model="showImportDialog" title="批量导入" width="600px">
-      <p style="margin-bottom: 12px; color: #909399">
-        每个账号用 <code>----</code> 分隔，每行格式：key=value 或 key: value
-      </p>
-      <el-input
-        v-model="importText"
-        type="textarea"
-        :rows="12"
-        placeholder="email=user@example.com
-password=xxx
-totp_secret=xxx
-----
-email=user2@example.com
-password=yyy"
-      />
+    <!-- Add / Edit Dialog -->
+    <el-dialog v-model="showEdit" :title="editMode ? '编辑账号' : '添加账号'" width="520">
+      <el-form label-width="120px">
+        <el-form-item label="邮箱"><el-input v-model="form.email" :disabled="editMode" /></el-form-item>
+        <el-form-item label="密码"><el-input v-model="form.password" /></el-form-item>
+        <el-form-item label="TOTP 密钥"><el-input v-model="form.totp_secret" placeholder="Gmail 账号填写" /></el-form-item>
+        <el-form-item label="Client ID"><el-input v-model="form.client_id" placeholder="Outlook 账号填写" /></el-form-item>
+        <el-form-item label="Refresh Token"><el-input v-model="form.refresh_token" type="textarea" :rows="3" placeholder="Outlook 账号填写" /></el-form-item>
+      </el-form>
       <template #footer>
-        <el-button @click="showImportDialog = false">取消</el-button>
-        <el-button type="primary" :loading="importLoading" @click="handleImport">导入</el-button>
+        <el-button @click="showEdit = false">取消</el-button>
+        <el-button type="primary" @click="saveEdit">{{ editMode ? '保存' : '添加' }}</el-button>
       </template>
     </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import api from '../api'
 
 const accounts = ref([])
-const showAddDialog = ref(false)
-const showImportDialog = ref(false)
-const addLoading = ref(false)
-const importLoading = ref(false)
+const showImport = ref(false)
+const showEdit = ref(false)
+const editMode = ref(false)
 const importText = ref('')
+const form = ref({ email: '', password: '', totp_secret: '', client_id: '', refresh_token: '' })
+const editOrigEmail = ref('')
 
-const addForm = reactive({
-  email: '',
-  password: '',
-  totp_secret: '',
-  client_id: '',
-  refresh_token: '',
-})
-
-async function loadAccounts() {
+async function load() {
   try {
     const { data } = await api.get('/accounts')
-    accounts.value = data.accounts || data || []
-  } catch (err) {
-    console.error('Failed to load accounts:', err)
-  }
+    accounts.value = data.map(a => ({ ...a, _showPw: false }))
+  } catch {}
+}
+onMounted(load)
+
+function openAdd() {
+  editMode.value = false
+  form.value = { email: '', password: '', totp_secret: '', client_id: '', refresh_token: '' }
+  showEdit.value = true
 }
 
-onMounted(loadAccounts)
+function openEdit(row) {
+  editMode.value = true
+  editOrigEmail.value = row.email
+  form.value = { email: row.email, password: row.password, totp_secret: row.totp_secret || '', client_id: row.client_id || '', refresh_token: row.refresh_token || '' }
+  showEdit.value = true
+}
 
-async function handleAdd() {
-  if (!addForm.email) {
-    ElMessage.warning('请输入邮箱')
-    return
-  }
-  addLoading.value = true
+async function saveEdit() {
   try {
-    await api.post('/accounts', { ...addForm })
-    ElMessage.success('添加成功')
-    showAddDialog.value = false
-    Object.keys(addForm).forEach((k) => (addForm[k] = ''))
-    await loadAccounts()
-  } catch (err) {
-    ElMessage.error(err.response?.data?.error || '添加失败')
-  } finally {
-    addLoading.value = false
-  }
+    if (editMode.value) {
+      await api.put(`/accounts/${encodeURIComponent(editOrigEmail.value)}`, form.value)
+      ElMessage.success('已更新')
+    } else {
+      await api.post('/accounts', form.value)
+      ElMessage.success('已添加')
+    }
+    showEdit.value = false
+    load()
+  } catch (e) { ElMessage.error(e.response?.data?.error || '操作失败') }
 }
 
-async function handleDelete(email) {
+async function doImport() {
   try {
-    await api.delete(`/accounts/${encodeURIComponent(email)}`)
-    ElMessage.success('已删除')
-    await loadAccounts()
-  } catch (err) {
-    ElMessage.error(err.response?.data?.error || '删除失败')
-  }
-}
-
-function handleExport() {
-  const token = localStorage.getItem('token')
-  window.open(`/api/accounts/export?token=${token}`)
-}
-
-async function handleImport() {
-  if (!importText.value.trim()) {
-    ElMessage.warning('请输入账号数据')
-    return
-  }
-  importLoading.value = true
-  try {
-    const blocks = importText.value.split('----').filter((b) => b.trim())
-    const parsed = blocks.map((block) => {
-      const obj = {}
-      block
-        .trim()
-        .split('\n')
-        .forEach((line) => {
-          const sep = line.includes('=') ? '=' : ':'
-          const idx = line.indexOf(sep)
-          if (idx > 0) {
-            const key = line.slice(0, idx).trim()
-            const val = line.slice(idx + 1).trim()
-            obj[key] = val
-          }
-        })
-      return obj
-    })
-
-    await api.post('/accounts/import', { accounts: parsed })
-    ElMessage.success(`成功导入 ${parsed.length} 个账号`)
-    showImportDialog.value = false
+    const { data } = await api.post('/accounts/import', { text: importText.value })
+    ElMessage.success(`导入 ${data.added} 个，跳过 ${data.skipped} 个`)
+    showImport.value = false
     importText.value = ''
-    await loadAccounts()
-  } catch (err) {
-    ElMessage.error(err.response?.data?.error || '导入失败')
-  } finally {
-    importLoading.value = false
-  }
+    load()
+  } catch (e) { ElMessage.error(e.response?.data?.error || '导入失败') }
 }
+
+async function del(email) {
+  try { await api.delete(`/accounts/${encodeURIComponent(email)}`); ElMessage.success('已删除'); load() }
+  catch { ElMessage.error('删除失败') }
+}
+
+function exportAccounts() { window.open('/api/accounts/export') }
 </script>

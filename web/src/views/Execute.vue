@@ -127,7 +127,7 @@ watch(
 async function handleStart() {
   try {
     running.value = true
-    await api.post('/execute/start', { startFrom: startFrom.value })
+    await api.post('/execute', { startFrom: startFrom.value })
     ElMessage.success('执行已启动')
   } catch (err) {
     running.value = false

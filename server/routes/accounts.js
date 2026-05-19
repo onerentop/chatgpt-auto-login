@@ -89,12 +89,11 @@ function maskPassword(pw) {
 router.get('/', (req, res) => {
   try {
     const accounts = readAccounts();
-    const masked = accounts.map((acct) => ({
+    const result = accounts.map((acct) => ({
       ...acct,
-      password: maskPassword(acct.password),
       loginType: detectLoginType(acct.email),
     }));
-    res.json(masked);
+    res.json(result);
   } catch (err) {
     res.status(500).json({ error: 'Failed to read accounts', detail: err.message });
   }
@@ -135,170 +134,71 @@ router.post('/', (req, res) => {
 });
 
 /**
- * POST /import — bulk import accounts from text body.
- *
- * Supports two formats:
- * 1. "----" separator format (one account per block, key=value lines)
- * 2. CSV format (email,password,totp_secret,client_id,refresh_token)
- *
- * Also accepts plain text with one "email,password" per line.
+ * POST /import — bulk import accounts.
+ * Format: one account per line, fields separated by ----
+ * email----password----2fa_or_clientId----refreshToken
+ * Auto trims all whitespace from each field.
  */
-router.post('/import', express.text({ type: '*/*' }), (req, res) => {
+router.post('/import', (req, res) => {
   try {
-    let body = typeof req.body === 'string' ? req.body : JSON.stringify(req.body);
-
-    // If we received JSON (e.g. { text: "..." }), unwrap it
-    if (typeof req.body === 'object' && req.body !== null && req.body.text) {
-      body = req.body.text;
-    }
-
-    if (!body || !body.trim()) {
-      return res.status(400).json({ error: 'No data provided' });
-    }
+    const text = req.body.text || '';
+    if (!text.trim()) return res.status(400).json({ error: 'No data provided' });
 
     const accounts = readAccounts();
     const existingEmails = new Set(accounts.map((a) => a.email.toLowerCase()));
     const newAccounts = [];
     let skipped = 0;
 
-    const trimmedBody = body.trim();
+    const lines = text.trim().split('\n').filter((l) => l.trim());
+    for (const line of lines) {
+      const parts = line.split('----').map((p) => p.trim().replace(/\s+/g, ''));
+      const [email, password, thirdField, fourthField] = parts;
+      if (!email || !password) continue;
+      if (existingEmails.has(email.toLowerCase())) { skipped++; continue; }
 
-    if (trimmedBody.includes('----')) {
-      // ---- separator format
-      const blocks = trimmedBody.split(/----+/).filter((b) => b.trim());
-      for (const block of blocks) {
-        const acct = parseBlock(block.trim());
-        if (acct && acct.email) {
-          if (existingEmails.has(acct.email.toLowerCase())) {
-            skipped++;
-          } else {
-            existingEmails.add(acct.email.toLowerCase());
-            newAccounts.push(acct);
-          }
-        }
-      }
-    } else {
-      // CSV-like format: try to parse line by line
-      const lines = trimmedBody.split('\n').filter((l) => l.trim());
-
-      // Skip header line if it looks like one
-      let startIdx = 0;
-      if (lines.length > 0 && lines[0].toLowerCase().includes('email') && lines[0].toLowerCase().includes('password')) {
-        startIdx = 1;
-      }
-
-      for (let i = startIdx; i < lines.length; i++) {
-        const line = lines[i].trim();
-        if (!line) continue;
-
-        const acct = parseCSVLine(line);
-        if (acct && acct.email) {
-          if (existingEmails.has(acct.email.toLowerCase())) {
-            skipped++;
-          } else {
-            existingEmails.add(acct.email.toLowerCase());
-            newAccounts.push(acct);
-          }
-        }
-      }
+      const isOutlook = ['outlook.com', 'hotmail.com', 'live.com'].some((d) => email.toLowerCase().includes(d));
+      existingEmails.add(email.toLowerCase());
+      newAccounts.push({
+        email,
+        password,
+        totp_secret: isOutlook ? '' : (thirdField || ''),
+        client_id: isOutlook ? (thirdField || '') : '',
+        refresh_token: isOutlook ? (fourthField || '') : '',
+      });
     }
 
-    if (newAccounts.length === 0) {
-      return res.json({ message: 'No new accounts to import', added: 0, skipped });
-    }
-
+    if (newAccounts.length === 0) return res.json({ added: 0, skipped, total: accounts.length });
     const all = [...accounts, ...newAccounts];
     writeAccounts(all);
-
-    res.json({
-      message: `Imported ${newAccounts.length} account(s)`,
-      added: newAccounts.length,
-      skipped,
-      total: all.length,
-    });
+    res.json({ added: newAccounts.length, skipped, total: all.length });
   } catch (err) {
-    res.status(500).json({ error: 'Failed to import accounts', detail: err.message });
+    res.status(500).json({ error: 'Import failed', detail: err.message });
   }
 });
 
 /**
- * Parse a ---- separated block into an account object.
- * Auto-detects Outlook vs Gmail fields.
+ * PUT /:email — edit an account
  */
-function parseBlock(block) {
-  const lines = block.split('\n').filter((l) => l.trim());
-  const acct = { email: '', password: '', totp_secret: '', client_id: '', refresh_token: '' };
+router.put('/:email', (req, res) => {
+  try {
+    const targetEmail = decodeURIComponent(req.params.email).toLowerCase();
+    const accounts = readAccounts();
+    const idx = accounts.findIndex((a) => a.email.toLowerCase() === targetEmail);
+    if (idx === -1) return res.status(404).json({ error: 'Account not found' });
 
-  for (const line of lines) {
-    const eqIdx = line.indexOf('=');
-    if (eqIdx === -1) {
-      // Try comma-separated: email,password
-      const parts = line.split(',');
-      if (parts.length >= 2 && parts[0].includes('@')) {
-        acct.email = parts[0].trim();
-        acct.password = parts[1].trim();
-        if (parts[2]) acct.totp_secret = parts[2].trim();
-        if (parts[3]) acct.client_id = parts[3].trim();
-        if (parts[4]) acct.refresh_token = parts[4].trim();
-      }
-      continue;
-    }
+    const { email, password, totp_secret, client_id, refresh_token } = req.body;
+    if (email) accounts[idx].email = email.trim();
+    if (password) accounts[idx].password = password.trim();
+    if (totp_secret !== undefined) accounts[idx].totp_secret = (totp_secret || '').trim();
+    if (client_id !== undefined) accounts[idx].client_id = (client_id || '').trim();
+    if (refresh_token !== undefined) accounts[idx].refresh_token = (refresh_token || '').trim();
 
-    const key = line.slice(0, eqIdx).trim().toLowerCase();
-    const value = line.slice(eqIdx + 1).trim();
-
-    switch (key) {
-      case 'email':
-        acct.email = value;
-        break;
-      case 'password':
-      case 'pass':
-        acct.password = value;
-        break;
-      case 'totp_secret':
-      case 'totp':
-      case 'secret':
-        acct.totp_secret = value;
-        break;
-      case 'client_id':
-      case 'clientid':
-        acct.client_id = value;
-        break;
-      case 'refresh_token':
-      case 'refreshtoken':
-      case 'token':
-        acct.refresh_token = value;
-        break;
-    }
+    writeAccounts(accounts);
+    res.json({ message: 'Account updated' });
+  } catch (err) {
+    res.status(500).json({ error: 'Update failed', detail: err.message });
   }
-
-  return acct.email ? acct : null;
-}
-
-/**
- * Parse a single CSV line into an account object.
- */
-function parseCSVLine(line) {
-  // Simple CSV parse (handles basic cases)
-  const records = parse(line + '\n', {
-    relax_column_count: true,
-    skip_empty_lines: true,
-  });
-
-  if (records.length === 0 || records[0].length < 2) {
-    // At minimum we need email and password
-    return null;
-  }
-
-  const parts = records[0];
-  return {
-    email: (parts[0] || '').trim(),
-    password: (parts[1] || '').trim(),
-    totp_secret: (parts[2] || '').trim(),
-    client_id: (parts[3] || '').trim(),
-    refresh_token: (parts[4] || '').trim(),
-  };
-}
+});
 
 /**
  * DELETE /:email — delete an account by email
@@ -321,16 +221,23 @@ router.delete('/:email', (req, res) => {
 });
 
 /**
- * GET /export — download accounts.csv as file
+ * GET /export — download accounts in ---- format (same as import)
+ * Format: email----password----2fa_or_clientId----refreshToken
  */
 router.get('/export', (req, res) => {
   try {
-    if (!fs.existsSync(CSV_PATH)) {
-      fs.writeFileSync(CSV_PATH, CSV_HEADER, 'utf-8');
-    }
-    res.download(CSV_PATH, 'accounts.csv');
+    const accounts = readAccounts();
+    const lines = accounts.map((a) => {
+      const isOutlook = ['outlook.com', 'hotmail.com', 'live.com'].some((d) => (a.email || '').toLowerCase().includes(d));
+      const thirdField = isOutlook ? (a.client_id || '') : (a.totp_secret || '');
+      const fourthField = isOutlook ? (a.refresh_token || '') : '';
+      return [a.email, a.password, thirdField, fourthField].filter(Boolean).join('----');
+    });
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename=accounts.txt');
+    res.send(lines.join('\n'));
   } catch (err) {
-    res.status(500).json({ error: 'Failed to export accounts', detail: err.message });
+    res.status(500).json({ error: 'Export failed', detail: err.message });
   }
 });
 
