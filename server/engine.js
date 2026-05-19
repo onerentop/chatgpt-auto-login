@@ -287,6 +287,7 @@ class PipelineEngine extends EventEmitter {
     this.logCapture = new LogCapture();
     this._runId = '';
     this._activeProcs = []; // { chromeProc, browser, tempDir }
+    this._discordLock = Promise.resolve(); // Queue for Discord bot requests
   }
 
   emitStatus(data) {
@@ -503,7 +504,14 @@ class PipelineEngine extends EventEmitter {
             // Phase 2: Discord bot → payment link
             currentPhase = 'discord';
             console.log(`${p} Phase 2: Discord bot...`);
-            const discord = await getPaymentLink(gw, loginResult.accessToken);
+            // Queue Discord requests (single connection, must be sequential)
+            const discord = await new Promise((resolve) => {
+              this._discordLock = this._discordLock.then(async () => {
+                console.log(`${p} Queued for Discord bot...`);
+                const result = await getPaymentLink(gw, loginResult.accessToken);
+                resolve(result);
+              }).catch((e) => resolve({ link: null, raw: e.message }));
+            });
 
             if (discord.link) {
               console.log(`${p} ${discord.title}`);
