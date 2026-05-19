@@ -260,23 +260,34 @@ async function loginAccount(browser, account) {
       } catch {}
     } // end Google path
 
-    console.log(`  [7/10] Waiting for ChatGPT redirect...`);
+    console.log(`  [7/10] Waiting for redirect...`);
     try {
       await page.waitForURL(/chat(gpt)?\.openai\.com|chatgpt\.com|auth\.openai\.com\/about/, { timeout: 8000 });
     } catch {}
     await randomDelay(2000, 3000);
 
-    await handleFirstTimeSetup(page);
+    // Handle first-time account creation (name + age) only if on that page
+    const pageUrl = page.url();
+    if (pageUrl.includes('auth.openai.com/about') || pageUrl.includes('auth.openai.com/onboarding')) {
+      await handleFirstTimeSetup(page);
+      await randomDelay(2000, 3000);
+    }
 
-    console.log(`  [8/10] Verifying login success...`);
-    await randomDelay(2000, 3000);
+    // If still not on ChatGPT, wait a bit more
+    if (!page.url().includes('chatgpt.com') && !page.url().includes('chat.openai.com')) {
+      try { await page.waitForURL(/chat(gpt)?\.openai\.com|chatgpt\.com/, { timeout: 10000 }); } catch {}
+    }
+
+    console.log(`  [8/10] Verifying login...`);
+    await randomDelay(1000, 2000);
     const currentUrl = page.url();
     await page.screenshot({ path: screenshotPath(account.email), fullPage: false });
 
-    const isLoggedIn = await checkLoginSuccess(page, currentUrl);
+    // If on chatgpt.com, consider logged in; otherwise check elements
+    const isLoggedIn = currentUrl.includes('chatgpt.com') || currentUrl.includes('chat.openai.com') || await checkLoginSuccess(page, currentUrl);
     if (!isLoggedIn) {
       const duration = ((Date.now() - startTime) / 1000).toFixed(1);
-      return { email: account.email, status: 'FAILED', duration, reason: 'Login verification failed' };
+      return { email: account.email, status: 'FAILED', duration, reason: 'Login verification failed - URL: ' + currentUrl.slice(0, 60) };
     }
 
     // Step 9: Get session / accessToken
@@ -522,48 +533,22 @@ async function handleFirstTimeSetup(page) {
       const randAge = String(Math.floor(Math.random() * 8) + 18); // 18-25
 
       console.log(`  [7/10] Account creation: name="${randName}", age=${randAge}`);
-      // Fill all empty inputs via JS (React-compatible)
-      await page.evaluate(({ name, age }) => {
-        var ns = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
-        var inputs = document.querySelectorAll('input:not([type="hidden"])');
-        var filled = 0;
-        for (var i = 0; i < inputs.length; i++) {
-          if (inputs[i].offsetHeight === 0) continue;
-          if (inputs[i].value === '' && filled === 0) {
-            // First empty input = name
-            ns.call(inputs[i], name);
-            inputs[i].dispatchEvent(new Event('input', { bubbles: true }));
-            inputs[i].dispatchEvent(new Event('change', { bubbles: true }));
-            filled++;
-          } else if (inputs[i].value === '' && filled === 1) {
-            // Second empty input = age
-            ns.call(inputs[i], age);
-            inputs[i].dispatchEvent(new Event('input', { bubbles: true }));
-            inputs[i].dispatchEvent(new Event('change', { bubbles: true }));
-            filled++;
-          }
-        }
-      }, { name: randName, age: randAge });
+      // Click name field → type → Tab → type age
+      const nameField = page.locator('input:not([type="hidden"])').first();
+      await nameField.click();
+      await page.keyboard.type(randName, { delay: 40 });
+      await randomDelay(300, 500);
+      await page.keyboard.press('Tab');
+      await randomDelay(300, 500);
+      await page.keyboard.type(randAge, { delay: 40 });
+      await randomDelay(800, 1000);
 
-      // Keyboard backup for any remaining empty fields
-      const emptyInputs = page.locator('input:not([type="hidden"])');
-      const count = await emptyInputs.count();
-      for (let i = 0; i < count; i++) {
-        const inp = emptyInputs.nth(i);
-        const val = await inp.inputValue().catch(() => 'x');
-        if (val === '') {
-          await inp.click();
-          await page.keyboard.type(i === 0 ? randName : randAge, { delay: 60 });
-          await randomDelay(300, 500);
-        }
-      }
-      await randomDelay(800, 1200);
-
-      // Click "完成帐户创建" / "Create account"
+      // Click "完成帐户创建"
       const createBtn = page.locator('button').filter({ hasText: /完成帐户创建|完成帳戶創建|Create account|Complete|Continue|继续/i }).first();
       if (await createBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
+        await page.waitForTimeout(500);
         console.log(`  [7/10] Clicking create account...`);
-        await createBtn.click();
+        await createBtn.click({ force: true });
         await randomDelay(5000, 6000);
       }
     }

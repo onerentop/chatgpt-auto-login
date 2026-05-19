@@ -14,9 +14,15 @@ async function registerToCPA(browser, email, account) {
 
   const context = browser.contexts()[0];
 
-  // Use the current page (same tab as ChatGPT)
-  const pages = context.pages();
-  const cpaPage = pages.length > 0 ? pages[0] : await context.newPage();
+  // Close all extra tabs left from payment flow (PayPal etc.)
+  const allPages = context.pages();
+  if (allPages.length > 1) {
+    console.log(`    [CPA] Closing ${allPages.length - 1} extra tab(s)...`);
+    for (let i = 1; i < allPages.length; i++) {
+      await allPages[i].close().catch(() => {});
+    }
+  }
+  const cpaPage = context.pages()[0] || await context.newPage();
 
   try {
     // Step 1: Login to CPA
@@ -56,12 +62,22 @@ async function registerToCPA(browser, email, account) {
       route.abort();
     });
 
-    // Click "打开链接" - browser opens auth URL in a new tab
+    // Click "打开链接" - scroll into view and click via JS if needed
     console.log('    [CPA] Clicking "打开链接"...');
-    const [authPage] = await Promise.all([
-      context.waitForEvent('page', { timeout: 15000 }),
-      cpaPage.getByRole('button', { name: /打开链接/i }).click(),
-    ]);
+    const clicked = await cpaPage.evaluate(() => {
+      const btns = document.querySelectorAll('button');
+      for (const b of btns) {
+        if (b.textContent.includes('打开链接') || b.textContent.includes('Open')) {
+          b.scrollIntoView();
+          b.click();
+          return b.textContent.trim();
+        }
+      }
+      return null;
+    });
+    console.log('    [CPA] Button click result:', clicked);
+
+    const authPage = await context.waitForEvent('page', { timeout: 15000 });
 
     console.log('    [CPA] Auth tab opened:', authPage.url().slice(0, 60) + '...');
     await randomDelay(2000, 3000);
@@ -74,8 +90,49 @@ async function registerToCPA(browser, email, account) {
       const currentUrl = authPage.url().catch ? '' : authPage.url();
       if (currentUrl.includes('localhost:1455')) { callbackUrl = currentUrl; break; }
 
-      // A. OpenAI login page → click "Continue with Google"
-      if (currentUrl.includes('auth.openai.com') && step === 'start') {
+      // A0. OpenAI choose-an-account page → click the account
+      if (currentUrl.includes('auth.openai.com') && currentUrl.includes('choose-an-account')) {
+        // Click the account matching our email, or click the first account
+        const acctBtn = authPage.locator('button, a, div[role="button"]').filter({ hasText: new RegExp(account.email.split('@')[0], 'i') }).first();
+        if (await acctBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
+          await acctBtn.click();
+          console.log('    [CPA] Selected account by email');
+          step = 'consent';
+          await randomDelay(2000, 3000);
+          continue;
+        }
+        // Fallback: click first account option
+        const firstAcct = authPage.locator('[class*="account"], [class*="option"], button').first();
+        if (await firstAcct.isVisible({ timeout: 2000 }).catch(() => false)) {
+          await firstAcct.click();
+          console.log('    [CPA] Selected first account');
+          step = 'consent';
+          await randomDelay(2000, 3000);
+          continue;
+        }
+      }
+
+      // A1. OpenAI login page → for Outlook use email+OTP, for Google use "Continue with Google"
+      if (currentUrl.includes('auth.openai.com') && (step === 'start' || step === 'consent')) {
+        const isOutlook = account.loginType === 'outlook';
+
+        if (isOutlook) {
+          // Enter email in the email field
+          const emailField = authPage.locator('input[type="email"], input[name="email"]').first();
+          if (await emailField.isVisible({ timeout: 2000 }).catch(() => false)) {
+            await emailField.click();
+            await typeHuman(authPage, account.email);
+            await randomDelay(500, 800);
+            const contBtn = authPage.locator('button').filter({ hasText: /继续|Continue/i }).first();
+            await contBtn.click();
+            console.log('    [CPA] Entered email (Outlook)');
+            step = 'outlook_email';
+            await randomDelay(2000, 3000);
+            continue;
+          }
+        }
+
+        // Google path
         const googleBtn = authPage.locator('button, a').filter({ hasText: /Google/i }).first();
         if (await googleBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
           await authPage.waitForLoadState('networkidle').catch(() => {});
@@ -85,6 +142,75 @@ async function registerToCPA(browser, email, account) {
           console.log('    [CPA] Clicked "Continue with Google"');
           await randomDelay(2000, 3000);
           continue;
+        }
+      }
+
+      // A2. Outlook OTP flow on auth.openai.com
+      if (currentUrl.includes('auth.openai.com') && step === 'outlook_email' && account.loginType === 'outlook') {
+        // Switch to OTP if on password page
+        const otpSwitch = authPage.locator('button, a').filter({ hasText: /一次性验证码|one-time code/i }).first();
+        if (await otpSwitch.isVisible({ timeout: 2000 }).catch(() => false)) {
+          await otpSwitch.click();
+          console.log('    [CPA] Switched to OTP');
+          await randomDelay(2000, 3000);
+        }
+
+        // Get OTP from IMAP
+        const codeInput = authPage.locator('input[name="code"], input[type="text"]').first();
+        if (await codeInput.isVisible({ timeout: 3000 }).catch(() => false)) {
+          console.log('    [CPA] Fetching OTP for auth...');
+          const { ImapFlow } = require('imapflow');
+          const tokenBody = new URLSearchParams({ client_id: account.client_id, grant_type: 'refresh_token', refresh_token: account.refresh_token, scope: 'https://outlook.office.com/IMAP.AccessAsUser.All' });
+          const tokenRes = await fetch('https://login.microsoftonline.com/consumers/oauth2/v2.0/token', { method: 'POST', body: tokenBody });
+          const tokenData = await tokenRes.json();
+          if (tokenData.access_token) {
+            let baseline = 0;
+            try {
+              const pre = new ImapFlow({ host: 'outlook.office365.com', port: 993, secure: true, auth: { user: account.email, accessToken: tokenData.access_token }, logger: false });
+              await pre.connect();
+              const lock = await pre.getMailboxLock('INBOX');
+              const s = Math.max(1, pre.mailbox.exists - 9);
+              for await (const m of pre.fetch({ seq: `${s}:*` }, { uid: true })) { if (m.uid > baseline) baseline = m.uid; }
+              lock.release(); await pre.logout();
+            } catch {}
+
+            let otp = null;
+            for (let a = 0; a < 20; a++) {
+              let client;
+              try {
+                client = new ImapFlow({ host: 'outlook.office365.com', port: 993, secure: true, auth: { user: account.email, accessToken: tokenData.access_token }, logger: false });
+                await client.connect();
+                const lock = await client.getMailboxLock('INBOX');
+                for await (const msg of client.fetch({ uid: `${baseline + 1}:*` }, { envelope: true, source: true, uid: true })) {
+                  if (msg.uid <= baseline) continue;
+                  const subject = msg.envelope?.subject || '';
+                  if (subject.includes('ChatGPT') || subject.includes('验证') || subject.includes('OpenAI')) {
+                    const src = msg.source?.toString() || '';
+                    const html = src.indexOf('<html') > -1 ? src.slice(src.indexOf('<html')).replace(/<[^>]+>/g, ' ') : src;
+                    const match = html.match(/\b(\d{6})\b/);
+                    if (match) { otp = match[1]; console.log(`    [CPA] Got OTP: ${otp}`); }
+                  }
+                }
+                lock.release(); await client.logout();
+              } catch { try { await client?.logout(); } catch {} }
+              if (otp) break;
+              if (a % 5 === 4) console.log(`    [CPA] OTP attempt ${a + 1}/20...`);
+              await new Promise(r => setTimeout(r, 3000));
+            }
+
+            if (otp) {
+              await authPage.evaluate((code) => {
+                var inp = document.querySelector('input[name="code"], input[type="text"]');
+                if (inp) { var ns = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; ns.call(inp, code); inp.dispatchEvent(new Event('input', { bubbles: true })); inp.dispatchEvent(new Event('change', { bubbles: true })); }
+              }, otp);
+              await randomDelay(500, 800);
+              await authPage.evaluate(() => { var b = document.querySelectorAll('button'); for (var i = 0; i < b.length; i++) { if (b[i].textContent.trim() === '继续' || b[i].textContent.trim() === 'Continue') { b[i].click(); return; } } });
+              console.log('    [CPA] OTP submitted');
+              step = 'consent';
+              await randomDelay(2000, 3000);
+              continue;
+            }
+          }
         }
       }
 
