@@ -162,7 +162,8 @@ async function loadResults() {
     for (const r of data) {
       const row = accounts.value.find(a => a.email === r.email)
       if (row) {
-        if (r.status && row._status === 'idle') row._status = r.status.toLowerCase()
+        if (r.status && r.status !== 'idle') row._status = r.status
+        if (r.phase) row._phase = r.phase
         row._hasAuth = r.hasAuthFile || false
       }
     }

@@ -6,6 +6,9 @@ screenshots/
 sessions/
 cpa-auth/
 logs/
+data.db
+data.db-wal
+data.db-shm
 results.csv
 discord-results.json
 .playwright-mcp/

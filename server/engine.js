@@ -272,12 +272,21 @@ async function getPaymentLink(gw, accessToken) {
 }
 
 // ========== PipelineEngine ==========
+let statusDB, logsDB;
+try { ({ statusDB, logsDB } = require('./db')); } catch {}
+
 class PipelineEngine extends EventEmitter {
   constructor() {
     super();
     this.status = 'idle';
     this.stopFlag = false;
     this.logCapture = new LogCapture();
+    this._runId = '';
+  }
+
+  emitStatus(data) {
+    this.emit('account-status', data);
+    statusDB.set(data.email, data);
   }
 
   /**
@@ -334,13 +343,13 @@ class PipelineEngine extends EventEmitter {
 
     this.status = 'running';
     this.stopFlag = false;
+    this._runId = `run_${Date.now()}`;
 
     let currentEmail = '';
     let currentPhase = '';
 
-    // Ensure logs directory exists
-    const LOGS_DIR = path.join(ROOT, 'logs');
-    if (!fs.existsSync(LOGS_DIR)) fs.mkdirSync(LOGS_DIR, { recursive: true });
+    // Cleanup old logs
+    logsDB.cleanup();
 
     // Hook console.log → emit 'log' events + write to per-account log files
     const logHandler = (message) => {
@@ -352,22 +361,9 @@ class PipelineEngine extends EventEmitter {
       };
       this.emit('log', entry);
 
-      // Append to per-account log file
+      // Save to DB
       if (currentEmail) {
-        const sanitized = currentEmail.replace(/[@.]/g, '_');
-        const logFile = path.join(LOGS_DIR, `${sanitized}.json`);
-        let logs = [];
-        try { logs = JSON.parse(fs.readFileSync(logFile, 'utf-8')); } catch {}
-        logs.push(entry);
-        // Keep last 3 runs: find run boundaries (entries where phase changes to 'login') and keep last 3
-        const runStarts = [];
-        for (let i = 0; i < logs.length; i++) {
-          if (logs[i].message?.includes('[1/10] Navigating')) runStarts.push(i);
-        }
-        if (runStarts.length > 3) {
-          logs = logs.slice(runStarts[runStarts.length - 3]);
-        }
-        try { fs.writeFileSync(logFile, JSON.stringify(logs)); } catch {}
+        logsDB.add(currentEmail, currentPhase, message, entry.timestamp, this._runId);
       }
     };
     this.logCapture.onLog(logHandler);
@@ -413,7 +409,7 @@ class PipelineEngine extends EventEmitter {
         const progress = `${i + 1}/${filtered.length}`;
         const p = `[${progress}]`;
 
-        this.emit('account-status', {
+        this.emitStatus( {
           email: account.email,
           status: 'running',
           phase: 'login',
@@ -446,7 +442,7 @@ class PipelineEngine extends EventEmitter {
             finalResult.reason = `Login: ${loginResult.reason || loginResult.status}`;
             allResults.push(finalResult);
 
-            this.emit('account-status', {
+            this.emitStatus( {
               email: account.email,
               status: 'error',
               phase: 'login',
@@ -481,15 +477,15 @@ class PipelineEngine extends EventEmitter {
               }
             } else {
               console.log(`${p} CPA OAuth skipped. Running PKCE to get full tokens...`);
-              this.emit('account-status', { email: account.email, status: 'running', phase: 'pkce', progress });
+              this.emitStatus( { email: account.email, status: 'running', phase: 'pkce', progress });
               const pkceTokens = await fetchTokensViaPKCE(browser, account, loginResult.lastOtp).catch((e) => { console.log(`  [PKCE] Failed: ${e.message}`); return null; });
               if (pkceTokens) {
                 saveCPAAuthFile(account.email, pkceTokens.access_token, pkceTokens);
-                this.emit('account-status', { email: account.email, status: 'already_plus', phase: 'done', progress });
+                this.emitStatus( { email: account.email, status: 'already_plus', phase: 'done', progress });
               } else {
                 console.log(`${p} PKCE failed, saving with session token only`);
                 saveCPAAuthFile(account.email, loginResult.accessToken, loginResult.session);
-                this.emit('account-status', { email: account.email, status: 'already_plus', phase: 'done (no PKCE)', progress });
+                this.emitStatus( { email: account.email, status: 'already_plus', phase: 'done (no PKCE)', progress });
               }
             }
           } else {
@@ -536,7 +532,7 @@ class PipelineEngine extends EventEmitter {
                 }
               } else {
                 console.log(`${p} CPA OAuth skipped. Running PKCE to get full tokens...`);
-                this.emit('account-status', { email: account.email, status: 'running', phase: 'pkce', progress });
+                this.emitStatus( { email: account.email, status: 'running', phase: 'pkce', progress });
                 const pkceTokens = await fetchTokensViaPKCE(browser, account, loginResult.lastOtp).catch((e) => { console.log(`  [PKCE] Failed: ${e.message}`); return null; });
                 if (pkceTokens) {
                   saveCPAAuthFile(account.email, pkceTokens.access_token, pkceTokens);
@@ -566,7 +562,7 @@ class PipelineEngine extends EventEmitter {
         console.log(`${p} ${account.email} → ${finalResult.status}`);
 
         // Emit final account status
-        this.emit('account-status', {
+        this.emitStatus( {
           email: account.email,
           status: finalResult.status.toLowerCase(),
           phase: 'done',
