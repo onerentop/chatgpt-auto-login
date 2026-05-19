@@ -125,5 +125,5 @@ async function del(email) {
   catch { ElMessage.error('删除失败') }
 }
 
-function exportAccounts() { window.open('/api/accounts/export') }
+function exportAccounts() { window.open(`/api/accounts/export?token=${localStorage.getItem('token') || ''}`) }
 </script>

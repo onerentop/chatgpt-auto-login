@@ -212,8 +212,9 @@ async function handleStop() {
   catch { ElMessage.error('停止失败') }
 }
 
-function downloadAuth(email) { window.open(`/api/results/${encodeURIComponent(email)}/auth-file`) }
-function downloadAll() { window.open('/api/results/download-all') }
+function getToken() { return localStorage.getItem('token') || '' }
+function downloadAuth(email) { window.open(`/api/results/${encodeURIComponent(email)}/auth-file?token=${getToken()}`) }
+function downloadAll() { window.open(`/api/results/download-all?token=${getToken()}`) }
 function downloadSelected() {
   for (const email of selectedEmails.value) {
     const row = accounts.value.find(a => a.email === email)
