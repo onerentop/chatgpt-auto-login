@@ -1,7 +1,22 @@
 const fs = require('fs');
 const path = require('path');
+const { execSync } = require('child_process');
 const { parse } = require('csv-parse/sync');
 const { authenticator } = require('otplib');
+
+let _screenSize = null;
+function getScreenQuarter() {
+  if (!_screenSize) {
+    try {
+      const out = execSync('powershell -command "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Screen]::PrimaryScreen.Bounds | Select Width,Height | ConvertTo-Json"', { encoding: 'utf-8', timeout: 5000 });
+      const { Width, Height } = JSON.parse(out);
+      _screenSize = { w: Math.floor(Width / 2), h: Math.floor(Height / 2) };
+    } catch {
+      _screenSize = { w: 960, h: 540 };
+    }
+  }
+  return _screenSize;
+}
 
 function loadAccounts(csvPath) {
   const content = fs.readFileSync(csvPath, 'utf-8');
@@ -365,4 +380,4 @@ function saveCPAAuthFile(email, accessToken, session) {
   }
 }
 
-module.exports = { loadAccounts, generateTOTP, randomDelay, saveResult, saveSessionData, screenshotPath, saveCPAAuthFile, fetchTokensViaPKCE };
+module.exports = { loadAccounts, generateTOTP, randomDelay, saveResult, saveSessionData, screenshotPath, saveCPAAuthFile, fetchTokensViaPKCE, getScreenQuarter };

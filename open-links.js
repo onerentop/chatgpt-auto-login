@@ -31,7 +31,7 @@ function launchChrome(port, tempDir) {
     '--no-default-browser-check',
     '--disable-default-apps',
     '--disable-popup-blocking',
-    '--window-size=960,540', '--window-position=0,0',
+    `--window-size=${require('./utils').getScreenQuarter().w},${require('./utils').getScreenQuarter().h}`, '--window-position=0,0',
     'about:blank',
   ];
   return spawn(chromePath, args, { stdio: 'ignore', detached: false });

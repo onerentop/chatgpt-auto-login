@@ -5,7 +5,7 @@ const os = require('os');
 const readline = require('readline');
 const WebSocket = require('ws');
 const { chromium } = require('playwright');
-const { loadAccounts, saveResult, saveSessionData, saveCPAAuthFile, fetchTokensViaPKCE, randomDelay } = require('./utils');
+const { loadAccounts, saveResult, saveSessionData, saveCPAAuthFile, fetchTokensViaPKCE, randomDelay, getScreenQuarter } = require('./utils');
 const { loginAccount } = require('./login');
 const { autoPayment } = require('./payment');
 const { registerToCPA } = require('./cpa');
@@ -41,7 +41,7 @@ function launchChrome(port, tempDir) {
     `--remote-debugging-port=${port}`, '--incognito',
     `--user-data-dir=${tempDir}`, '--no-first-run',
     '--no-default-browser-check', '--disable-default-apps',
-    '--disable-popup-blocking', '--window-size=960,540', '--window-position=0,0', 'about:blank',
+    '--disable-popup-blocking', `--window-size=${getScreenQuarter().w},${getScreenQuarter().h}`, '--window-position=0,0', 'about:blank',
   ], { stdio: 'ignore', detached: false });
 }
 

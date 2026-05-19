@@ -27,6 +27,7 @@ const {
   saveCPAAuthFile,
   fetchTokensViaPKCE,
   randomDelay,
+  getScreenQuarter,
 } = require('../utils');
 const { loginAccount } = require('../login');
 const { autoPayment, CONFIG: PAY_CONFIG } = require('../payment');
@@ -69,7 +70,7 @@ function launchChrome(port, tempDir) {
     '--no-default-browser-check',
     '--disable-default-apps',
     '--disable-popup-blocking',
-    '--window-size=960,540', '--window-position=0,0',
+    `--window-size=${getScreenQuarter().w},${getScreenQuarter().h}`, '--window-position=0,0',
     'about:blank',
   ], { stdio: 'ignore', detached: false });
 }
