@@ -5,7 +5,7 @@ const path = require('path');
 
 const router = express.Router();
 
-const JWT_SECRET = 'chatgpt-auto-login-web';
+const JWT_SECRET = process.env.JWT_SECRET || require('crypto').randomBytes(32).toString('hex');
 const JWT_EXPIRES_IN = '24h';
 
 /**
@@ -70,3 +70,4 @@ function authMiddleware(req, res, next) {
 
 module.exports = router;
 module.exports.authMiddleware = authMiddleware;
+module.exports.JWT_SECRET = JWT_SECRET;

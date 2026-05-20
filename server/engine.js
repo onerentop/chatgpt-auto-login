@@ -76,8 +76,10 @@ function getScreenQuarter() {
 }
 
 function launchChrome(port, tempDir) {
+  const chromePath = findChrome();
+  if (!chromePath) throw new Error('Chrome not found');
   const q = getScreenQuarter();
-  return spawn(findChrome(), [
+  return spawn(chromePath, [
     `--remote-debugging-port=${port}`,
     '--incognito',
     `--user-data-dir=${tempDir}`,

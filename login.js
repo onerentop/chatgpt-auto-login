@@ -110,15 +110,20 @@ async function loginAccount(browser, account) {
         const pre = new ImapFlow({ host: 'outlook.office365.com', port: 993, secure: true, auth: { user: account.email, accessToken: tokenData.access_token }, logger: false });
         await pre.connect();
         const lock = await pre.getMailboxLock('INBOX');
-        if (pre.mailbox.exists > 0) {
-          const start = Math.max(1, pre.mailbox.exists - 9);
-          for await (const m of pre.fetch({ seq: `${start}:*` }, { uid: true })) {
-            if (m.uid > baselineUid) baselineUid = m.uid;
+        try {
+          if (pre.mailbox.exists > 0) {
+            const start = Math.max(1, pre.mailbox.exists - 9);
+            for await (const m of pre.fetch({ seq: `${start}:*` }, { uid: true })) {
+              if (m.uid > baselineUid) baselineUid = m.uid;
+            }
           }
+        } finally {
+          lock.release();
         }
-        lock.release();
         await pre.logout();
-      } catch {}
+      } catch (e) {
+        // baseline fetch failed, continue with baselineUid = 0
+      }
       console.log(`  [4/10] Baseline UID: ${baselineUid}`);
 
       // Poll IMAP + auto-click "重新发送" every 15s
@@ -159,13 +164,13 @@ async function loginAccount(browser, account) {
                   ? src.slice(htmlStart).replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ')
                   : src;
                 const match = bodyText.match(/\b(\d{6})\b/);
-                if (match) { otp = match[1]; console.log(`  [4/10] Got code: ${otp} (UID:${msg.uid})`); }
+                if (match) { otp = match[1]; console.log(`  [4/10] Got code: ${otp} (UID:${msg.uid})`); break; }
               }
             }
           } finally { lock.release(); }
-          await client.logout();
         } catch (e) {
           if (attempt === 0) console.log(`  [4/10] IMAP: ${e.message.slice(0, 60)}`);
+        } finally {
           try { await client?.logout(); } catch {}
         }
 

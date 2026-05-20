@@ -7,16 +7,16 @@ const jwt = require('jsonwebtoken');
 const { initDB } = require('./db');
 
 const authRoutes = require('./routes/auth');
-const { authMiddleware } = require('./routes/auth');
+const { authMiddleware, JWT_SECRET } = require('./routes/auth');
 const configRoutes = require('./routes/config');
-
-const JWT_SECRET = 'chatgpt-auto-login-web';
 
 const app = express();
 const server = http.createServer(app);
 
+const ALLOWED_ORIGINS = ['http://localhost:3000', 'http://127.0.0.1:3000'];
+
 const io = new Server(server, {
-  cors: { origin: '*', methods: ['GET', 'POST'] },
+  cors: { origin: ALLOWED_ORIGINS, methods: ['GET', 'POST'] },
 });
 
 // Socket.IO authentication middleware
@@ -34,7 +34,7 @@ io.use((socket, next) => {
   }
 });
 
-app.use(cors());
+app.use(cors({ origin: ALLOWED_ORIGINS }));
 app.use(express.json());
 
 // Init DB then mount routes
