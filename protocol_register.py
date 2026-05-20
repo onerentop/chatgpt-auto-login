@@ -145,10 +145,30 @@ def _do_pkce_flow(session, email, password, ms_client_id, ms_refresh_token):
     pkce_imap_baseline = 0
     if ms_client_id and ms_refresh_token:
         try:
-            pkce_imap_baseline = _get_imap_baseline(email, ms_client_id, ms_refresh_token)
+            token_body = urlencode({"client_id": ms_client_id, "grant_type": "refresh_token",
+                "refresh_token": ms_refresh_token, "scope": "https://outlook.office.com/IMAP.AccessAsUser.All"})
+            try:
+                from curl_cffi import requests as curl_req
+                tr = curl_req.post("https://login.microsoftonline.com/consumers/oauth2/v2.0/token",
+                    headers={"Content-Type": "application/x-www-form-urlencoded"}, data=token_body, timeout=15)
+                imap_tok = tr.json().get("access_token")
+            except ImportError:
+                from urllib.request import Request, urlopen
+                with urlopen(Request("https://login.microsoftonline.com/consumers/oauth2/v2.0/token",
+                    data=token_body.encode(), method="POST"), timeout=15) as resp:
+                    imap_tok = json.loads(resp.read()).get("access_token")
+            if imap_tok:
+                auth_s = f"user={email}\x01auth=Bearer {imap_tok}\x01\x01"
+                im = imaplib.IMAP4_SSL("outlook.office365.com", 993)
+                im.authenticate("XOAUTH2", lambda x: auth_s.encode())
+                im.select("INBOX")
+                _, msgs = im.search(None, "ALL")
+                uids = msgs[0].split()
+                pkce_imap_baseline = int(uids[-1]) if uids else 0
+                im.logout()
             _log(f"PKCE: Pre-auth IMAP baseline: {pkce_imap_baseline}")
-        except:
-            pass
+        except Exception as e:
+            _log(f"PKCE: Pre-auth baseline error: {str(e)[:60]}")
 
     _log("PKCE: Navigating to authorize...")
     auth_code = None
