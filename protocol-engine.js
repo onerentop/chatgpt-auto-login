@@ -327,136 +327,115 @@ class ProtocolEngine extends EventEmitter {
     const summary = { total: accounts.length, success: 0, alreadyPlus: 0, noLink: 0, error: 0 };
 
     try {
-      // === Phase 1: Sequential protocol login/register ===
+      // === Sequential: each account runs login → Discord → payment → done before next ===
       console.log(`[Proto-Engine] Starting ${accounts.length} accounts sequentially...`);
 
-      const loginResults = [];
+      // Connect Discord once (shared across all accounts)
+      this._gw = await connectGateway();
+      console.log('[Proto-Engine] Discord connected!');
+
       for (let i = 0; i < accounts.length; i++) {
         if (this.stopFlag) break;
         const account = accounts[i];
         const progress = `${i + 1}/${accounts.length}`;
-        this.emitStatus({ email: account.email, status: 'running', phase: 'protocol-login', progress });
         currentEmail = account.email;
+
+        // Step 1: Protocol login
+        this.emitStatus({ email: account.email, status: 'running', phase: 'protocol-login', progress });
         console.log(`[${progress}] === ${account.email} (protocol) ===`);
+        let result;
         try {
-          const result = await runProtocolRegister(account);
+          result = await runProtocolRegister(account);
           console.log(`[${progress}] Protocol login OK: ${result.accessToken?.slice(0, 20)}...`);
-          loginResults.push({ status: 'fulfilled', value: { account, result } });
         } catch (e) {
           console.log(`[${progress}] Protocol login failed: ${e.message?.slice(0, 80)}`);
-          loginResults.push({ status: 'rejected', reason: e, _email: account.email });
-        }
-      }
-
-      // Collect successful logins
-      const successfulLogins = [];
-      for (const r of loginResults) {
-        if (r.status === 'fulfilled') {
-          const { account, result } = r.value;
-          const isPlusOrAbove = ['plus', 'pro', 'team', 'enterprise'].includes((result.planType || 'free').toLowerCase());
-          if (isPlusOrAbove) {
-            console.log(`[Proto-Engine] ${account.email} already Plus, generating CPA JSON...`);
-            saveAuthFiles(account.email, result.accessToken, result.session);
-            this.emitStatus({ email: account.email, status: 'already_plus', phase: 'done', progress: '' });
-            summary.alreadyPlus++;
-          } else {
-            successfulLogins.push({ account, result });
-          }
-        } else {
-          const email = r._email || 'unknown';
-          console.log(`[Proto-Engine] ${email} failed: ${r.reason?.message?.slice(0, 80)}`);
-          this.emitStatus({ email, status: 'error', phase: 'protocol-login', reason: r.reason?.message });
+          this.emitStatus({ email: account.email, status: 'error', phase: 'protocol-login', progress, reason: e.message });
           summary.error++;
+          continue;
         }
-      }
 
-      if (successfulLogins.length === 0 || this.stopFlag) {
-        console.log(`[Proto-Engine] No accounts need payment. Done.`);
-      } else {
+        // Check if already Plus
+        const isPlusOrAbove = ['plus', 'pro', 'team', 'enterprise'].includes((result.planType || 'free').toLowerCase());
+        if (isPlusOrAbove) {
+          console.log(`[${progress}] Already Plus, generating auth files...`);
+          saveAuthFiles(account.email, result.accessToken, result.session);
+          this.emitStatus({ email: account.email, status: 'already_plus', phase: 'done', progress });
+          summary.alreadyPlus++;
+          continue;
+        }
 
-      // === Phase 2: Serial Discord + Payment (each account gets its own Chrome) ===
-      console.log(`[Proto-Engine] ${successfulLogins.length} accounts need payment. Connecting Discord...`);
-      this._gw = await connectGateway();
-      console.log('[Proto-Engine] Discord connected!');
-
-      for (let i = 0; i < successfulLogins.length; i++) {
-        if (this.stopFlag) break;
-        const { account, result } = successfulLogins[i];
-        const progress = `${i + 1}/${successfulLogins.length}`;
-
+        // Step 2: Discord
+        this.emitStatus({ email: account.email, status: 'running', phase: 'discord', progress });
+        console.log(`[${progress}] Discord: ${account.email}...`);
+        let link;
         try {
-          // Discord
-          currentEmail = account.email;
-          this.emitStatus({ email: account.email, status: 'running', phase: 'discord', progress });
-          console.log(`[${progress}] Discord: ${account.email}...`);
           const discord = await getPaymentLink(this._gw, result.accessToken);
-          const link = discord.link;
+          link = discord.link;
           if (link) console.log(`[${progress}] ${discord.title || 'Link obtained'}`);
           console.log(`[${progress}] Link: ${link?.slice(0, 80) || 'none'}`);
-
           if (!link) {
-            const reason = discord.raw || 'No payment link';
-            console.log(`[${progress}] ${reason.slice(0, 80)}`);
-            this.emitStatus({ email: account.email, status: 'no_link', phase: 'done', progress, reason });
+            console.log(`[${progress}] ${(discord.raw || 'No link').slice(0, 80)}`);
+            this.emitStatus({ email: account.email, status: 'no_link', phase: 'done', progress, reason: discord.raw });
             summary.noLink++;
             continue;
           }
+        } catch (e) {
+          console.log(`[${progress}] Discord error: ${e.message?.slice(0, 60)}`);
+          this.emitStatus({ email: account.email, status: 'error', phase: 'discord', progress, reason: e.message });
+          summary.error++;
+          continue;
+        }
 
-          // Launch fresh Chrome for this account
-          const port = 9222 + i;
-          const tempDir = path.join(os.tmpdir(), `proto-pay-${Date.now()}-${i}`);
-          let chromeProc = null, browser = null;
+        // Step 3: Payment (fresh Chrome for each account)
+        const port = 9222 + i;
+        const tempDir = path.join(os.tmpdir(), `proto-pay-${Date.now()}-${i}`);
+        let chromeProc = null, browser = null;
+        try {
+          this.emitStatus({ email: account.email, status: 'running', phase: 'payment', progress });
+          console.log(`[${progress}] Opening payment: ${link.slice(0, 60)}...`);
+          chromeProc = launchChrome(port, tempDir);
+          browser = await waitForCDP(port);
+          this._chromeProc = chromeProc;
+          this._browser = browser;
+          this._tempDir = tempDir;
+
+          const ctx = browser.contexts()[0];
+          const page = ctx.pages()[0] || await ctx.newPage();
+          await page.goto(link, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
+          try { await page.locator('text=PayPal').first().waitFor({ state: 'visible', timeout: 15000 }); } catch {}
+          await randomDelay(2000, 3000);
+
+          console.log(`[${progress}] Auto-filling payment...`);
+          let paymentOk = true;
           try {
-            chromeProc = launchChrome(port, tempDir);
-            browser = await waitForCDP(port);
-            this._chromeProc = chromeProc;
-            this._browser = browser;
-            this._tempDir = tempDir;
+            const cfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf-8'));
+            const slot = cfg.phoneSlots?.[0] || { phone: cfg.phone, smsApiUrl: cfg.smsApiUrl };
+            await autoPayment(page, { phone: slot.phone, smsApiUrl: slot.smsApiUrl });
+          } catch (e) { console.log(`[${progress}] Payment error: ${e.message?.slice(0, 60)}`); paymentOk = false; }
 
-            // Payment
-            this.emitStatus({ email: account.email, status: 'running', phase: 'payment', progress });
-            console.log(`[${progress}] Opening payment: ${link.slice(0, 60)}...`);
-            const ctx = browser.contexts()[0];
-            const page = ctx.pages()[0] || await ctx.newPage();
-            await page.goto(link, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
-            try { await page.locator('text=PayPal').first().waitFor({ state: 'visible', timeout: 15000 }); } catch {}
-            await randomDelay(2000, 3000);
+          // Generate auth files
+          saveAuthFiles(account.email, result.accessToken, result.session);
 
-            console.log(`[${progress}] Auto-filling payment...`);
-            let paymentOk = true;
-            try {
-              const cfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf-8'));
-              const slot = cfg.phoneSlots?.[0] || { phone: cfg.phone, smsApiUrl: cfg.smsApiUrl };
-              await autoPayment(page, { phone: slot.phone, smsApiUrl: slot.smsApiUrl });
-            } catch (e) { console.log(`[${progress}] Payment error: ${e.message?.slice(0, 60)}`); paymentOk = false; }
-
-            // Generate CPA + Sub2API JSON
-            saveAuthFiles(account.email, result.accessToken, result.session);
-
-            if (paymentOk) {
-              this.emitStatus({ email: account.email, status: 'success', phase: 'done', progress });
-              summary.success++;
-            } else {
-              this.emitStatus({ email: account.email, status: 'error', phase: 'payment', progress, reason: 'Payment failed' });
-              summary.error++;
-            }
-          } finally {
-            // Close this account's Chrome
-            if (browser) try { await browser.close(); } catch {}
-            if (chromeProc) try { chromeProc.kill(); } catch {}
-            try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {}
-            this._browser = null; this._chromeProc = null; this._tempDir = null;
+          if (paymentOk) {
+            this.emitStatus({ email: account.email, status: 'success', phase: 'done', progress });
+            summary.success++;
+          } else {
+            this.emitStatus({ email: account.email, status: 'error', phase: 'payment', progress, reason: 'Payment failed' });
+            summary.error++;
           }
         } catch (e) {
           console.log(`[${progress}] ${account.email} error: ${e.message?.slice(0, 80)}`);
           this.emitStatus({ email: account.email, status: 'error', phase: 'payment', progress, reason: e.message });
           summary.error++;
+        } finally {
+          if (browser) try { await browser.close(); } catch {}
+          if (chromeProc) try { chromeProc.kill(); } catch {}
+          try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {}
+          this._browser = null; this._chromeProc = null; this._tempDir = null;
         }
 
-        if (i < successfulLogins.length - 1) await randomDelay(3000, 5000);
+        if (i < accounts.length - 1) await randomDelay(3000, 5000);
       }
-
-      } // end if (successfulLogins.length > 0)
 
     } catch (e) {
       console.log(`[Proto-Engine] Fatal: ${e.message}`);
