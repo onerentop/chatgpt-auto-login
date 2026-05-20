@@ -10,7 +10,7 @@ const WebSocket = require('ws');
 const { chromium } = require('playwright');
 
 const { autoPayment, CONFIG: PAY_CONFIG } = require('./payment');
-const { randomDelay, fetchTokensViaPKCE, saveCPAAuthFile } = require('./utils');
+const { randomDelay, saveCPAAuthFile } = require('./utils');
 
 const ROOT = __dirname;
 const PYTHON_SCRIPT = path.join(ROOT, 'protocol_register.py');
@@ -197,6 +197,37 @@ function runProtocolRegister(account) {
   });
 }
 
+function runProtocolPKCE(account) {
+  return new Promise((resolve, reject) => {
+    const py = spawn('py', ['-3', PYTHON_SCRIPT], { cwd: ROOT, stdio: ['pipe', 'pipe', 'pipe'] });
+    let settled = false;
+    const timeout = setTimeout(() => { if (!settled) { settled = true; py.kill(); reject(new Error('PKCE Python timeout (180s)')); } }, 180000);
+    const input = JSON.stringify({ email: account.email, password: account.password, client_id: account.client_id || '', refresh_token: account.refresh_token || '', pkce: true });
+    let stdout = '', stderr = '';
+    py.stdout.on('data', (data) => {
+      for (const line of data.toString().split('\n').filter(l => l.trim())) {
+        try {
+          const parsed = JSON.parse(line);
+          if (parsed.log) { console.log(parsed.log); } else { stdout = line; }
+        } catch { stdout = line; }
+      }
+    });
+    py.stderr.on('data', (data) => { stderr += data.toString(); });
+    py.on('close', (code) => {
+      clearTimeout(timeout);
+      if (settled) return;
+      settled = true;
+      try {
+        const result = JSON.parse(stdout);
+        if (result.status === 'success') resolve(result);
+        else reject(new Error(result.error || 'PKCE failed'));
+      } catch { reject(new Error(stderr.slice(-200) || `Python exit ${code}`)); }
+    });
+    py.stdin.write(input);
+    py.stdin.end();
+  });
+}
+
 // ========== Protocol Engine ==========
 class ProtocolEngine extends EventEmitter {
   constructor() {
@@ -298,33 +329,28 @@ class ProtocolEngine extends EventEmitter {
         if (isPlusOrAbove) {
           console.log(`[${progress}] Already Plus`);
           if (runtimeCfg.enableOAuth) {
-            console.log(`[${progress}] Running PKCE for already-Plus account...`);
+            console.log(`[${progress}] Running PKCE via protocol...`);
             this.emitStatus({ email: account.email, status: 'running', phase: 'pkce', progress });
-            const pkcePort = 9222 + i;
-            const pkceDir = path.join(os.tmpdir(), `proto-pkce-${Date.now()}-${i}`);
-            let pChromeProc = null, pBrowser = null;
             try {
-              pChromeProc = launchChrome(pkcePort, pkceDir);
-              this._chromeProc = pChromeProc;
-              this._tempDir = pkceDir;
-              pBrowser = await waitForCDP(pkcePort);
-              this._browser = pBrowser;
-              const pkceTokens = await fetchTokensViaPKCE(pBrowser, account, null).catch((e) => { console.log(`[${progress}] PKCE failed: ${e.message?.slice(0, 60)}`); return null; });
-              if (pkceTokens && !pkceTokens.needsPhone && pkceTokens.refresh_token) {
+              const pkceResult = await runProtocolPKCE(account);
+              const pkce = pkceResult.pkce || {};
+              if (pkce.refresh_token) {
                 console.log(`[${progress}] PKCE success, saving with refresh_token`);
-                saveCPAAuthFile(account.email, pkceTokens.access_token, pkceTokens);
+                saveCPAAuthFile(account.email, pkce.access_token || result.accessToken, { ...result.session, refresh_token: pkce.refresh_token, id_token: pkce.id_token || '' });
                 this.emitStatus({ email: account.email, status: 'plus', phase: 'done', progress });
+              } else if (pkce.needsPhone) {
+                console.log(`[${progress}] PKCE requires phone verification`);
+                saveCPAAuthFile(account.email, result.accessToken, result.session);
+                this.emitStatus({ email: account.email, status: 'plus_no_rt', phase: 'done', progress });
               } else {
-                if (pkceTokens?.needsPhone) console.log(`[${progress}] PKCE requires phone verification`);
-                else if (pkceTokens && !pkceTokens.refresh_token) console.log(`[${progress}] PKCE returned no refresh_token`);
-                saveCPAAuthFile(account.email, pkceTokens?.access_token || result.accessToken, pkceTokens || result.session);
+                console.log(`[${progress}] PKCE no RT: ${pkce.error || 'unknown'}`);
+                saveCPAAuthFile(account.email, result.accessToken, result.session);
                 this.emitStatus({ email: account.email, status: 'plus_no_rt', phase: 'done', progress });
               }
-            } finally {
-              if (pBrowser) try { await pBrowser.close(); } catch {}
-              if (pChromeProc) try { pChromeProc.kill(); } catch {}
-              try { fs.rmSync(pkceDir, { recursive: true, force: true }); } catch {}
-              this._browser = null; this._chromeProc = null; this._tempDir = null;
+            } catch (e) {
+              console.log(`[${progress}] PKCE error: ${e.message?.slice(0, 60)}`);
+              saveCPAAuthFile(account.email, result.accessToken, result.session);
+              this.emitStatus({ email: account.email, status: 'plus_no_rt', phase: 'done', progress });
             }
           } else {
             saveCPAAuthFile(account.email, result.accessToken, result.session);
@@ -399,16 +425,26 @@ class ProtocolEngine extends EventEmitter {
 
           if (paymentResult.success) {
             if (runtimeCfg.enableOAuth) {
-              console.log(`[${progress}] Running PKCE OAuth...`);
+              console.log(`[${progress}] Running PKCE via protocol...`);
               this.emitStatus({ email: account.email, status: 'running', phase: 'pkce', progress });
-              const pkceTokens = await fetchTokensViaPKCE(browser, account, null).catch((e) => { console.log(`[${progress}] PKCE failed: ${e.message?.slice(0, 60)}`); return null; });
-              if (pkceTokens && !pkceTokens.needsPhone) {
-                console.log(`[${progress}] PKCE success, saving with refresh_token`);
-                saveCPAAuthFile(account.email, pkceTokens.access_token, pkceTokens);
-                this.emitStatus({ email: account.email, status: 'plus', phase: 'done', progress });
-              } else {
-                if (pkceTokens?.needsPhone) console.log(`[${progress}] PKCE requires phone verification`);
-                else console.log(`[${progress}] PKCE failed, saving without refresh_token`);
+              try {
+                const pkceResult = await runProtocolPKCE(account);
+                const pkce = pkceResult.pkce || {};
+                if (pkce.refresh_token) {
+                  console.log(`[${progress}] PKCE success, saving with refresh_token`);
+                  saveCPAAuthFile(account.email, pkce.access_token || result.accessToken, { ...result.session, refresh_token: pkce.refresh_token, id_token: pkce.id_token || '' });
+                  this.emitStatus({ email: account.email, status: 'plus', phase: 'done', progress });
+                } else if (pkce.needsPhone) {
+                  console.log(`[${progress}] PKCE requires phone verification`);
+                  saveCPAAuthFile(account.email, result.accessToken, result.session);
+                  this.emitStatus({ email: account.email, status: 'plus_no_rt', phase: 'done', progress });
+                } else {
+                  console.log(`[${progress}] PKCE no RT: ${pkce.error || 'unknown'}`);
+                  saveCPAAuthFile(account.email, result.accessToken, result.session);
+                  this.emitStatus({ email: account.email, status: 'plus_no_rt', phase: 'done', progress });
+                }
+              } catch (e) {
+                console.log(`[${progress}] PKCE error: ${e.message?.slice(0, 60)}`);
                 saveCPAAuthFile(account.email, result.accessToken, result.session);
                 this.emitStatus({ email: account.email, status: 'plus_no_rt', phase: 'done', progress });
               }

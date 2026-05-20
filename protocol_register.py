@@ -3,9 +3,9 @@
 Input: JSON on stdin { email, password, client_id, refresh_token }
 Output: JSON lines on stdout — log lines as {"log":"..."}, final result as {"status":...}
 """
-import sys, os, json, uuid, time, random, re, string, hashlib, base64, secrets, imaplib
+import sys, os, json, uuid, time, random, re, string, hashlib, base64, secrets, imaplib, struct
 import email as email_lib
-from urllib.parse import urlparse, parse_qs, urlencode
+from urllib.parse import urlparse, parse_qs, urlencode, quote
 
 sys.path.insert(0, r"D:\workspace\projects\cliproxyaccountcleaner")
 
@@ -122,6 +122,219 @@ def _get_imap_baseline(email_addr, client_id, refresh_token):
     except Exception:
         return 0
 
+def _do_pkce_flow(session, email, password, ms_client_id, ms_refresh_token):
+    """PKCE OAuth flow using existing session cookies. Returns {access_token, refresh_token, id_token}."""
+    code_verifier = secrets.token_urlsafe(32)
+    code_challenge = base64.urlsafe_b64encode(hashlib.sha256(code_verifier.encode()).digest()).rstrip(b'=').decode()
+    state = secrets.token_hex(16)
+    pkce_client_id = "app_EMoamEEZ73f0CkXaXp7hrann"
+    redirect_uri = "http://localhost:1455/auth/callback"
+
+    auth_url = (
+        f"https://auth.openai.com/oauth/authorize?"
+        f"client_id={pkce_client_id}&code_challenge={code_challenge}&code_challenge_method=S256"
+        f"&codex_cli_simplified_flow=true&id_token_add_organizations=true"
+        f"&redirect_uri={quote(redirect_uri, safe='')}&response_type=code"
+        f"&scope=openid+email+profile+offline_access&state={state}"
+    )
+
+    _log(f"PKCE: Navigating to authorize...")
+    try:
+        r = session.get(auth_url, headers={"Accept": "text/html"}, allow_redirects=False, timeout=15)
+    except Exception as e:
+        _log(f"PKCE: Auth request failed: {str(e)[:60]}")
+        return {"error": str(e)[:200]}
+
+    auth_code = None
+    max_redirects = 15
+
+    for redir in range(max_redirects):
+        location = r.headers.get("location", "")
+        status = r.status_code
+        _log(f"PKCE: [{status}] -> {location[:80] if location else '(no redirect)'}")
+
+        if not location:
+            # Not a redirect — check if it's a page we need to interact with
+            page_url = str(r.url)
+            body = r.text
+
+            if "localhost:1455" in page_url and "code=" in page_url:
+                parsed = parse_qs(urlparse(page_url).query)
+                auth_code = parsed.get("code", [None])[0]
+                _log(f"PKCE: Got auth code from URL")
+                break
+
+            if "/log-in" in page_url or "log-in" in body[:500]:
+                _log("PKCE: Need to log in again")
+                # Submit email
+                r = session.post("https://auth.openai.com/api/accounts/authorize/continue",
+                    json={"username": {"kind": "email", "value": email}},
+                    headers={"Content-Type": "application/json", "Accept": "application/json"},
+                    allow_redirects=False, timeout=15)
+                continue
+
+            if "email-verification" in page_url or "email-otp" in body[:500]:
+                _log("PKCE: Need OTP verification")
+                otp = _fetch_otp_for_pkce(ms_client_id, ms_refresh_token, email)
+                if not otp:
+                    return {"error": "OTP not received for PKCE"}
+                r = session.post("https://auth.openai.com/api/accounts/email-otp/validate",
+                    json={"code": otp},
+                    headers={"Content-Type": "application/json", "Accept": "application/json"},
+                    allow_redirects=False, timeout=15)
+                continue
+
+            if "consent" in page_url or "authorize" in body[:1000]:
+                _log("PKCE: Consent page, accepting...")
+                # Try to find and follow the consent form action
+                r = session.post("https://auth.openai.com/api/accounts/authorize/consent",
+                    json={},
+                    headers={"Content-Type": "application/json", "Accept": "application/json"},
+                    allow_redirects=False, timeout=15)
+                continue
+
+            if "add-phone" in page_url or "phone-required" in page_url:
+                _log("PKCE: Phone verification required")
+                return {"needsPhone": True}
+
+            _log(f"PKCE: Unknown page: {page_url[:60]}")
+            break
+
+        # Follow redirect
+        if "localhost:1455" in location and "code=" in location:
+            parsed = parse_qs(urlparse(location).query)
+            auth_code = parsed.get("code", [None])[0]
+            _log(f"PKCE: Got auth code from redirect")
+            break
+
+        try:
+            r = session.get(location, headers={"Accept": "text/html"}, allow_redirects=False, timeout=15)
+        except Exception as e:
+            if "localhost" in location and "code=" in location:
+                parsed = parse_qs(urlparse(location).query)
+                auth_code = parsed.get("code", [None])[0]
+                _log(f"PKCE: Got auth code (connection refused to localhost, expected)")
+                break
+            _log(f"PKCE: Redirect error: {str(e)[:50]}")
+            break
+
+    if not auth_code:
+        _log("PKCE: Failed to get auth code")
+        return {"error": "No auth code obtained"}
+
+    # Token exchange
+    _log("PKCE: Exchanging code for tokens...")
+    try:
+        r = session.post("https://auth.openai.com/oauth/token",
+            json={
+                "grant_type": "authorization_code",
+                "client_id": pkce_client_id,
+                "code": auth_code,
+                "code_verifier": code_verifier,
+                "redirect_uri": redirect_uri,
+            },
+            headers={"Content-Type": "application/json", "Accept": "application/json"},
+            timeout=15)
+        tokens = r.json()
+        if tokens.get("access_token"):
+            _log(f"PKCE: Token exchange OK! RT: {'yes' if tokens.get('refresh_token') else 'no'}")
+            return {
+                "access_token": tokens["access_token"],
+                "refresh_token": tokens.get("refresh_token", ""),
+                "id_token": tokens.get("id_token", ""),
+                "expires_in": tokens.get("expires_in", 3600),
+            }
+        _log(f"PKCE: Token exchange failed: {tokens.get('error', str(tokens)[:80])}")
+        return {"error": tokens.get("error_description", tokens.get("error", "Token exchange failed"))}
+    except Exception as e:
+        _log(f"PKCE: Token exchange error: {str(e)[:60]}")
+        return {"error": str(e)[:200]}
+
+
+def _fetch_otp_for_pkce(ms_client_id, ms_refresh_token, email):
+    """Fetch OTP via IMAP for PKCE re-authentication."""
+    if not ms_client_id or not ms_refresh_token:
+        _log("PKCE OTP: No Microsoft credentials")
+        return None
+    import imaplib
+    try:
+        # Get IMAP access token
+        from urllib.request import Request, urlopen
+        token_body = urlencode({
+            "client_id": ms_client_id, "grant_type": "refresh_token",
+            "refresh_token": ms_refresh_token,
+            "scope": "https://outlook.office.com/IMAP.AccessAsUser.All"
+        }).encode()
+        req = Request("https://login.microsoftonline.com/consumers/oauth2/v2.0/token", data=token_body, method="POST")
+        with urlopen(req, timeout=15) as resp:
+            token_data = json.loads(resp.read())
+        if not token_data.get("access_token"):
+            _log(f"PKCE OTP: IMAP token failed: {token_data.get('error', 'unknown')}")
+            return None
+
+        access_token = token_data["access_token"]
+        auth_string = f"user={email}\x01auth=Bearer {access_token}\x01\x01"
+
+        # Get baseline
+        imap = imaplib.IMAP4_SSL("outlook.office365.com")
+        imap.authenticate("XOAUTH2", lambda x: auth_string.encode())
+        imap.select("INBOX")
+        _, data = imap.search(None, "ALL")
+        all_uids = data[0].split()
+        baseline = int(all_uids[-1]) if all_uids else 0
+        imap.logout()
+        _log(f"PKCE OTP: Baseline UID: {baseline}")
+
+        # Trigger resend by waiting (code was already sent when we navigated to email-verification)
+        time.sleep(3)
+
+        # Poll for new OTP
+        for attempt in range(20):
+            try:
+                imap = imaplib.IMAP4_SSL("outlook.office365.com")
+                imap.authenticate("XOAUTH2", lambda x: auth_string.encode())
+                imap.select("INBOX")
+                _, data = imap.search(None, f"(UNSEEN)")
+                new_uids = [uid for uid in data[0].split() if int(uid) > baseline]
+                for uid in new_uids:
+                    _, msg_data = imap.fetch(uid, "(RFC822)")
+                    msg = email_lib.message_from_bytes(msg_data[0][1])
+                    subject = str(msg.get("Subject", ""))
+                    from_addr = str(msg.get("From", ""))
+                    if "openai" in from_addr.lower() or "openai" in subject.lower() or "代码" in subject or "code" in subject.lower():
+                        match = re.search(r"\b(\d{6})\b", subject)
+                        if match:
+                            _log(f"PKCE OTP: Got code from subject: {match.group(1)}")
+                            imap.logout()
+                            return match.group(1)
+                        # Check body
+                        body = ""
+                        if msg.is_multipart():
+                            for part in msg.walk():
+                                if part.get_content_type() == "text/html":
+                                    body = part.get_payload(decode=True).decode(errors="ignore")
+                                    break
+                        else:
+                            body = msg.get_payload(decode=True).decode(errors="ignore")
+                        body_clean = re.sub(r"<[^>]+>", " ", body)
+                        match = re.search(r"\b(\d{6})\b", body_clean)
+                        if match:
+                            _log(f"PKCE OTP: Got code from body: {match.group(1)}")
+                            imap.logout()
+                            return match.group(1)
+                imap.logout()
+            except Exception as e:
+                if attempt == 0:
+                    _log(f"PKCE OTP: IMAP error: {str(e)[:50]}")
+            time.sleep(3)
+
+        _log("PKCE OTP: Not received after 20 attempts")
+        return None
+    except Exception as e:
+        _log(f"PKCE OTP: Error: {str(e)[:60]}")
+        return None
+
+
 def main():
     try:
         input_data = json.loads(sys.stdin.read())
@@ -133,6 +346,7 @@ def main():
     password = input_data.get("password", "")
     client_id = input_data.get("client_id", "")
     refresh_token = input_data.get("refresh_token", "")
+    do_pkce = input_data.get("pkce", False)
 
     try:
         from curl_cffi import requests as curl_requests
@@ -415,6 +629,16 @@ def main():
 
         _log(f"Done! Plan: {plan_type}")
 
+        # PKCE OAuth flow (if requested)
+        pkce_result = {}
+        if do_pkce:
+            _log("Step 8: PKCE OAuth flow...")
+            try:
+                pkce_result = _do_pkce_flow(session, email, password, client_id, refresh_token)
+            except Exception as e:
+                _log(f"PKCE error: {str(e)[:80]}")
+                pkce_result = {"error": str(e)[:200]}
+
         print(json.dumps({
             "status": "success",
             "accessToken": access_token,
@@ -423,6 +647,7 @@ def main():
             "checkoutError": checkout_error,
             "planType": plan_type,
             "password": password,
+            "pkce": pkce_result,
         }))
 
     except Exception as e:
