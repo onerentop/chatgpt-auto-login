@@ -374,15 +374,34 @@ class ProtocolEngine extends EventEmitter {
             await autoPayment(page, { phone: slot.phone, smsApiUrl: slot.smsApiUrl });
           } catch (e) { console.log(`[${progress}] Payment error: ${e.message?.slice(0, 60)}`); paymentOk = false; }
 
-          // Wait for payment to process (same as engine.js: 10s)
-          console.log(`[${progress}] Payment flow completed. Waiting 10s...`);
+          // Wait for payment to process
+          console.log(`[${progress}] Payment flow completed. Verifying plan...`);
           await randomDelay(10000, 12000);
+
+          // Verify plan by re-fetching session
+          let finalPlan = 'free';
+          try {
+            const ctx2 = this._browser.contexts()[0];
+            const verifyPage = ctx2.pages()[0] || await ctx2.newPage();
+            await verifyPage.goto('https://chatgpt.com/api/auth/session', { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {});
+            const body = await verifyPage.locator('body, pre').first().textContent({ timeout: 5000 }).catch(() => '{}');
+            try {
+              const sd = JSON.parse(body);
+              finalPlan = sd?.account?.planType || sd?.chatgpt_plan_type || 'free';
+            } catch {}
+          } catch {}
+          const isPlusNow = ['plus', 'pro', 'team', 'enterprise'].includes(finalPlan.toLowerCase());
+          console.log(`[${progress}] Plan: ${finalPlan} (${isPlusNow ? 'Plus!' : 'still free'})`);
 
           // Generate CPA JSON (no refresh_token)
           saveCPAJson(account.email, result.accessToken, result.session);
 
-          if (paymentOk) {
+          if (isPlusNow) {
             this.emitStatus({ email: account.email, status: 'success', phase: 'done', progress });
+            summary.success++;
+          } else if (paymentOk) {
+            console.log(`[${progress}] Payment submitted but plan not upgraded yet`);
+            this.emitStatus({ email: account.email, status: 'pending', phase: 'done', progress });
             summary.success++;
           } else {
             this.emitStatus({ email: account.email, status: 'error', phase: 'payment', progress, reason: 'Payment failed' });
