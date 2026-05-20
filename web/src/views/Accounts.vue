@@ -3,14 +3,19 @@
     <el-row style="margin-bottom: 16px" :gutter="12" align="middle">
       <el-col :span="24">
         <el-button type="primary" @click="showImport = true">批量导入</el-button>
-        <el-button @click="exportAccounts">导出</el-button>
+        <el-button @click="exportAccounts">导出全部</el-button>
+        <el-button :disabled="selected.length === 0" @click="exportSelected">导出选中 ({{ selected.length }})</el-button>
         <el-button type="success" @click="openAdd">添加单个</el-button>
+        <el-popconfirm :title="`确定删除选中的 ${selected.length} 个账号？`" @confirm="delSelected" v-if="selected.length > 0">
+          <template #reference><el-button type="danger" size="small">删除选中 ({{ selected.length }})</el-button></template>
+        </el-popconfirm>
         <el-input v-model="search" placeholder="搜索邮箱..." clearable style="width:220px;margin-left:12px" />
         <el-tag style="margin-left: 12px">{{ filteredAccounts.length }} / {{ accounts.length }}</el-tag>
       </el-col>
     </el-row>
 
-    <el-table :data="filteredAccounts" stripe border size="small">
+    <el-table :data="filteredAccounts" stripe border size="small" row-key="email" @selection-change="onSelectionChange">
+      <el-table-column type="selection" width="45" />
       <el-table-column type="index" label="#" width="50" />
       <el-table-column prop="email" label="邮箱" min-width="220" />
       <el-table-column prop="loginType" label="类型" width="90">
@@ -83,6 +88,7 @@ import { ElMessage } from 'element-plus'
 import api from '../api'
 
 const accounts = ref([])
+const selected = ref([])
 const search = ref('')
 const filteredAccounts = computed(() => {
   if (!search.value) return accounts.value
@@ -154,5 +160,33 @@ async function del(email) {
   catch { ElMessage.error('删除失败') }
 }
 
+function onSelectionChange(rows) { selected.value = rows }
+
 function exportAccounts() { window.open(`/api/accounts/export?token=${localStorage.getItem('token') || ''}`) }
+
+function exportSelected() {
+  if (selected.value.length === 0) return ElMessage.warning('请先选择账号')
+  const lines = selected.value.map(a => {
+    const isOutlook = (a.loginType || '').toLowerCase() === 'outlook'
+    const third = isOutlook ? (a.client_id || '') : (a.totp_secret || '')
+    const fourth = isOutlook ? (a.refresh_token || '') : ''
+    return [a.email, a.password, third, fourth].filter(Boolean).join('----')
+  })
+  const blob = new Blob([lines.join('\n')], { type: 'text/plain' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `accounts-selected-${selected.value.length}.txt`
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+async function delSelected() {
+  let ok = 0, fail = 0
+  for (const row of selected.value) {
+    try { await api.delete(`/accounts/${encodeURIComponent(row.email)}`); ok++ } catch { fail++ }
+  }
+  ElMessage.success(`删除 ${ok} 个${fail ? `，失败 ${fail} 个` : ''}`)
+  load()
+}
 </script>
