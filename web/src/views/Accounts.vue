@@ -14,7 +14,7 @@
       </el-col>
     </el-row>
 
-    <el-table :data="filteredAccounts" stripe border size="small" row-key="email" @selection-change="onSelectionChange">
+    <el-table ref="tableRef" :data="filteredAccounts" stripe border size="small" row-key="email" @selection-change="onSelectionChange" @row-click="onRowClick">
       <el-table-column type="selection" width="45" />
       <el-table-column type="index" label="#" width="50" />
       <el-table-column prop="email" label="邮箱" min-width="220" />
@@ -87,6 +87,7 @@ import { ref, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import api from '../api'
 
+const tableRef = ref(null)
 const accounts = ref([])
 const selected = ref([])
 const search = ref('')
@@ -162,6 +163,12 @@ async function del(email) {
 
 function onSelectionChange(rows) { selected.value = rows }
 
+function onRowClick(row, column, event) {
+  if (column?.type === 'selection') return
+  if (event?.target?.closest('.el-button, .el-dropdown, .el-popconfirm, a')) return
+  tableRef.value?.toggleRowSelection(row)
+}
+
 function exportAccounts() { window.open(`/api/accounts/export?token=${localStorage.getItem('token') || ''}`) }
 
 function exportSelected() {
@@ -190,3 +197,9 @@ async function delSelected() {
   load()
 }
 </script>
+
+<style scoped>
+:deep(.el-table__body tr) {
+  cursor: pointer;
+}
+</style>
