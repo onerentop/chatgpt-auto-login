@@ -20,6 +20,12 @@
       <el-form-item label="短信 API URL">
         <el-input v-model="form.smsApiUrl" placeholder="请输入短信接口地址" />
       </el-form-item>
+      <el-divider content-position="left">执行模式</el-divider>
+      <el-form-item label="协议注册模式">
+        <el-switch v-model="form.protocolMode" />
+        <span style="color:#909399;margin-left:8px;font-size:12px">开启后使用协议注册（仅支付时开浏览器），支持多并发</span>
+      </el-form-item>
+
       <el-divider content-position="left">Discord 配置</el-divider>
       <el-form-item label="Discord Token">
         <el-input v-model="form.discordToken" type="password" show-password />
@@ -63,6 +69,7 @@ const formRef = ref(null)
 const saving = ref(false)
 
 const form = reactive({
+  protocolMode: false,
   phone: '',
   smsApiUrl: '',
   discordToken: '',
