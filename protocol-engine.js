@@ -245,17 +245,27 @@ class ProtocolEngine extends EventEmitter {
     const summary = { total: accounts.length, success: 0, alreadyPlus: 0, noLink: 0, error: 0 };
 
     try {
-      // === Phase 1: Parallel protocol login/register ===
-      console.log(`[Proto-Engine] Starting ${accounts.length} accounts in parallel...`);
-      const loginResults = await Promise.allSettled(accounts.map(async (account, i) => {
-        if (this.stopFlag) throw new Error('Stopped');
-        const progress = `${i + 1}/${accounts.length}`;
-        this.emitStatus({ email: account.email, status: 'running', phase: 'protocol-login', progress });
-        console.log(`[${progress}] === ${account.email} (protocol) ===`);
-        const result = await runProtocolRegister(account);
-        console.log(`[${progress}] Protocol login OK: ${result.accessToken?.slice(0, 20)}...`);
-        return { account, result };
-      }));
+      // === Phase 1: Parallel protocol login/register (with concurrency limit) ===
+      let concurrency = 3;
+      try { concurrency = Math.min(Math.max(JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf-8')).protocolConcurrency || 3, 1), 10); } catch {}
+      console.log(`[Proto-Engine] Starting ${accounts.length} accounts (concurrency: ${concurrency})...`);
+
+      const loginResults = [];
+      for (let batch = 0; batch < accounts.length; batch += concurrency) {
+        if (this.stopFlag) break;
+        const chunk = accounts.slice(batch, batch + concurrency);
+        const batchResults = await Promise.allSettled(chunk.map(async (account, j) => {
+          const i = batch + j;
+          if (this.stopFlag) throw new Error('Stopped');
+          const progress = `${i + 1}/${accounts.length}`;
+          this.emitStatus({ email: account.email, status: 'running', phase: 'protocol-login', progress });
+          console.log(`[${progress}] === ${account.email} (protocol) ===`);
+          const result = await runProtocolRegister(account);
+          console.log(`[${progress}] Protocol login OK: ${result.accessToken?.slice(0, 20)}...`);
+          return { account, result };
+        }));
+        loginResults.push(...batchResults);
+      }
 
       // Collect successful logins
       const successfulLogins = [];
