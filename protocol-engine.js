@@ -175,52 +175,52 @@ function saveAuthFiles(email, accessToken, session) {
   const exportedAt = now.toISOString().replace('Z', '+08:00');
   const sessionToken = session?.sessionToken || '';
 
-  // CPA format
+  // CPA format (matches real CPA structure)
   const cpa = {
-    type: 'codex',
-    account_id: accountId,
-    chatgpt_account_id: accountId,
-    email,
-    name: userName,
-    plan_type: planType,
-    chatgpt_plan_type: planType,
-    id_token: '',
     access_token: accessToken,
-    refresh_token: '',
-    session_token: sessionToken,
-    last_refresh: exportedAt,
+    account_id: accountId,
+    email,
     expired: expiresAt,
+    id_token: '',
+    last_refresh: exportedAt,
+    refresh_token: '',
+    type: 'codex',
   };
   const cpaPath = path.join(authDir, `codex-${sanitized}.json`);
   fs.writeFileSync(cpaPath, JSON.stringify(cpa, null, 2));
   console.log(`  [CPA] Saved: ${cpaPath}`);
 
-  // sub2api format
-  const sub2api = {
-    name: userName || email,
-    platform: 'openai',
-    type: 'oauth',
-    concurrency: 10,
-    priority: 1,
-    credentials: {
-      access_token: accessToken,
-      chatgpt_account_id: accountId,
-      chatgpt_user_id: userId,
-      email,
-      expires_at: expiresAt,
-      expires_in: payload.exp ? payload.exp - Math.floor(now.getTime() / 1000) : 864000,
-      plan_type: planType,
-    },
-    extra: {
-      email,
-      email_key: email.replace(/@/g, '_at_').replace(/\./g, '_'),
-      name: userName,
-      source: 'chatgpt_web_session',
-      last_refresh: exportedAt,
-    },
+  // sub2api format (matches real sub2api import structure)
+  const tokenVersion = now.getTime();
+  const expiresIn = payload.exp ? payload.exp - Math.floor(now.getTime() / 1000) : 864000;
+  const sub2apiDoc = {
+    exported_at: now.toISOString(),
+    proxies: [],
+    accounts: [{
+      name: email,
+      platform: 'openai',
+      type: 'oauth',
+      credentials: {
+        _token_version: tokenVersion,
+        access_token: accessToken,
+        chatgpt_account_id: accountId,
+        chatgpt_user_id: userId,
+        email,
+        expires_at: expiresAt,
+        expires_in: expiresIn,
+        id_token: '',
+        organization_id: '',
+        refresh_token: '',
+      },
+      extra: { email },
+      concurrency: 10,
+      priority: 1,
+      rate_multiplier: 1,
+      auto_pause_on_expired: true,
+    }],
   };
   const sub2apiPath = path.join(authDir, `sub2api-${sanitized}.json`);
-  fs.writeFileSync(sub2apiPath, JSON.stringify(sub2api, null, 2));
+  fs.writeFileSync(sub2apiPath, JSON.stringify(sub2apiDoc, null, 2));
   console.log(`  [Sub2API] Saved: ${sub2apiPath}`);
 
   return { cpaPath, sub2apiPath };
