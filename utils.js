@@ -252,22 +252,34 @@ async function fetchTokensViaPKCE(browser, account, lastOtp) {
           otp = await _fetchPkceOtp(page, account);
         }
         if (otp) {
-            // Click input to set CDP focus, then type via keyboard (most reliable on CDP Chrome)
-            const otpSelectors = ['input[name="code"]', 'input[autocomplete="one-time-code"]', 'input[inputmode="numeric"]', 'input[type="text"]'];
+            // Find OTP input — try placeholder first (most reliable), then selectors
+            const otpLocators = [
+              page.getByPlaceholder(/验证码|code|Code/i),
+              page.locator('input[name="code"]').first(),
+              page.locator('input[autocomplete="one-time-code"]').first(),
+              page.locator('input[inputmode="numeric"]').first(),
+              page.locator('input[type="text"]').first(),
+            ];
             let clicked = false;
-            for (const sel of otpSelectors) {
-              const inp = page.locator(sel).first();
-              if (await inp.isVisible({ timeout: 1000 }).catch(() => false)) {
+            for (let li = 0; li < otpLocators.length; li++) {
+              const inp = otpLocators[li];
+              if (await inp.isVisible({ timeout: 1500 }).catch(() => false)) {
                 await inp.click();
-                console.log(`  [PKCE] OTP input found: ${sel}`);
+                console.log(`  [PKCE] OTP input found (locator #${li})`);
                 clicked = true;
                 break;
               }
             }
             if (!clicked) {
-              console.log('  [PKCE] No OTP input found, trying tab to focus');
-              await page.keyboard.press('Tab');
+              // Last resort: log all visible inputs for debugging
+              const inputCount = await page.locator('input').count().catch(() => 0);
+              console.log(`  [PKCE] No OTP input matched! Visible inputs: ${inputCount}`);
+              const attrs = await page.evaluate(() => Array.from(document.querySelectorAll('input')).map(i => ({ type: i.type, name: i.name, placeholder: i.placeholder, id: i.id, visible: i.offsetParent !== null })));
+              console.log(`  [PKCE] Input details: ${JSON.stringify(attrs)}`);
+              // Try clicking the first visible input
+              if (inputCount > 0) await page.locator('input').first().click().catch(() => {});
             }
+            await new Promise(r => setTimeout(r, 300));
             await page.keyboard.press('Control+a');
             await page.keyboard.type(otp, { delay: 80 });
             console.log(`  [PKCE] OTP typed: ${otp}`);
@@ -284,10 +296,9 @@ async function fetchTokensViaPKCE(browser, account, lastOtp) {
               const freshOtp = await _fetchPkceOtp(page, account);
               if (freshOtp) {
                 console.log(`  [PKCE] Fresh OTP: ${freshOtp}`);
-                for (const sel of otpSelectors) {
-                  const rinp = page.locator(sel).first();
-                  if (await rinp.isVisible({ timeout: 1000 }).catch(() => false)) {
-                    await rinp.click();
+                for (const loc of otpLocators) {
+                  if (await loc.isVisible({ timeout: 1000 }).catch(() => false)) {
+                    await loc.click();
                     break;
                   }
                 }
