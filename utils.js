@@ -252,6 +252,22 @@ async function fetchTokensViaPKCE(browser, account, lastOtp) {
           otp = await _fetchPkceOtp(page, account).catch(e => { console.log(`  [PKCE] OTP fetch error: ${e.message?.slice(0, 60)}`); return null; });
         }
         if (otp) {
+            // Debug: dump page state before filling
+            const pageState = await page.evaluate(() => {
+              const inputs = Array.from(document.querySelectorAll('input')).map(i => ({ tag: 'input', type: i.type, name: i.name, placeholder: i.placeholder, id: i.id, visible: i.offsetHeight > 0 }));
+              const iframes = document.querySelectorAll('iframe').length;
+              const shadows = Array.from(document.querySelectorAll('*')).filter(e => e.shadowRoot).length;
+              return { url: location.href, inputs, iframes, shadows, bodyLen: document.body?.innerHTML?.length };
+            }).catch(e => ({ error: e.message }));
+            console.log(`  [PKCE] Page state before fill: ${JSON.stringify(pageState)}`);
+
+            // Also check all frames
+            const allFrames = page.frames();
+            for (let fi = 0; fi < allFrames.length; fi++) {
+              const fInputs = await allFrames[fi].evaluate(() => Array.from(document.querySelectorAll('input')).map(i => ({ type: i.type, name: i.name, placeholder: i.placeholder, visible: i.offsetHeight > 0 }))).catch(() => []);
+              if (fInputs.length > 0) console.log(`  [PKCE] Frame ${fi} (${allFrames[fi].url().slice(0, 50)}): ${JSON.stringify(fInputs)}`);
+            }
+
             // Fill OTP via React setter (same approach as login.js)
             const filled = await page.evaluate((code) => {
               var inputs = document.querySelectorAll('input');
