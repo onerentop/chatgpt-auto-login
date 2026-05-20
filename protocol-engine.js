@@ -94,11 +94,19 @@ async function getPaymentLink(gw, accessToken) {
   await new Promise(r => setTimeout(r, 1500));
   await interact({ type: 3, nonce: nn(), guild_id: GUILD_ID, channel_id: CHANNEL_ID, message_flags: 64, message_id: menu.id, application_id: APP_ID, session_id: gw.sessionId, data: { component_type: 2, custom_id: btnId } });
   const modal = await modalP;
-  const fieldId = modal.data?.components?.[0]?.components?.[0]?.custom_id;
-  if (!fieldId) throw new Error('Modal field not found');
+  // Build modal response (same structure as engine.js)
+  const comps = modal.components.map((r) => ({
+    type: r.type,
+    components: r.components.map((f) => ({ type: f.type, custom_id: f.custom_id, value: accessToken })),
+  }));
+  const resultP = waitForAny(gw, ['MESSAGE_UPDATE', 'MESSAGE_CREATE'], (d) => {
+    if (d.channel_id !== CHANNEL_ID || !d.author?.bot) return false;
+    const t = JSON.stringify(d.embeds || []) + (d.content || '');
+    return t.includes('pay.openai.com') || t.includes('试用链接') || t.includes('失败') || t.includes('Fail') || t.includes('积分不足') || t.includes('资格');
+  }, 60000);
   await new Promise(r => setTimeout(r, 1000));
-  await interact({ type: 5, nonce: nn(), application_id: APP_ID, channel_id: CHANNEL_ID, guild_id: GUILD_ID, session_id: gw.sessionId, data: { id: modal.data.id, custom_id: modal.data.custom_id, components: [{ type: 1, components: [{ type: 4, custom_id: fieldId, value: accessToken }] }] } });
-  const result = await waitForAny(gw, ['MESSAGE_UPDATE', 'MESSAGE_CREATE'], (d) => { const txt = JSON.stringify(d); return txt.includes('pay.openai.com') || txt.includes('已经是') || txt.includes('already'); }, 30000);
+  await interact({ type: 5, nonce: nn(), guild_id: GUILD_ID, channel_id: CHANNEL_ID, application_id: modal.application.id, session_id: gw.sessionId, data: { id: modal.id, custom_id: modal.custom_id, components: comps } });
+  const result = await resultP;
   const raw = JSON.stringify(result);
   const linkMatch = raw.match(/https:\/\/pay\.openai\.com[^\s"')]+/);
   const titleMatch = raw.match(/✅[^"'\n]+/);
