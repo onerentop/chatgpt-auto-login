@@ -77,7 +77,8 @@ async function fetchAddress() {
         state: a.State_Full || a.State || a.state || 'New York',
         zip: (a.Zip_Code || a.zip || '10001').substring(0, 5),
       };
-    } catch {
+    } catch (e) {
+      console.log(`    [Pay] Address fetch: ${e.message?.slice(0, 60)}`);
       if (retry < 2) await new Promise(r => setTimeout(r, 2000));
     }
   }
@@ -94,7 +95,8 @@ async function fillInput(page, selector, value) {
     await el.dispatchEvent('change');
     await el.dispatchEvent('blur');
     return true;
-  } catch {
+  } catch (e) {
+    console.log(`    [Pay] fillInput ${selector}: ${e.message?.slice(0, 60)}`);
     return false;
   }
 }
@@ -117,7 +119,8 @@ async function selectOption(page, selector, text) {
       }
     }, { sel: selector, txt: text });
     return true;
-  } catch {
+  } catch (e) {
+    console.log(`    [Pay] selectOption ${selector}: ${e.message?.slice(0, 60)}`);
     return false;
   }
 }
@@ -136,7 +139,7 @@ async function clickSubmit(page) {
         if (await btn.isVisible({ timeout: 1000 }).catch(() => false)) {
           if (await btn.isEnabled()) { await btn.click(); return true; }
         }
-      } catch {}
+      } catch (e) { console.log(`    [Pay] Submit btn: ${e.message?.slice(0, 60)}`); }
     }
     const texts = ['訂閱', '订阅', '下一页', 'Next', 'Subscribe', 'Pay', 'Continue', 'Agree', '同意'];
     for (const t of texts) {
@@ -145,7 +148,7 @@ async function clickSubmit(page) {
         if (await btn.isVisible({ timeout: 500 }).catch(() => false)) {
           if (await btn.isEnabled()) { await btn.click(); return true; }
         }
-      } catch {}
+      } catch (e) { console.log(`    [Pay] Submit text btn: ${e.message?.slice(0, 60)}`); }
     }
     await new Promise((r) => setTimeout(r, 1000));
   }
@@ -387,7 +390,7 @@ async function handleSmsVerification(page, smsOverride) {
 
       // Extract 6-digit code from response
       let data;
-      try { data = JSON.parse(text); } catch { data = text; }
+      try { data = JSON.parse(text); } catch (e) { data = text; }
       const dataStr = typeof data === 'string' ? data : JSON.stringify(data);
       const match = dataStr.match(/\b(\d{6})\b/);
       if (match) {

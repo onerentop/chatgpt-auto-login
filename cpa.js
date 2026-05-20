@@ -172,7 +172,7 @@ async function registerToCPA(browser, email, account) {
               const s = Math.max(1, pre.mailbox.exists - 9);
               for await (const m of pre.fetch({ seq: `${s}:*` }, { uid: true })) { if (m.uid > baseline) baseline = m.uid; }
               lock.release(); await pre.logout();
-            } catch {}
+            } catch (e) { console.log(`    [CPA] Baseline error: ${e.message?.slice(0, 60)}`); }
 
             let otp = null;
             let lastResend = 0;
@@ -187,7 +187,7 @@ async function registerToCPA(browser, email, account) {
                     lastResend = now;
                     if (a > 0) console.log('    [CPA] Clicked resend');
                   }
-                } catch {}
+                } catch (e) { console.log(`    [CPA] Resend click: ${e.message?.slice(0, 60)}`); }
               }
 
               let client;
@@ -206,7 +206,7 @@ async function registerToCPA(browser, email, account) {
                   }
                 }
                 lock.release(); await client.logout();
-              } catch { try { await client?.logout(); } catch {} }
+              } catch (e) { console.log(`    [CPA] IMAP error: ${e.message?.slice(0, 60)}`); try { await client?.logout(); } catch {} }
               if (otp) break;
               if (a % 5 === 4) console.log(`    [CPA] OTP attempt ${a + 1}/20...`);
               await new Promise(r => setTimeout(r, 3000));
@@ -304,7 +304,7 @@ async function registerToCPA(browser, email, account) {
             await randomDelay(2000, 3000);
             break;
           }
-        } catch {}
+        } catch (e) { console.log(`    [CPA] Consent click: ${e.message?.slice(0, 60)}`); }
       }
       await randomDelay(2000, 3000);
     }
@@ -323,7 +323,7 @@ async function registerToCPA(browser, email, account) {
 
     // Debug screenshot before closing
     const { screenshotPath } = require('./utils');
-    try { await authPage.screenshot({ path: screenshotPath(email + '_cpa_auth'), fullPage: false }); } catch {}
+    try { await authPage.screenshot({ path: screenshotPath(email + '_cpa_auth'), fullPage: false }); } catch (e) { console.log(`    [CPA] Screenshot: ${e.message?.slice(0, 60)}`); }
     await authPage.close().catch(() => {});
 
     // Remove the route interceptor

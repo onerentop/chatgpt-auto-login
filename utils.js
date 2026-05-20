@@ -62,7 +62,7 @@ function saveResult(resultsPath, result) {
       fs.appendFileSync(resultsPath, line);
     }
   } catch (e) {
-    console.log(`[WARN] Failed to write results.csv: ${e.message.slice(0, 60)}`);
+    console.log(`  [WARN] Failed to write results.csv: ${e.message.slice(0, 60)}`);
   }
 }
 
@@ -81,7 +81,7 @@ function saveSessionData(sessionsDir, result) {
   };
   fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
   } catch (e) {
-    console.log(`[WARN] Failed to write session: ${e.message.slice(0, 60)}`);
+    console.log(`  [WARN] Failed to write session: ${e.message.slice(0, 60)}`);
   }
 }
 
@@ -112,7 +112,7 @@ async function _fetchPkceOtp(page, account) {
   try {
     const resend = page.locator('button, a').filter({ hasText: /重新发送|Resend/i }).first();
     if (await resend.isVisible({ timeout: 2000 }).catch(() => false)) { await resend.click(); console.log('  [PKCE] Clicked resend'); await new Promise(r => setTimeout(r, 2000)); }
-  } catch {}
+  } catch (e) { console.log(`  [WARN] PKCE resend click: ${e.message?.slice(0, 60)}`); }
 
   console.log(`  [PKCE] Baseline UID: ${baseline}`);
 
@@ -120,7 +120,7 @@ async function _fetchPkceOtp(page, account) {
   let lastResend = Date.now();
   for (let a = 0; a < 20; a++) {
     if (Date.now() - lastResend > 45000) {
-      try { const rb = page.locator('button, a').filter({ hasText: /重新发送|Resend/i }).first(); if (await rb.isVisible({ timeout: 1000 }).catch(() => false)) { await rb.click(); lastResend = Date.now(); console.log('  [PKCE] Resend clicked'); } } catch {}
+      try { const rb = page.locator('button, a').filter({ hasText: /重新发送|Resend/i }).first(); if (await rb.isVisible({ timeout: 1000 }).catch(() => false)) { await rb.click(); lastResend = Date.now(); console.log('  [PKCE] Resend clicked'); } } catch (e) { console.log(`  [WARN] PKCE auto-resend: ${e.message?.slice(0, 60)}`); }
     }
     let client;
     try {
@@ -167,15 +167,8 @@ async function fetchTokensViaPKCE(browser, account, lastOtp) {
 
   const authUrl = `https://auth.openai.com/oauth/authorize?client_id=${clientId}&code_challenge=${codeChallenge}&code_challenge_method=S256&codex_cli_simplified_flow=true&id_token_add_organizations=true&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=openid+email+profile+offline_access&state=${state}`;
 
-  // Close old pages (PayPal blocks navigation), create fresh page in same window
-  console.log('  [PKCE] Closing old pages...');
-  for (const p of context.pages()) { await p.close().catch(() => {}); }
-  const page = await context.newPage();
-  console.log('  [PKCE] Refreshing session cookies...');
-  await page.goto('https://chatgpt.com/api/auth/session', { waitUntil: 'domcontentloaded', timeout: 15000 }).catch((e) => { console.log(`  [PKCE] Session error: ${e.message?.slice(0, 50)}`); });
-  await new Promise(r => setTimeout(r, 1000));
-  await page.goto('https://chatgpt.com', { waitUntil: 'domcontentloaded', timeout: 15000 }).catch((e) => { console.log(`  [PKCE] ChatGPT error: ${e.message?.slice(0, 50)}`); });
-  await new Promise(r => setTimeout(r, 1500));
+  // Use current page directly — no session refresh, just navigate to auth URL
+  const page = context.pages()[0] || await context.newPage();
 
   // Intercept localhost redirect to capture the authorization code
   let authCode = null;
@@ -198,7 +191,7 @@ async function fetchTokensViaPKCE(browser, account, lastOtp) {
 
       // SUCCESS: redirected to localhost
       if (url.includes('localhost:1455')) {
-        try { authCode = new URL(url).searchParams.get('code'); } catch {}
+        try { authCode = new URL(url).searchParams.get('code'); } catch (e) { console.log(`  [WARN] PKCE URL parse: ${e.message?.slice(0, 60)}`); }
         break;
       }
 
@@ -346,7 +339,7 @@ function saveCPAAuthFile(email, accessToken, session) {
   try {
     const payload = JSON.parse(Buffer.from(accessToken.split('.')[1], 'base64').toString());
     accountId = payload['https://api.openai.com/auth']?.chatgpt_account_id || '';
-  } catch {}
+  } catch (e) { console.log(`  [WARN] JWT parse: ${e.message?.slice(0, 60)}`); }
 
   // Get refresh_token and id_token from PKCE tokens or session
   const refreshToken = session?.refresh_token || session?.refreshToken || '';

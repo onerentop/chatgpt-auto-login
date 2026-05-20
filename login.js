@@ -30,7 +30,7 @@ async function loginAccount(browser, account) {
           await btn.click();
           break;
         }
-      } catch {}
+      } catch (e) { console.log(`[WARN] Login button click: ${e.message?.slice(0, 60)}`); }
     }
     // Wait for login dialog or page navigation
     await randomDelay(2000, 3000);
@@ -48,7 +48,7 @@ async function loginAccount(browser, account) {
         if (!emailVisible) {
           console.log(`  [3/10] Dialog not found, retrying login click (${retry + 1}/3)...`);
           const retryBtn = page.locator('[data-testid="login-button"], button, a').filter({ hasText: /^(Log\s*in|登录)$/i }).first();
-          try { await retryBtn.click(); await randomDelay(2000, 3000); } catch {}
+          try { await retryBtn.click(); await randomDelay(2000, 3000); } catch (e) { console.log(`[WARN] Retry login click: ${e.message?.slice(0, 60)}`); }
         }
       }
       if (!emailVisible) throw new Error('Email input not found');
@@ -88,7 +88,7 @@ async function loginAccount(browser, account) {
           console.log(`  [4/10] Clicked resend to trigger fresh code`);
           await randomDelay(1000, 1500);
         }
-      } catch {}
+      } catch (e) { console.log(`[WARN] Resend click: ${e.message?.slice(0, 60)}`); }
       console.log(`  [4/10] Code input found. Fetching code from Outlook...`);
 
       // Get IMAP baseline BEFORE polling
@@ -140,7 +140,7 @@ async function loginAccount(browser, account) {
               lastResendTime = now;
               if (attempt > 0) console.log(`  [4/10] Clicked resend`);
             }
-          } catch {}
+          } catch (e) { console.log(`[WARN] Auto-resend: ${e.message?.slice(0, 60)}`); }
         }
 
         // Check IMAP for new email
@@ -227,7 +227,7 @@ async function loginAccount(browser, account) {
           console.log(`  [6/10] Clicked consent`);
           await randomDelay(2000, 3000);
         }
-      } catch {}
+      } catch (e) { console.log(`[WARN] Consent click: ${e.message?.slice(0, 60)}`); }
 
     } else {
       // ========== Google Login Path ==========
@@ -238,7 +238,7 @@ async function loginAccount(browser, account) {
       if (!googleVisible) {
         console.log(`  [3/10] Dialog not found, retrying login click...`);
         const retryBtn = page.locator('button, a').filter({ hasText: /^(Log\s*in|登录)$/i }).first();
-        try { await retryBtn.click(); await randomDelay(2000, 3000); } catch {}
+        try { await retryBtn.click(); await randomDelay(2000, 3000); } catch (e) { console.log(`[WARN] Google retry click: ${e.message?.slice(0, 60)}`); }
         googleVisible = await googleBtn.isVisible({ timeout: 8000 }).catch(() => false);
       }
       if (!googleVisible) throw new Error('Google login button not found after retries');
@@ -279,7 +279,7 @@ async function loginAccount(browser, account) {
           await consentBtn.click();
           await randomDelay(2000, 3000);
         }
-      } catch {}
+      } catch (e) { console.log(`[WARN] OAuth consent: ${e.message?.slice(0, 60)}`); }
     } // end Google path
 
     console.log(`  [7/10] Waiting for redirect...`);
@@ -309,7 +309,7 @@ async function loginAccount(browser, account) {
     const isLoggedIn = currentUrl.includes('chatgpt.com') || currentUrl.includes('chat.openai.com') || await checkLoginSuccess(page, currentUrl);
     if (!isLoggedIn) {
       const duration = ((Date.now() - startTime) / 1000).toFixed(1);
-      return { email: account.email, status: 'FAILED', duration, reason: 'Login verification failed - URL: ' + currentUrl.slice(0, 60) };
+      return { email: account.email, status: 'error', duration, reason: 'Login verification failed - URL: ' + currentUrl.slice(0, 60) };
     }
 
     // Step 9: Get session / accessToken
@@ -317,7 +317,7 @@ async function loginAccount(browser, account) {
     const sessionData = await fetchSessionToken(page);
     if (!sessionData.accessToken) {
       const duration = ((Date.now() - startTime) / 1000).toFixed(1);
-      return { email: account.email, status: 'FAILED', duration, reason: 'Failed to get accessToken', session: sessionData };
+      return { email: account.email, status: 'error', duration, reason: 'Failed to get accessToken', session: sessionData };
     }
     console.log(`  [9/10] accessToken obtained (${sessionData.accessToken.slice(0, 20)}...)`);
 
@@ -328,7 +328,7 @@ async function loginAccount(browser, account) {
     const duration = ((Date.now() - startTime) / 1000).toFixed(1);
     return {
       email: account.email,
-      status: 'SUCCESS',
+      status: 'success',
       duration,
       reason: '',
       accessToken: sessionData.accessToken,
@@ -342,7 +342,7 @@ async function loginAccount(browser, account) {
     try {
       await page.screenshot({ path: screenshotPath(account.email), fullPage: false });
     } catch {}
-    return { email: account.email, status: 'ERROR', duration, reason: error.message.slice(0, 200) };
+    return { email: account.email, status: 'error', duration, reason: error.message.slice(0, 200) };
   } finally {
     // Chrome process will be killed by index.js
   }
@@ -575,7 +575,7 @@ async function handleFirstTimeSetup(page) {
         await randomDelay(5000, 6000);
       }
     }
-  } catch {}
+  } catch (e) { console.log(`[WARN] First-time setup: ${e.message?.slice(0, 60)}`); }
 }
 
 async function checkLoginSuccess(page, url) {
@@ -595,7 +595,7 @@ async function checkLoginSuccess(page, url) {
     try {
       const visible = await indicator.isVisible({ timeout: 2000 }).catch(() => false);
       if (visible) return true;
-    } catch {}
+    } catch (e) { console.log(`[WARN] Login check: ${e.message?.slice(0, 60)}`); }
   }
 
   const loginBtnGone = await page.locator('[data-testid="login-button"]').isVisible({ timeout: 1000 }).catch(() => false);

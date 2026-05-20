@@ -66,7 +66,8 @@ function getScreenQuarter() {
       const out = execSync('powershell -command "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Screen]::PrimaryScreen.Bounds | Select Width,Height | ConvertTo-Json"', { encoding: 'utf-8', timeout: 5000 });
       const { Width, Height } = JSON.parse(out);
       _screenSize = { w: Math.floor(Width / 2), h: Math.floor(Height / 2) };
-    } catch {
+    } catch (e) {
+      console.log(`[WARN] Screen size detection: ${e.message?.slice(0, 60)}`);
       _screenSize = { w: 960, h: 540 };
     }
   }
@@ -302,7 +303,7 @@ class PipelineEngine extends EventEmitter {
 
   emitStatus(data) {
     this.emit('account-status', data);
-    try { getDB().statusDB.set(data.email, data); } catch {}
+    try { getDB().statusDB.set(data.email, data); } catch (e) { console.log(`[WARN] statusDB.set: ${e.message?.slice(0, 60)}`); }
   }
 
   /**
@@ -365,7 +366,7 @@ class PipelineEngine extends EventEmitter {
     let currentPhase = '';
 
     // Cleanup old logs
-    try { getDB().logsDB.cleanup(); } catch {}
+    try { getDB().logsDB.cleanup(); } catch (e) { console.log(`[WARN] logsDB.cleanup: ${e.message?.slice(0, 60)}`); }
 
     // Hook console.log → emit 'log' events + write to per-account log files
     const logHandler = (message) => {
@@ -379,7 +380,7 @@ class PipelineEngine extends EventEmitter {
 
       // Save to DB
       if (currentEmail) {
-        try { getDB().logsDB.add(currentEmail, currentPhase, message, entry.timestamp, this._runId); } catch {}
+        try { getDB().logsDB.add(currentEmail, currentPhase, message, entry.timestamp, this._runId); } catch (e) { console.log(`[WARN] logsDB.add: ${e.message?.slice(0, 60)}`); }
       }
     };
     this.logCapture.onLog(logHandler);
@@ -447,7 +448,7 @@ class PipelineEngine extends EventEmitter {
         this._chromeProc = null;
         this._browser = null;
         this._tempDir = tempDir;
-        let finalResult = { email: account.email, status: 'ERROR', paymentLink: '', reason: '' };
+        let finalResult = { email: account.email, status: 'error', paymentLink: '', reason: '' };
 
         try {
           if (this.stopFlag) break;
@@ -461,7 +462,7 @@ class PipelineEngine extends EventEmitter {
           saveResult(RESULTS_PATH, loginResult);
           saveSessionData(SESSIONS_DIR, loginResult);
 
-          if (loginResult.status !== 'SUCCESS' || !loginResult.accessToken) {
+          if (loginResult.status !== 'success' || !loginResult.accessToken) {
             console.log(`${p} Login failed: ${loginResult.reason || loginResult.status}`);
             finalResult.reason = `Login: ${loginResult.reason || loginResult.status}`;
             allResults.push(finalResult);
@@ -487,7 +488,7 @@ class PipelineEngine extends EventEmitter {
 
           if (isPlusOrAbove) {
             console.log(`${p} Already Plus! Skipping payment flow.`);
-            finalResult = { email: account.email, status: 'ALREADY_PLUS', paymentLink: '', reason: '' };
+            finalResult = { email: account.email, status: 'already_plus', paymentLink: '', reason: '' };
 
             currentPhase = 'cpa';
             if (PAY_CONFIG.enableCPA !== false) {
@@ -507,15 +508,15 @@ class PipelineEngine extends EventEmitter {
               if (pkceTokens?.needsPhone) {
                 console.log(`${p} PKCE requires phone verification, saving with session token only`);
                 saveCPAAuthFile(account.email, loginResult.accessToken, loginResult.session);
-                finalResult.status = 'NEEDS_PHONE';
-                this.emitStatus( { email: account.email, status: 'needs_phone', phase: 'done (needs phone)', progress });
+                finalResult.status = 'needs_phone';
+                this.emitStatus( { email: account.email, status: 'needs_phone', phase: 'done', progress });
               } else if (pkceTokens) {
                 saveCPAAuthFile(account.email, pkceTokens.access_token, pkceTokens);
                 this.emitStatus( { email: account.email, status: 'already_plus', phase: 'done', progress });
               } else {
                 console.log(`${p} PKCE failed, saving with session token only`);
                 saveCPAAuthFile(account.email, loginResult.accessToken, loginResult.session);
-                this.emitStatus( { email: account.email, status: 'already_plus', phase: 'done (no PKCE)', progress });
+                this.emitStatus( { email: account.email, status: 'already_plus', phase: 'done', progress });
               }
             }
           } else {
@@ -529,7 +530,7 @@ class PipelineEngine extends EventEmitter {
             if (discord.link) {
               console.log(`${p} ${discord.title}`);
               console.log(`${p} Link: ${discord.link.slice(0, 80)}...`);
-              finalResult = { email: account.email, status: 'PENDING', paymentLink: discord.link, reason: '' };
+              finalResult = { email: account.email, status: 'pending', paymentLink: discord.link, reason: '' };
 
               // Phase 3: Open payment link & auto-fill
               currentPhase = 'payment';
@@ -551,9 +552,9 @@ class PipelineEngine extends EventEmitter {
               }
 
               if (paymentOk) {
-                finalResult.status = 'SUCCESS';
+                finalResult.status = 'success';
               } else {
-                finalResult.status = 'ERROR';
+                finalResult.status = 'error';
                 finalResult.reason = 'Payment failed';
               }
 
@@ -578,7 +579,7 @@ class PipelineEngine extends EventEmitter {
                 if (pkceTokens?.needsPhone) {
                   console.log(`${p} PKCE requires phone verification`);
                   saveCPAAuthFile(account.email, loginResult.accessToken, loginResult.session);
-                  finalResult.status = 'NEEDS_PHONE';
+                  finalResult.status = 'needs_phone';
                 } else if (pkceTokens) {
                   saveCPAAuthFile(account.email, pkceTokens.access_token, pkceTokens);
                 } else {
@@ -588,7 +589,7 @@ class PipelineEngine extends EventEmitter {
               }
             } else {
               console.log(`${p} No link: ${discord.raw.slice(0, 150)}`);
-              finalResult = { email: account.email, status: 'NO_LINK', paymentLink: '', reason: discord.raw.slice(0, 200) };
+              finalResult = { email: account.email, status: 'no_link', paymentLink: '', reason: discord.raw.slice(0, 200) };
             }
           }
         } catch (error) {
@@ -609,7 +610,7 @@ class PipelineEngine extends EventEmitter {
         // Emit final account status
         this.emitStatus( {
           email: account.email,
-          status: finalResult.status.toLowerCase(),
+          status: finalResult.status,
           phase: 'done',
           progress,
           paymentLink: finalResult.paymentLink || undefined,
@@ -638,10 +639,10 @@ class PipelineEngine extends EventEmitter {
       // Build summary
       const summary = {
         total: allResults.length,
-        success: allResults.filter((r) => r.status === 'SUCCESS').length,
-        alreadyPlus: allResults.filter((r) => r.status === 'ALREADY_PLUS').length,
-        noLink: allResults.filter((r) => r.status === 'NO_LINK').length,
-        error: allResults.filter((r) => r.status === 'ERROR').length,
+        success: allResults.filter((r) => r.status === 'success').length,
+        alreadyPlus: allResults.filter((r) => r.status === 'already_plus').length,
+        noLink: allResults.filter((r) => r.status === 'no_link').length,
+        error: allResults.filter((r) => r.status === 'error').length,
       };
 
       console.log('========================================');
@@ -652,7 +653,7 @@ class PipelineEngine extends EventEmitter {
       this.emit('complete', { summary });
 
       // Flush logs to DB
-      try { getDB().logsDB.flush(); } catch {}
+      try { getDB().logsDB.flush(); } catch (e) { console.log(`[WARN] logsDB.flush: ${e.message?.slice(0, 60)}`); }
 
       // Reset state
       this.status = 'idle';
