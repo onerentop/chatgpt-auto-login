@@ -12,10 +12,8 @@ export const socketState = reactive({
 export function connectSocket() {
   if (socket && socket.connected) return
 
-  const token = localStorage.getItem('token')
   socket = io({
     autoConnect: false,
-    auth: { token },
     reconnection: true,
     reconnectionAttempts: 10,
     reconnectionDelay: 2000,

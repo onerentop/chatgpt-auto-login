@@ -57,9 +57,6 @@
       <el-form-item label="CPA Key">
         <el-input v-model="form.cpaKey" type="password" show-password />
       </el-form-item>
-      <el-form-item label="Web 密码">
-        <el-input v-model="form.webPassword" type="password" show-password />
-      </el-form-item>
     </el-form>
   </el-card>
 </template>
@@ -86,7 +83,6 @@ const form = reactive({
   enableCPA: false,
   cpaUrl: '',
   cpaKey: '',
-  webPassword: '',
 })
 
 onMounted(async () => {

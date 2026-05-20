@@ -262,9 +262,8 @@ async function handleStop() {
   catch { ElMessage.error('停止失败') }
 }
 
-function getToken() { return localStorage.getItem('token') || '' }
-function downloadAuth(email, format = 'cpa') { window.open(`/api/results/${encodeURIComponent(email)}/auth-file?token=${getToken()}&format=${format}`) }
-function downloadAllAs(format) { window.open(`/api/results/download-all?token=${getToken()}&format=${format || 'cpa'}`) }
+function downloadAuth(email, format = 'cpa') { window.open(`/api/results/${encodeURIComponent(email)}/auth-file?format=${format}`) }
+function downloadAllAs(format) { window.open(`/api/results/download-all?format=${format || 'cpa'}`) }
 function downloadSelectedAs(format) {
   for (const email of selectedEmails.value) {
     const row = accounts.value.find(a => a.email === email)

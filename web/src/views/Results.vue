@@ -94,13 +94,11 @@ async function loadResults() {
 onMounted(loadResults)
 
 function handleDownload(email) {
-  const token = localStorage.getItem('token')
-  window.open(`/api/results/${encodeURIComponent(email)}/auth-file?token=${token}`)
+  window.open(`/api/results/${encodeURIComponent(email)}/auth-file`)
 }
 
 function handleDownloadAll() {
-  const token = localStorage.getItem('token')
-  window.open(`/api/results/download-all?token=${token}`)
+  window.open('/api/results/download-all')
 }
 
 async function handleRetry(email) {

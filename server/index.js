@@ -3,11 +3,8 @@ const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
 const path = require('path');
-const jwt = require('jsonwebtoken');
 const { initDB } = require('./db');
 
-const authRoutes = require('./routes/auth');
-const { authMiddleware, JWT_SECRET } = require('./routes/auth');
 const configRoutes = require('./routes/config');
 
 const app = express();
@@ -19,20 +16,8 @@ const io = new Server(server, {
   cors: { origin: ALLOWED_ORIGINS, methods: ['GET', 'POST'] },
 });
 
-// Socket.IO authentication middleware
-io.use((socket, next) => {
-  const token = socket.handshake.auth.token;
-  if (!token) {
-    return next(new Error('Authentication error: no token provided'));
-  }
-  try {
-    const decoded = jwt.verify(token, JWT_SECRET);
-    socket.user = decoded;
-    next();
-  } catch (err) {
-    return next(new Error('Authentication error: invalid or expired token'));
-  }
-});
+// Socket.IO — no auth
+io.use((socket, next) => next());
 
 app.use(cors({ origin: ALLOWED_ORIGINS }));
 app.use(express.json());
@@ -43,11 +28,10 @@ initDB().then(() => {
   const executeRoutes = require('./routes/execute');
   const resultsRoutes = require('./routes/results');
 
-  app.use('/api/auth', authRoutes);
-  app.use('/api/accounts', authMiddleware, accountsRoutes);
-  app.use('/api/config', authMiddleware, configRoutes);
-  app.use('/api/execute', authMiddleware, executeRoutes(io));
-  app.use('/api/results', authMiddleware, resultsRoutes);
+  app.use('/api/accounts', accountsRoutes);
+  app.use('/api/config', configRoutes);
+  app.use('/api/execute', executeRoutes(io));
+  app.use('/api/results', resultsRoutes);
 
   const distPath = path.join(__dirname, '..', 'web', 'dist');
   app.use(express.static(distPath));

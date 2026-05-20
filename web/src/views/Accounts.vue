@@ -169,7 +169,7 @@ function onRowClick(row, column, event) {
   tableRef.value?.toggleRowSelection(row)
 }
 
-function exportAccounts() { window.open(`/api/accounts/export?token=${localStorage.getItem('token') || ''}`) }
+function exportAccounts() { window.open('/api/accounts/export') }
 
 function exportSelected() {
   if (selected.value.length === 0) return ElMessage.warning('请先选择账号')
