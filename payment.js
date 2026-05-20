@@ -27,6 +27,24 @@ function loadConfig() {
 
 const CONFIG = loadConfig();
 
+function randCard() {
+  const prefixes = ['4', '4', '4', '51', '52', '53', '54', '55'];
+  const prefix = prefixes[Math.floor(Math.random() * prefixes.length)];
+  let number = prefix;
+  while (number.length < 15) number += Math.floor(Math.random() * 10);
+  let sum = 0;
+  for (let i = 0; i < number.length; i++) {
+    let d = parseInt(number[number.length - 1 - i]);
+    if (i % 2 === 0) { d *= 2; if (d > 9) d -= 9; }
+    sum += d;
+  }
+  number += (10 - (sum % 10)) % 10;
+  const month = String(Math.floor(Math.random() * 12) + 1).padStart(2, '0');
+  const year = String(new Date().getFullYear() + Math.floor(Math.random() * 5) + 1).slice(-2);
+  const cvv = String(Math.floor(Math.random() * 900) + 100);
+  return { number, expiry: `${month} / ${year}`, cvv };
+}
+
 function randEmail() {
   const c = 'abcdefghijklmnopqrstuvwxyz0123456789';
   let e = '';
@@ -322,9 +340,11 @@ async function handlePayPalCheckout(page, phoneOverride, smsOverride) {
 
   await fillInput(page, '#email', email);
   await fillInput(page, '#phone', phoneOverride || CONFIG.phone);
-  await fillInput(page, '#cardNumber', CONFIG.cardNumber);
-  await fillInput(page, '#cardExpiry', CONFIG.cardExpiry);
-  await fillInput(page, '#cardCvv', CONFIG.cardCvv);
+  const card = randCard();
+  console.log('    [Pay] Card:', card.number.slice(0, 4) + '****' + card.number.slice(-4));
+  await fillInput(page, '#cardNumber', card.number);
+  await fillInput(page, '#cardExpiry', card.expiry);
+  await fillInput(page, '#cardCvv', card.cvv);
   await fillInput(page, '#password', password);
   await fillInput(page, '#firstName', 'James');
   await fillInput(page, '#lastName', 'Smith');
