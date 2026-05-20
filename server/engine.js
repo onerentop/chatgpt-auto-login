@@ -558,8 +558,8 @@ class PipelineEngine extends EventEmitter {
                 finalResult.reason = 'Payment failed';
               }
 
-              console.log(`${p} Payment flow completed. Waiting 5s...`);
-              await randomDelay(5000, 6000);
+              console.log(`${p} Payment flow completed. Waiting 10s...`);
+              await randomDelay(10000, 12000);
 
               // Phase 4: CPA OAuth or local auth file
               currentPhase = 'cpa';

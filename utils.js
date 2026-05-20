@@ -167,27 +167,31 @@ async function fetchTokensViaPKCE(browser, account, lastOtp) {
 
   const authUrl = `https://auth.openai.com/oauth/authorize?client_id=${clientId}&code_challenge=${codeChallenge}&code_challenge_method=S256&codex_cli_simplified_flow=true&id_token_add_organizations=true&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=openid+email+profile+offline_access&state=${state}`;
 
-  // Use current page (should be on chatgpt.com after PayPal redirect)
+  // Use current page — go directly to auth URL (don't load chatgpt.com SPA, it blocks navigation)
   const page = context.pages()[0] || await context.newPage();
-  const currentUrl = page.url();
-  console.log(`  [PKCE] Current page: ${currentUrl.slice(0, 50)}`);
-  if (!currentUrl.includes('chatgpt.com')) {
-    // Not on chatgpt.com — navigate there
-    try { await page.evaluate(() => { window.onbeforeunload = null; }); } catch {}
-    await page.goto('https://chatgpt.com', { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {});
-    await new Promise(r => setTimeout(r, 1500));
-  }
+  try { await page.evaluate(() => { window.onbeforeunload = null; }); } catch {}
+  console.log(`  [PKCE] Current page: ${page.url().slice(0, 50)}`);
 
-  // Intercept localhost redirect to capture the authorization code
+  // Capture authorization code via page event (context.route doesn't work on CDP Chrome)
   let authCode = null;
-  await context.route('http://localhost:1455/**', (route) => {
-    const url = new URL(route.request().url());
-    authCode = url.searchParams.get('code');
-    route.abort();
+  page.on('framenavigated', (frame) => {
+    if (frame === page.mainFrame()) {
+      const u = frame.url();
+      if (u.includes('localhost:1455') && u.includes('code=')) {
+        try { authCode = new URL(u).searchParams.get('code'); } catch {}
+      }
+    }
+  });
+  // Also listen for request to localhost (catches even failed navigations)
+  page.on('request', (req) => {
+    const u = req.url();
+    if (u.includes('localhost:1455') && u.includes('code=')) {
+      try { authCode = new URL(u).searchParams.get('code'); } catch {}
+    }
   });
 
   try {
-    console.log(`  [PKCE] Navigating to: ${authUrl.slice(0, 60)}...`);
+    console.log(`  [PKCE] Navigating to auth page...`);
     await page.goto(authUrl, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch((e) => { console.log(`  [PKCE] goto error: ${e.message?.slice(0, 60)}`); });
     console.log(`  [PKCE] Auth page: ${page.url().slice(0, 60)}`);
 
@@ -260,26 +264,28 @@ async function fetchTokensViaPKCE(browser, account, lastOtp) {
             await new Promise(r => setTimeout(r, 3000));
             const stillOnVerify = page.url().includes('email-verification');
             if (stillOnVerify && lastOtp && account.client_id && account.refresh_token) {
-              console.log('  [PKCE] OTP rejected, fetching fresh code...');
-              // Click resend
-              await page.evaluate(() => {
-                for (const a of document.querySelectorAll('a, button')) {
-                  const t = a.textContent.trim();
-                  if (t.includes('重新发送') || t.includes('重新傳送') || t.includes('Resend') || t.includes('resend')) { a.click(); return; }
-                }
-              }).catch(() => {});
-              await new Promise(r => setTimeout(r, 2000));
-              // Fetch fresh OTP from IMAP
+              console.log('  [PKCE] OTP rejected, resending and fetching fresh code...');
+              // _fetchPkceOtp handles: get baseline → click resend → poll IMAP → return code
               const freshOtp = await _fetchPkceOtp(page, account);
               if (freshOtp) {
                 console.log(`  [PKCE] Fresh OTP: ${freshOtp}`);
+                // Clear old code and fill new one
                 await page.evaluate((code) => {
                   const inp = document.querySelector('input[name="code"], input[type="text"]');
-                  if (inp) { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(inp, ''); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(inp, code); inp.dispatchEvent(new Event('input', { bubbles: true })); inp.dispatchEvent(new Event('change', { bubbles: true })); }
+                  if (inp) {
+                    inp.focus();
+                    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(inp, '');
+                    inp.dispatchEvent(new Event('input', { bubbles: true }));
+                    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(inp, code);
+                    inp.dispatchEvent(new Event('input', { bubbles: true }));
+                    inp.dispatchEvent(new Event('change', { bubbles: true }));
+                  }
                 }, freshOtp);
                 await new Promise(r => setTimeout(r, 800));
                 await page.evaluate(() => { for (const b of document.querySelectorAll('button')) if (['继续','Continue'].includes(b.textContent.trim())) { b.click(); return; } });
                 console.log('  [PKCE] Fresh OTP submitted');
+              } else {
+                console.log('  [PKCE] Fresh OTP not received');
               }
               handled.otp = false;
             }
