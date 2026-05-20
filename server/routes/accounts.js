@@ -47,7 +47,8 @@ router.post('/import', (req, res) => {
       if (!email || !password) continue;
       if (existing.has(email.toLowerCase())) { skipped++; continue; }
       existing.add(email.toLowerCase());
-      const isOutlook = ['outlook.com', 'hotmail.com', 'live.com'].some(d => email.toLowerCase().includes(d));
+      const domain = (email.split('@')[1] || '').toLowerCase();
+      const isOutlook = ['outlook.com', 'hotmail.com', 'live.com', 'msn.com'].includes(domain);
       toAdd.push({
         email, password,
         totp_secret: isOutlook ? '' : thirdField,

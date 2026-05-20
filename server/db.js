@@ -94,6 +94,7 @@ const statusDB = {
   },
   reset(email) { db.run("UPDATE account_status SET status='idle', phase='', progress='', reason='' WHERE email=?", [email]); save(); },
   resetAll() { db.run("UPDATE account_status SET status='idle', phase='', progress='', reason=''"); save(); },
+  resetRunning() { db.run("UPDATE account_status SET status='idle', phase='', reason='Stopped' WHERE status='running'"); save(); },
 };
 
 let _logWriteCount = 0;

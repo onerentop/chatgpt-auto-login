@@ -28,6 +28,8 @@ module.exports = function (io) {
     }
 
     const { emails } = req.body;
+    // Release listeners on previous engine instance (prevent leak)
+    if (engine) try { engine.removeAllListeners(); } catch {}
     engine = readProtocolMode() ? new ProtocolEngine() : new PipelineEngine();
 
     engine.on('log', (data) => io.emit('log', data));

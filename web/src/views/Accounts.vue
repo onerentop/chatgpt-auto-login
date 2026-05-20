@@ -86,6 +86,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import api from '../api'
+import { PLUS_STATUSES, ERROR_STATUSES } from '../status'
 
 const tableRef = ref(null)
 const accounts = ref([])
@@ -112,7 +113,7 @@ async function load() {
     }
     accounts.value = acctRes.data.map(a => {
       const st = (statusMap[a.email] || '').toLowerCase()
-      const plan = ['plus', 'plus_no_rt'].includes(st) ? 'plus' : (['error', 'no_link'].includes(st) ? 'free' : '')
+      const plan = PLUS_STATUSES.includes(st) ? 'plus' : (ERROR_STATUSES.includes(st) ? 'free' : '')
       return { ...a, _showPw: false, _plan: plan }
     })
   } catch {}

@@ -1,3 +1,0 @@
-email,password,totp_secret,client_id,refresh_token
-user1@gmail.com,your_password,JBSWY3DPEHPK3PXP,,
-user2@outlook.com,your_password,,client-id-here,refresh-token-here

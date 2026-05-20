@@ -53,20 +53,10 @@
 <script setup>
 import { ref, reactive, onMounted } from 'vue'
 import api from '../api'
+import { statusType, isPlus } from '../status'
 
 const stats = reactive({ total: 0, plus: 0, success: 0, error: 0 })
 const results = ref([])
-
-function statusType(s) {
-  if (!s) return 'info'
-  const sl = s.toLowerCase()
-  if (sl === 'plus') return 'success'
-  if (sl === 'plus_no_rt') return 'warning'
-  if (sl === 'error') return 'danger'
-  if (sl === 'no_link') return 'warning'
-  if (sl === 'running') return ''
-  return 'info'
-}
 
 onMounted(async () => {
   try {
@@ -78,8 +68,8 @@ onMounted(async () => {
     const statuses = resultsRes.data || []
 
     stats.total = accounts.length
-    stats.plus = statuses.filter(r => ['plus', 'plus_no_rt'].includes((r.status || '').toLowerCase())).length
-    stats.success = statuses.filter(r => ['plus', 'plus_no_rt'].includes((r.status || '').toLowerCase())).length
+    stats.plus = statuses.filter(r => r.status === 'plus').length
+    stats.success = statuses.filter(r => isPlus(r.status)).length
     stats.error = statuses.filter(r => r.status === 'error').length
     results.value = statuses
   } catch {}

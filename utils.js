@@ -49,42 +49,6 @@ function randomDelay(minMs, maxMs) {
   return new Promise((resolve) => setTimeout(resolve, delay));
 }
 
-function saveResult(resultsPath, result) {
-  try {
-    const header = 'email,status,duration_s,failure_reason,checkout_url\n';
-    const checkoutUrl = (result.checkoutUrl || '').replace(/,/g, '%2C');
-    const reason = (result.reason || '').replace(/,/g, ';');
-    const line = `${result.email},${result.status},${result.duration},${reason},${checkoutUrl}\n`;
-
-    if (!fs.existsSync(resultsPath)) {
-      fs.writeFileSync(resultsPath, header + line);
-    } else {
-      fs.appendFileSync(resultsPath, line);
-    }
-  } catch (e) {
-    console.log(`  [WARN] Failed to write results.csv: ${e.message.slice(0, 60)}`);
-  }
-}
-
-function saveSessionData(sessionsDir, result) {
-  if (!result.session || !result.accessToken) return;
-  try {
-  const sanitized = result.email.replace(/[@.]/g, '_');
-  const filePath = path.join(sessionsDir, `${sanitized}.json`);
-  const data = {
-    email: result.email,
-    accessToken: result.accessToken,
-    session: result.session,
-    checkoutUrl: result.checkoutUrl || '',
-    checkoutError: result.checkoutError || '',
-    timestamp: new Date().toISOString(),
-  };
-  fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
-  } catch (e) {
-    console.log(`  [WARN] Failed to write session: ${e.message.slice(0, 60)}`);
-  }
-}
-
 function screenshotPath(email) {
   const sanitized = email.replace(/[@.]/g, '_');
   return path.join(__dirname, 'screenshots', `${sanitized}.png`);
@@ -363,8 +327,8 @@ async function fetchTokensViaPKCE(browser, account, lastOtp) {
       if (clicked) console.log(`  [PKCE] Clicked "${clicked}"`);
       await new Promise(r => setTimeout(r, 2000));
     }
-  } finally {
-    await context.unroute('http://localhost:1455/**').catch(() => {});
+  } catch (e) {
+    console.log(`  [PKCE] Loop error: ${e.message?.slice(0, 60)}`);
   }
 
   if (!authCode) {
@@ -452,4 +416,4 @@ function saveCPAAuthFile(email, accessToken, session) {
   return cpaPath;
 }
 
-module.exports = { loadAccounts, generateTOTP, randomDelay, saveResult, saveSessionData, screenshotPath, saveCPAAuthFile, fetchTokensViaPKCE };
+module.exports = { loadAccounts, generateTOTP, randomDelay, screenshotPath, saveCPAAuthFile, fetchTokensViaPKCE };

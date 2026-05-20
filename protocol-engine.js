@@ -2,168 +2,18 @@
 // Same EventEmitter interface as server/engine.js but uses Python curl_cffi for login/register
 
 const { EventEmitter } = require('events');
-const { spawn, execSync } = require('child_process');
+const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
-const WebSocket = require('ws');
-const { chromium } = require('playwright');
 
-const { autoPayment, CONFIG: PAY_CONFIG } = require('./payment');
+const { autoPayment } = require('./payment');
 const { randomDelay, saveCPAAuthFile } = require('./utils');
+const { connectGateway, getPaymentLink } = require('./server/discord-gateway');
+const { launchChrome, waitForCDP } = require('./server/chrome');
 
 const ROOT = __dirname;
 const PYTHON_SCRIPT = path.join(ROOT, 'protocol_register.py');
-
-// ========== Discord config (copied from engine.js — cannot modify original) ==========
-const DISCORD_TOKEN = PAY_CONFIG.discordToken || '';
-const CHANNEL_ID = PAY_CONFIG.discordChannelId || '';
-const HUB_MESSAGE_ID = PAY_CONFIG.discordMessageId || '';
-const GUILD_ID = PAY_CONFIG.discordGuildId || '';
-const APP_ID = PAY_CONFIG.discordAppId || '';
-const API_BASE = 'https://discord.com/api/v9';
-
-const superProps = Buffer.from(JSON.stringify({
-  os: 'Windows', browser: 'Chrome', device: '',
-  browser_user_agent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-  browser_version: '131.0.0.0', os_version: '10',
-  release_channel: 'stable', client_build_number: 335978,
-})).toString('base64');
-
-const discordHeaders = {
-  'Authorization': DISCORD_TOKEN, 'Content-Type': 'application/json',
-  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-  'X-Super-Properties': superProps,
-};
-
-function nn() { return String(BigInt(Date.now()) * 1000n + BigInt(Math.floor(Math.random() * 1000))); }
-
-// Discord Gateway (same as engine.js)
-function connectGateway() {
-  return new Promise((resolve, reject) => {
-    const ws = new WebSocket('wss://gateway.discord.gg/?v=9&encoding=json');
-    let hb = null, seq = null, sessionId = null;
-    const eh = {};
-    function on(e, f) { if (!eh[e]) eh[e] = []; eh[e].push(f); }
-    function off(e, f) { const a = eh[e] || []; const i = a.indexOf(f); if (i !== -1) a.splice(i, 1); }
-    const gwTimeout = setTimeout(() => { if (hb) clearInterval(hb); ws.close(); reject(new Error('Gateway timeout')); }, 30000);
-    ws.on('message', (raw) => {
-      let m;
-      try { m = JSON.parse(raw); } catch { return; }
-      if (m.s) seq = m.s;
-      if (m.op === 10) {
-        hb = setInterval(() => ws.send(JSON.stringify({ op: 1, d: seq })), m.d.heartbeat_interval);
-        ws.send(JSON.stringify({ op: 2, d: { token: DISCORD_TOKEN, properties: { os: 'Windows', browser: 'Chrome', device: '' }, presence: { status: 'online', afk: false } } }));
-      }
-      if (m.op === 0 && m.t === 'READY') {
-        clearTimeout(gwTimeout);
-        sessionId = m.d.session_id;
-        ws.removeAllListeners('error');
-        ws.on('error', (err) => console.log(`[Gateway] WS error: ${err.message}`));
-        resolve({ ws, sessionId, on, off, cleanup: () => { clearInterval(hb); ws.close(); } });
-      }
-      if (m.op === 0 && m.t) { for (const f of (eh[m.t] || [])) f(m.d); }
-    });
-    ws.on('error', reject);
-  });
-}
-
-function waitFor(gw, event, filter, ms = 30000) {
-  return new Promise((resolve, reject) => {
-    const t = setTimeout(() => { gw.off(event, h); reject(new Error(`Timeout: ${event}`)); }, ms);
-    function h(d) { if (filter(d)) { clearTimeout(t); gw.off(event, h); resolve(d); } }
-    gw.on(event, h);
-  });
-}
-
-function waitForAny(gw, events, filter, ms = 30000) {
-  return new Promise((resolve, reject) => {
-    const t = setTimeout(() => { cleanup(); reject(new Error('Timeout')); }, ms);
-    const hs = {};
-    function cleanup() { clearTimeout(t); for (const e of events) gw.off(e, hs[e]); }
-    for (const e of events) { hs[e] = (d) => { if (filter(d)) { cleanup(); resolve(d); } }; gw.on(e, hs[e]); }
-  });
-}
-
-async function interact(body) {
-  const r = await fetch(`${API_BASE}/interactions`, { method: 'POST', headers: discordHeaders, body: JSON.stringify(body) });
-  if (r.status !== 204 && r.status !== 200) throw new Error(`Interaction ${r.status}: ${await r.text()}`);
-}
-
-async function getPaymentLink(gw, accessToken) {
-  const menuP = waitFor(gw, 'MESSAGE_CREATE', (d) => d.author?.bot && d.components?.length > 0, 15000);
-  await interact({ type: 3, nonce: nn(), guild_id: GUILD_ID, channel_id: CHANNEL_ID, message_flags: 0, message_id: HUB_MESSAGE_ID, application_id: APP_ID, session_id: gw.sessionId, data: { component_type: 2, custom_id: 'hub:chatgpt' } });
-  const menu = await menuP;
-  let btnId = null;
-  for (const r of (menu.components || [])) { for (const c of (r.components || [])) { if (c.label?.includes('美区') && c.label?.includes('PLUS') && c.label?.includes('免费试用')) btnId = c.custom_id; } }
-  if (!btnId) throw new Error('US Plus button not found');
-  const modalP = waitFor(gw, 'INTERACTION_MODAL_CREATE', () => true, 15000);
-  await new Promise(r => setTimeout(r, 1500));
-  await interact({ type: 3, nonce: nn(), guild_id: GUILD_ID, channel_id: CHANNEL_ID, message_flags: 64, message_id: menu.id, application_id: APP_ID, session_id: gw.sessionId, data: { component_type: 2, custom_id: btnId } });
-  const modal = await modalP;
-  // Build modal response (same structure as engine.js)
-  const comps = modal.components.map((r) => ({
-    type: r.type,
-    components: r.components.map((f) => ({ type: f.type, custom_id: f.custom_id, value: accessToken })),
-  }));
-  const resultP = waitForAny(gw, ['MESSAGE_UPDATE', 'MESSAGE_CREATE'], (d) => {
-    if (d.channel_id !== CHANNEL_ID || !d.author?.bot) return false;
-    const t = JSON.stringify(d.embeds || []) + (d.content || '');
-    return t.includes('pay.openai.com') || t.includes('试用链接') || t.includes('失败') || t.includes('Fail') || t.includes('积分不足') || t.includes('资格');
-  }, 60000);
-  await new Promise(r => setTimeout(r, 1000));
-  await interact({ type: 5, nonce: nn(), guild_id: GUILD_ID, channel_id: CHANNEL_ID, application_id: modal.application.id, session_id: gw.sessionId, data: { id: modal.id, custom_id: modal.custom_id, components: comps } });
-  const result = await resultP;
-  // Extract link same way as engine.js
-  const all = (result.content || '') + ' ' + JSON.stringify(result.embeds || []);
-  const linkMatch = all.match(/https:\/\/pay\.openai\.com[^\s"\\|)]+/);
-  const title = result.embeds?.[0]?.title || '';
-  if (title) console.log(`[Discord] Title: ${title}`);
-  if (!linkMatch) {
-    console.log(`[Discord] No link found. Content: ${(result.content || '').slice(0, 150)}`);
-    console.log(`[Discord] Embeds: ${JSON.stringify(result.embeds || []).slice(0, 300)}`);
-  }
-  return {
-    link: linkMatch ? linkMatch[0] : '',
-    title: result.embeds?.[0]?.title || '',
-    raw: result.embeds?.[0]?.description || result.content || '',
-  };
-}
-
-// ========== Chrome helpers ==========
-const CHROME_PATHS = [
-  'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-  'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-  path.join(process.env.LOCALAPPDATA || '', 'Google\\Chrome\\Application\\chrome.exe'),
-];
-function findChrome() { for (const p of CHROME_PATHS) if (fs.existsSync(p)) return p; return null; }
-
-let _screenSize = null;
-function getScreenQuarter() {
-  if (!_screenSize) {
-    try {
-      const out = execSync('powershell -command "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Screen]::PrimaryScreen.Bounds | Select Width,Height | ConvertTo-Json"', { encoding: 'utf-8', timeout: 5000 });
-      const { Width, Height } = JSON.parse(out);
-      _screenSize = { w: Math.floor(Width / 2), h: Math.floor(Height / 2) };
-    } catch { _screenSize = { w: 960, h: 540 }; }
-  }
-  return _screenSize;
-}
-
-function launchChrome(port, tempDir) {
-  const chromePath = findChrome();
-  if (!chromePath) throw new Error('Chrome not found');
-  const q = getScreenQuarter();
-  return spawn(chromePath, [`--remote-debugging-port=${port}`, '--incognito', `--user-data-dir=${tempDir}`, '--no-first-run', '--no-default-browser-check', '--disable-default-apps', '--disable-popup-blocking', `--window-size=${q.w},${q.h}`, '--window-position=0,0', 'about:blank'], { stdio: 'ignore', detached: false });
-}
-
-async function waitForCDP(port) {
-  const start = Date.now();
-  while (Date.now() - start < 15000) {
-    try { return await chromium.connectOverCDP(`http://127.0.0.1:${port}`); } catch { await new Promise(r => setTimeout(r, 500)); }
-  }
-  throw new Error('CDP timeout');
-}
 
 // ========== Python subprocess ==========
 function runProtocolRegister(account, engine) {
@@ -252,6 +102,29 @@ class ProtocolEngine extends EventEmitter {
     } catch {}
   }
 
+  // Run PKCE and emit final status. Used by both already-Plus and post-payment branches.
+  async _finalizePkce(account, loginResult, progress) {
+    this.emitStatus({ email: account.email, status: 'running', phase: 'pkce', progress });
+    try {
+      const pkceResult = await runProtocolPKCE(account, this);
+      const pkce = pkceResult.pkce || {};
+      if (pkce.refresh_token) {
+        console.log(`[${progress}] PKCE success, saving with refresh_token`);
+        saveCPAAuthFile(account.email, pkce.access_token || loginResult.accessToken, { ...loginResult.session, refresh_token: pkce.refresh_token, id_token: pkce.id_token || '' });
+        this.emitStatus({ email: account.email, status: 'plus', phase: 'done', progress });
+      } else {
+        if (pkce.needsPhone) console.log(`[${progress}] PKCE requires phone verification`);
+        else console.log(`[${progress}] PKCE no RT: ${pkce.error || 'unknown'}`);
+        saveCPAAuthFile(account.email, loginResult.accessToken, loginResult.session);
+        this.emitStatus({ email: account.email, status: 'plus_no_rt', phase: 'done', progress });
+      }
+    } catch (e) {
+      console.log(`[${progress}] PKCE error: ${e.message?.slice(0, 60)}`);
+      saveCPAAuthFile(account.email, loginResult.accessToken, loginResult.session);
+      this.emitStatus({ email: account.email, status: 'plus_no_rt', phase: 'done', progress });
+    }
+  }
+
   stop() {
     if (this.status !== 'idle') {
       this.stopFlag = true;
@@ -261,6 +134,13 @@ class ProtocolEngine extends EventEmitter {
       if (this._gw) try { this._gw.cleanup(); } catch {}
       if (this._tempDir) try { fs.rmSync(this._tempDir, { recursive: true, force: true }); } catch {}
       this._pyProc = null; this._chromeProc = null; this._browser = null; this._gw = null; this._tempDir = null;
+
+      // Reset any "running" accounts in DB to idle
+      try {
+        const { statusDB } = require('./server/db');
+        if (statusDB.resetRunning) statusDB.resetRunning();
+      } catch {}
+
       this.status = 'idle';
       this.emit('log', { email: '', phase: '', message: 'Protocol engine force stopped.', timestamp: new Date().toISOString() });
     }
@@ -333,28 +213,7 @@ class ProtocolEngine extends EventEmitter {
           console.log(`[${progress}] Already Plus`);
           if (runtimeCfg.enableOAuth) {
             console.log(`[${progress}] Running PKCE via protocol...`);
-            this.emitStatus({ email: account.email, status: 'running', phase: 'pkce', progress });
-            try {
-              const pkceResult = await runProtocolPKCE(account, this);
-              const pkce = pkceResult.pkce || {};
-              if (pkce.refresh_token) {
-                console.log(`[${progress}] PKCE success, saving with refresh_token`);
-                saveCPAAuthFile(account.email, pkce.access_token || result.accessToken, { ...result.session, refresh_token: pkce.refresh_token, id_token: pkce.id_token || '' });
-                this.emitStatus({ email: account.email, status: 'plus', phase: 'done', progress });
-              } else if (pkce.needsPhone) {
-                console.log(`[${progress}] PKCE requires phone verification`);
-                saveCPAAuthFile(account.email, result.accessToken, result.session);
-                this.emitStatus({ email: account.email, status: 'plus_no_rt', phase: 'done', progress });
-              } else {
-                console.log(`[${progress}] PKCE no RT: ${pkce.error || 'unknown'}`);
-                saveCPAAuthFile(account.email, result.accessToken, result.session);
-                this.emitStatus({ email: account.email, status: 'plus_no_rt', phase: 'done', progress });
-              }
-            } catch (e) {
-              console.log(`[${progress}] PKCE error: ${e.message?.slice(0, 60)}`);
-              saveCPAAuthFile(account.email, result.accessToken, result.session);
-              this.emitStatus({ email: account.email, status: 'plus_no_rt', phase: 'done', progress });
-            }
+            await this._finalizePkce(account, result, progress);
           } else {
             saveCPAAuthFile(account.email, result.accessToken, result.session);
             this.emitStatus({ email: account.email, status: 'plus_no_rt', phase: 'done', progress });
@@ -437,28 +296,7 @@ class ProtocolEngine extends EventEmitter {
           if (paymentResult.success) {
             if (runtimeCfg.enableOAuth) {
               console.log(`[${progress}] Running PKCE via protocol...`);
-              this.emitStatus({ email: account.email, status: 'running', phase: 'pkce', progress });
-              try {
-                const pkceResult = await runProtocolPKCE(account, this);
-                const pkce = pkceResult.pkce || {};
-                if (pkce.refresh_token) {
-                  console.log(`[${progress}] PKCE success, saving with refresh_token`);
-                  saveCPAAuthFile(account.email, pkce.access_token || result.accessToken, { ...result.session, refresh_token: pkce.refresh_token, id_token: pkce.id_token || '' });
-                  this.emitStatus({ email: account.email, status: 'plus', phase: 'done', progress });
-                } else if (pkce.needsPhone) {
-                  console.log(`[${progress}] PKCE requires phone verification`);
-                  saveCPAAuthFile(account.email, result.accessToken, result.session);
-                  this.emitStatus({ email: account.email, status: 'plus_no_rt', phase: 'done', progress });
-                } else {
-                  console.log(`[${progress}] PKCE no RT: ${pkce.error || 'unknown'}`);
-                  saveCPAAuthFile(account.email, result.accessToken, result.session);
-                  this.emitStatus({ email: account.email, status: 'plus_no_rt', phase: 'done', progress });
-                }
-              } catch (e) {
-                console.log(`[${progress}] PKCE error: ${e.message?.slice(0, 60)}`);
-                saveCPAAuthFile(account.email, result.accessToken, result.session);
-                this.emitStatus({ email: account.email, status: 'plus_no_rt', phase: 'done', progress });
-              }
+              await this._finalizePkce(account, result, progress);
             } else {
               saveCPAAuthFile(account.email, result.accessToken, result.session);
               this.emitStatus({ email: account.email, status: 'plus_no_rt', phase: 'done', progress });

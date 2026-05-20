@@ -323,10 +323,6 @@ async function loginAccount(browser, account) {
     }
     console.log(`  [9/10] accessToken obtained (${sessionData.accessToken.slice(0, 20)}...)`);
 
-    // Step 10: Generate Plus free trial checkout link
-    console.log(`  [10/10] Generating Plus checkout link...`);
-    const checkoutResult = await generateCheckoutLink(page, sessionData.accessToken);
-
     const duration = ((Date.now() - startTime) / 1000).toFixed(1);
     return {
       email: account.email,
@@ -336,8 +332,6 @@ async function loginAccount(browser, account) {
       accessToken: sessionData.accessToken,
       session: sessionData,
       lastOtp: lastOtp || '',
-      checkoutUrl: checkoutResult.url || '',
-      checkoutError: checkoutResult.error || '',
     };
   } catch (error) {
     const duration = ((Date.now() - startTime) / 1000).toFixed(1);
@@ -360,137 +354,6 @@ async function fetchSessionToken(page) {
     console.log(`  [9/10] Session fetch error: ${error.message.slice(0, 100)}`);
     return {};
   }
-}
-
-async function generateCheckoutLink(page, accessToken) {
-  try {
-    const result = await page.evaluate(async ({ checkoutUrl, token }) => {
-      try {
-        const res = await fetch(checkoutUrl, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            plan_name: 'chatgptplusplan',
-            billing_details: {
-              country: 'JP',
-              currency: 'USD',
-            },
-            promo_campaign: 'plus-1-month-free',
-            checkout_ui_mode: 'redirect',
-          }),
-        });
-        const data = await res.json();
-        return { url: data.url || '', raw: JSON.stringify(data), status: res.status };
-      } catch (e) {
-        return { error: e.message };
-      }
-    }, { checkoutUrl: CHECKOUT_URL, token: accessToken });
-
-    if (result.url) {
-      console.log(`  [10/10] Checkout URL: ${result.url}`);
-    } else {
-      console.log(`  [10/10] Checkout response: ${result.raw || result.error}`);
-    }
-    return result;
-  } catch (error) {
-    console.log(`  [10/10] Checkout error: ${error.message.slice(0, 100)}`);
-    return { error: error.message };
-  }
-}
-
-async function fetchOutlookOTP(clientId, refreshToken, email, requestTime) {
-  const { ImapFlow } = require('imapflow');
-
-  // Step 1: Get access token with IMAP scope
-  const tokenBody = new URLSearchParams({
-    client_id: clientId,
-    grant_type: 'refresh_token',
-    refresh_token: refreshToken,
-    scope: 'https://outlook.office.com/IMAP.AccessAsUser.All',
-  });
-
-  let accessToken;
-  try {
-    const tokenRes = await fetch('https://login.microsoftonline.com/consumers/oauth2/v2.0/token', { method: 'POST', body: tokenBody });
-    const tokenData = await tokenRes.json();
-    accessToken = tokenData.access_token;
-    if (!accessToken) {
-      console.log(`  [OTP] Token error: ${tokenData.error || JSON.stringify(tokenData).slice(0, 200)}`);
-      return null;
-    }
-    console.log('  [OTP] Access token obtained');
-  } catch (e) {
-    console.log(`  [OTP] Token request failed: ${e.message}`);
-    return null;
-  }
-
-  // Step 2: Get baseline UID (latest email before we requested the code)
-  let baselineUid = 0;
-  try {
-    const pre = new ImapFlow({ host: 'outlook.office365.com', port: 993, secure: true, auth: { user: email, accessToken }, logger: false });
-    pre.on('error', () => {});
-    await pre.connect();
-    const lock = await pre.getMailboxLock('INBOX');
-    if (pre.mailbox.exists > 0) {
-      for await (const msg of pre.fetch({ seq: `${pre.mailbox.exists}:*` }, { uid: true })) {
-        if (msg.uid > baselineUid) baselineUid = msg.uid;
-      }
-    }
-    lock.release();
-    pre.close();
-    console.log(`  [OTP] Baseline UID: ${baselineUid} (will only read newer)`);
-  } catch (e) {
-    console.log(`  [OTP] Baseline error: ${e.message.slice(0, 80)}`);
-  }
-
-  // Step 3: Poll IMAP for NEW verification email (UID > baseline)
-  for (let attempt = 0; attempt < 20; attempt++) {
-    let client;
-    try {
-      client = new ImapFlow({ host: 'outlook.office365.com', port: 993, secure: true, auth: { user: email, accessToken }, logger: false });
-      client.on('error', () => {});
-      await client.connect();
-      const lock = await client.getMailboxLock('INBOX');
-      try {
-        const messages = [];
-        for await (const msg of client.fetch({ uid: `${baselineUid + 1}:*` }, { envelope: true, source: true, uid: true })) {
-          messages.push(msg);
-        }
-        messages.reverse();
-        for (const msg of messages) {
-          const subject = msg.envelope?.subject || '';
-          const source = msg.source?.toString() || '';
-          const text = subject + ' ' + source;
-
-          if (msg.uid <= baselineUid) continue;
-          if (text.toLowerCase().includes('openai') || text.toLowerCase().includes('verify') || text.includes('验证') || text.toLowerCase().includes('code')) {
-            const match = text.match(/\b(\d{6})\b/);
-            if (match) {
-              console.log(`  [OTP] Found code in: "${subject}" (UID:${msg.uid})`);
-              lock.release();
-              client.close();
-              return match[1];
-            }
-          }
-        }
-      } finally {
-        lock.release();
-      }
-      client.close();
-    } catch (e) {
-      console.log(`  [OTP] IMAP error: ${e.message.slice(0, 100)}`);
-      try { client?.close(); } catch {}
-    }
-
-    console.log(`  [OTP] Attempt ${attempt + 1}/20 - waiting for new email...`);
-    await new Promise((r) => setTimeout(r, 3000));
-  }
-
-  console.log('  [OTP] Failed to get code after 20 attempts');
-  return null;
 }
 
 async function typeHumanLike(page, text) {

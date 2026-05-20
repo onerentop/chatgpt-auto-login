@@ -71,7 +71,6 @@ const saving = ref(false)
 
 const form = reactive({
   protocolMode: false,
-  protocolConcurrency: 3,
   enableOAuth: false,
   phone: '',
   smsApiUrl: '',

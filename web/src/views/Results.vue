@@ -61,6 +61,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import api from '../api'
+import { statusType } from '../status'
 
 const results = ref([])
 const statusFilter = ref('')
@@ -70,17 +71,6 @@ const filteredResults = computed(() => {
   return results.value.filter((r) => r.status === statusFilter.value)
 })
 
-function statusType(status) {
-  const map = {
-    plus: 'success',
-    plus_no_rt: 'warning',
-    error: 'danger',
-    no_link: 'warning',
-    running: '',
-    idle: 'info',
-  }
-  return map[status] || 'info'
-}
 
 async function loadResults() {
   try {
