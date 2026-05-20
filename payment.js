@@ -341,20 +341,25 @@ async function handlePayPalCheckout(page, phoneOverride, smsOverride) {
   console.log('    [Pay] Email:', email);
   console.log('    [Pay] Address:', JSON.stringify(addr));
 
-  await fillInput(page, '#email', email);
-  await fillInput(page, '#phone', phoneOverride || CONFIG.phone);
+  const results = {};
+  results.email = await fillInput(page, '#email', email);
+  results.phone = await fillInput(page, '#phone', phoneOverride || CONFIG.phone);
   const card = randCard();
   console.log('    [Pay] Card:', card.number.slice(0, 4) + '****' + card.number.slice(-4));
-  await fillInput(page, '#cardNumber', card.number);
-  await fillInput(page, '#cardExpiry', card.expiry);
-  await fillInput(page, '#cardCvv', card.cvv);
-  await fillInput(page, '#password', password);
-  await fillInput(page, '#firstName', 'James');
-  await fillInput(page, '#lastName', 'Smith');
-  await fillInput(page, '#billingLine1', addr.street);
-  await fillInput(page, '#billingCity', addr.city);
-  await fillInput(page, '#billingPostalCode', addr.zip);
-  await selectOption(page, '#billingState', addr.state);
+  results.cardNumber = await fillInput(page, '#cardNumber', card.number);
+  results.cardExpiry = await fillInput(page, '#cardExpiry', card.expiry);
+  results.cardCvv = await fillInput(page, '#cardCvv', card.cvv);
+  results.password = await fillInput(page, '#password', password);
+  results.firstName = await fillInput(page, '#firstName', 'James');
+  results.lastName = await fillInput(page, '#lastName', 'Smith');
+  results.billingLine1 = await fillInput(page, '#billingLine1', addr.street);
+  results.billingCity = await fillInput(page, '#billingCity', addr.city);
+  results.billingZip = await fillInput(page, '#billingPostalCode', addr.zip);
+  results.billingState = await selectOption(page, '#billingState', addr.state);
+  const filled = Object.entries(results).filter(([,v]) => v).map(([k]) => k);
+  const missed = Object.entries(results).filter(([,v]) => !v).map(([k]) => k);
+  console.log(`    [Pay] Filled: ${filled.join(', ') || 'none'}`);
+  if (missed.length) console.log(`    [Pay] MISSED: ${missed.join(', ')}`);
 
   await randomDelay(500, 1000);
   await clickSubmit(page);
@@ -368,9 +373,11 @@ async function handleSmsVerification(page, smsOverride) {
   const SMS_URL = smsOverride || CONFIG.smsApiUrl;
   if (!SMS_URL) return;
 
-  // Wait for SMS dialog to appear (PayPal may take 10-20s to show it)
+  await randomDelay(2000, 3000);
+
+  // Check if SMS code dialog appeared ("Enter your code")
   const codeDialog = page.locator('text=Enter your code').or(page.locator('text=输入验证码').or(page.locator('text=输入你的验证码')));
-  const dialogVisible = await codeDialog.isVisible({ timeout: 20000 }).catch(() => false);
+  const dialogVisible = await codeDialog.isVisible({ timeout: 8000 }).catch(() => false);
   if (!dialogVisible) {
     console.log('    [Pay] No SMS verification dialog detected');
     return;
