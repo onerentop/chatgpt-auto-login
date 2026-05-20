@@ -484,11 +484,27 @@ async function autoPayment(page, phoneConfig) {
     return { success: false, reason: 'PayPal not reached' };
   }
 
-  // Wait for PayPal to finish processing before returning
-  console.log('    [Pay] Waiting 20s for payment to process...');
-  await new Promise(r => setTimeout(r, 20000));
+  // Wait for PayPal to finish processing and redirect back to pay.openai.com
+  console.log('    [Pay] Waiting for payment redirect...');
+  let paymentSuccess = false;
+  for (let w = 0; w < 15; w++) {
+    await new Promise(r => setTimeout(r, 2000));
+    const currentUrl = page.url();
+    if (currentUrl.includes('pay.openai.com') && currentUrl.includes('redirect_status=succeeded')) {
+      console.log('    [Pay] Payment succeeded! (redirect_status=succeeded)');
+      paymentSuccess = true;
+      break;
+    }
+    if (currentUrl.includes('chatgpt.com')) {
+      console.log('    [Pay] Redirected to chatgpt.com — payment likely succeeded');
+      paymentSuccess = true;
+      break;
+    }
+    if (w % 3 === 2) console.log(`    [Pay] Waiting... (${currentUrl.slice(0, 50)})`);
+  }
+
   console.log('    [Pay] Auto-payment flow completed');
-  return { success: true };
+  return { success: paymentSuccess, reason: paymentSuccess ? '' : 'Payment redirect not detected' };
 }
 
 module.exports = { autoPayment, CONFIG };
