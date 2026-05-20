@@ -398,17 +398,15 @@ class ProtocolEngine extends EventEmitter {
           currentEmail = account.email;
           this.emitStatus({ email: account.email, status: 'running', phase: 'discord', progress });
           console.log(`[${progress}] Discord: ${account.email}...`);
-          // Always use Discord bot to get $0 Plus trial link
+          // Discord bot for $0 Plus trial link
           const discord = await getPaymentLink(this._gw, result.accessToken);
           const link = discord.link;
           if (link) console.log(`[${progress}] ${discord.title || 'Link obtained'}`);
           console.log(`[${progress}] Link: ${link?.slice(0, 80) || 'none'}`);
-          if (!link && discord.raw) console.log(`[${progress}] Discord raw: ${discord.raw.slice(0, 150)}`);
 
           if (!link) {
             const reason = discord.raw || 'No payment link';
-            console.log(`[${progress}] No link: ${reason.slice(0, 80)}`);
-            // Still generate CPA/Sub2API with free plan (accessToken is valid)
+            console.log(`[${progress}] ${reason.slice(0, 80)}`);
             saveAuthFiles(account.email, result.accessToken, result.session);
             this.emitStatus({ email: account.email, status: 'no_link', phase: 'done', progress, reason });
             summary.noLink++;
