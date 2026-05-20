@@ -145,8 +145,10 @@ function connectGateway() {
       if (i !== -1) a.splice(i, 1);
     }
 
+    const gwTimeout = setTimeout(() => { if (hb) clearInterval(hb); ws.close(); reject(new Error('Gateway timeout')); }, 30000);
     ws.on('message', (raw) => {
-      const m = JSON.parse(raw);
+      let m;
+      try { m = JSON.parse(raw); } catch { return; }
       if (m.s) seq = m.s;
       if (m.op === 10) {
         hb = setInterval(() => ws.send(JSON.stringify({ op: 1, d: seq })), m.d.heartbeat_interval);
@@ -160,7 +162,10 @@ function connectGateway() {
         }));
       }
       if (m.op === 0 && m.t === 'READY') {
+        clearTimeout(gwTimeout);
         sessionId = m.d.session_id;
+        ws.removeAllListeners('error');
+        ws.on('error', (err) => console.log(`[Gateway] WS error: ${err.message}`));
         resolve({ ws, sessionId, on, off, cleanup: () => { clearInterval(hb); ws.close(); } });
       }
       if (m.op === 0 && m.t) {
@@ -168,7 +173,6 @@ function connectGateway() {
       }
     });
     ws.on('error', reject);
-    setTimeout(() => reject(new Error('Gateway timeout')), 30000);
   });
 }
 
@@ -593,6 +597,8 @@ class PipelineEngine extends EventEmitter {
                     else console.log(`${p} PKCE failed, saving without refresh_token`);
                     saveCPAAuthFile(account.email, loginResult.accessToken, loginResult.session);
                   }
+                } else {
+                  saveCPAAuthFile(account.email, loginResult.accessToken, loginResult.session);
                 }
 
                 if (latestCfg.enableCPA) {

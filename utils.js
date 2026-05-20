@@ -303,12 +303,6 @@ async function fetchTokensViaPKCE(browser, account, lastOtp) {
         return { needsPhone: true };
       }
 
-      // STATE: add-phone (OpenAI requires phone verification for Codex)
-      if (url.includes('add-phone') || url.includes('phone-required')) {
-        console.log('  [PKCE] State: add-phone — phone verification required, skipping PKCE');
-        return { needsPhone: true };
-      }
-
       // STATE 4: about-you (first-time registration)
       if (url.includes('about-you') || url.includes('about')) {
         if (!handled.about) {
@@ -386,8 +380,9 @@ function saveCPAAuthFile(email, accessToken, session) {
   const refreshToken = session?.refresh_token || session?.refreshToken || '';
   const idToken = session?.id_token || session?.idToken || '';
   const now = new Date();
-  const expiresAt = payload.exp ? new Date(payload.exp * 1000).toISOString().replace('Z', '+08:00') : new Date(now.getTime() + 10 * 24 * 3600000).toISOString().replace('Z', '+08:00');
-  const exportedAt = now.toISOString().replace('Z', '+08:00');
+  const toCST = (d) => { const t = new Date(d.getTime() + 8 * 3600000); return t.toISOString().replace('Z', '+08:00'); };
+  const expiresAt = payload.exp ? toCST(new Date(payload.exp * 1000)) : toCST(new Date(now.getTime() + 10 * 24 * 3600000));
+  const exportedAt = toCST(now);
 
   // CPA format
   const cpa = {

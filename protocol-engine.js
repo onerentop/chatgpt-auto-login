@@ -46,18 +46,25 @@ function connectGateway() {
     const eh = {};
     function on(e, f) { if (!eh[e]) eh[e] = []; eh[e].push(f); }
     function off(e, f) { const a = eh[e] || []; const i = a.indexOf(f); if (i !== -1) a.splice(i, 1); }
+    const gwTimeout = setTimeout(() => { if (hb) clearInterval(hb); ws.close(); reject(new Error('Gateway timeout')); }, 30000);
     ws.on('message', (raw) => {
-      const m = JSON.parse(raw);
+      let m;
+      try { m = JSON.parse(raw); } catch { return; }
       if (m.s) seq = m.s;
       if (m.op === 10) {
         hb = setInterval(() => ws.send(JSON.stringify({ op: 1, d: seq })), m.d.heartbeat_interval);
         ws.send(JSON.stringify({ op: 2, d: { token: DISCORD_TOKEN, properties: { os: 'Windows', browser: 'Chrome', device: '' }, presence: { status: 'online', afk: false } } }));
       }
-      if (m.op === 0 && m.t === 'READY') { sessionId = m.d.session_id; resolve({ ws, sessionId, on, off, cleanup: () => { clearInterval(hb); ws.close(); } }); }
+      if (m.op === 0 && m.t === 'READY') {
+        clearTimeout(gwTimeout);
+        sessionId = m.d.session_id;
+        ws.removeAllListeners('error');
+        ws.on('error', (err) => console.log(`[Gateway] WS error: ${err.message}`));
+        resolve({ ws, sessionId, on, off, cleanup: () => { clearInterval(hb); ws.close(); } });
+      }
       if (m.op === 0 && m.t) { for (const f of (eh[m.t] || [])) f(m.d); }
     });
     ws.on('error', reject);
-    setTimeout(() => reject(new Error('Gateway timeout')), 30000);
   });
 }
 
@@ -162,6 +169,8 @@ async function waitForCDP(port) {
 function runProtocolRegister(account) {
   return new Promise((resolve, reject) => {
     const py = spawn('py', ['-3', PYTHON_SCRIPT], { cwd: ROOT, stdio: ['pipe', 'pipe', 'pipe'] });
+    let settled = false;
+    const timeout = setTimeout(() => { if (!settled) { settled = true; py.kill(); reject(new Error('Python timeout (120s)')); } }, 120000);
     const input = JSON.stringify({ email: account.email, password: account.password, client_id: account.client_id || '', refresh_token: account.refresh_token || '' });
     let stdout = '', stderr = '';
     py.stdout.on('data', (data) => {
@@ -174,6 +183,9 @@ function runProtocolRegister(account) {
     });
     py.stderr.on('data', (data) => { stderr += data.toString(); });
     py.on('close', (code) => {
+      clearTimeout(timeout);
+      if (settled) return;
+      settled = true;
       try {
         const result = JSON.parse(stdout);
         if (result.status === 'success') resolve(result);
@@ -250,6 +262,7 @@ class ProtocolEngine extends EventEmitter {
     }
     if (accounts.length === 0) throw new Error('No accounts');
 
+    const runtimeCfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf-8'));
     const summary = { total: accounts.length, success: 0, noLink: 0, error: 0 };
 
     try {
@@ -284,8 +297,7 @@ class ProtocolEngine extends EventEmitter {
         const isPlusOrAbove = ['plus', 'pro', 'team', 'enterprise'].includes((result.planType || 'free').toLowerCase());
         if (isPlusOrAbove) {
           console.log(`[${progress}] Already Plus`);
-          const cfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf-8'));
-          if (cfg.enableOAuth) {
+          if (runtimeCfg.enableOAuth) {
             console.log(`[${progress}] Running PKCE for already-Plus account...`);
             this.emitStatus({ email: account.email, status: 'running', phase: 'pkce', progress });
             const pkcePort = 9222 + i;
@@ -376,14 +388,12 @@ class ProtocolEngine extends EventEmitter {
           console.log(`[${progress}] Auto-filling payment...`);
           let paymentResult = { success: false };
           try {
-            const cfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf-8'));
-            const slot = cfg.phoneSlots?.[0] || { phone: cfg.phone, smsApiUrl: cfg.smsApiUrl };
+            const slot = runtimeCfg.phoneSlots?.[0] || { phone: runtimeCfg.phone, smsApiUrl: runtimeCfg.smsApiUrl };
             paymentResult = await autoPayment(page, { phone: slot.phone, smsApiUrl: slot.smsApiUrl }) || { success: false };
           } catch (e) { console.log(`[${progress}] Payment error: ${e.message?.slice(0, 60)}`); }
 
           if (paymentResult.success) {
-            const cfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf-8'));
-            if (cfg.enableOAuth) {
+            if (runtimeCfg.enableOAuth) {
               console.log(`[${progress}] Running PKCE OAuth...`);
               this.emitStatus({ email: account.email, status: 'running', phase: 'pkce', progress });
               const pkceTokens = await fetchTokensViaPKCE(browser, account, result.lastOtp).catch((e) => { console.log(`[${progress}] PKCE failed: ${e.message?.slice(0, 60)}`); return null; });
@@ -430,12 +440,11 @@ class ProtocolEngine extends EventEmitter {
       if (this._gw) try { this._gw.cleanup(); } catch {}
       if (this._tempDir) try { fs.rmSync(this._tempDir, { recursive: true, force: true }); } catch {}
       this._browser = null; this._chromeProc = null; this._gw = null; this._tempDir = null;
-      if (this._logCapture) { this._logCapture.stop(); this._logCapture.offLog(logHandler); }
+      if (this._logCapture) { this._logCapture.offLog(logHandler); this._logCapture.stop(); }
+      console.log(`[Proto-Engine] Complete: ${JSON.stringify(summary)}`);
+      this.emit('complete', { summary });
+      this.status = 'idle';
     }
-
-    console.log(`[Proto-Engine] Complete: ${JSON.stringify(summary)}`);
-    this.emit('complete', { summary });
-    this.status = 'idle';
   }
 }
 

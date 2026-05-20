@@ -389,7 +389,7 @@ async function handleSmsVerification(page, smsOverride) {
   let smsCode = null;
   for (let attempt = 0; attempt < 30; attempt++) {
     try {
-      const res = await fetch(SMS_URL);
+      const res = await fetch(SMS_URL, { signal: AbortSignal.timeout(10000) });
       const text = await res.text();
       console.log(`    [Pay] SMS API attempt ${attempt + 1}: ${text.slice(0, 100)}`);
 

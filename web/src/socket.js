@@ -16,6 +16,9 @@ export function connectSocket() {
   socket = io({
     autoConnect: false,
     auth: { token },
+    reconnection: true,
+    reconnectionAttempts: 10,
+    reconnectionDelay: 2000,
   })
 
   socket.on('connect', () => {

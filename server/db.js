@@ -93,11 +93,11 @@ const statusDB = {
   resetAll() { db.run("UPDATE account_status SET status='idle', phase='', progress='', reason=''"); save(); },
 };
 
+let _logWriteCount = 0;
 const logsDB = {
   add(email, phase, message, timestamp, runId) {
     db.run("INSERT INTO execution_logs (email, phase, message, timestamp, run_id) VALUES (?,?,?,?,?)", [email, phase, message, timestamp, runId||'']);
-    // Save every 10th log to reduce disk writes
-    if (Math.random() < 0.1) save();
+    if (++_logWriteCount % 10 === 0) save();
   },
   getByEmail(email) {
     const results = [];
