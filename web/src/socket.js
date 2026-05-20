@@ -52,10 +52,11 @@ export function connectSocket() {
   })
 
   socket.on('execution-complete', (data) => {
+    const s = data.summary || data;
     socketState.logs.push({
       timestamp: new Date().toISOString(),
       email: '',
-      message: `Execution complete: ${data.success} success, ${data.failed} failed`,
+      message: `Execution complete: ${s.success ?? 0} success, ${s.error ?? 0} error, ${s.noLink ?? 0} no-link`,
       level: 'success',
     })
   })

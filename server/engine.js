@@ -499,12 +499,13 @@ class PipelineEngine extends EventEmitter {
               console.log(`${p} Running PKCE for already-Plus account...`);
               this.emitStatus({ email: account.email, status: 'running', phase: 'pkce', progress });
               const pkceTokens = await fetchTokensViaPKCE(browser, account, loginResult.lastOtp).catch((e) => { console.log(`  [PKCE] Failed: ${e.message}`); return null; });
-              if (pkceTokens && !pkceTokens.needsPhone) {
+              if (pkceTokens && !pkceTokens.needsPhone && pkceTokens.refresh_token) {
                 saveCPAAuthFile(account.email, pkceTokens.access_token, pkceTokens);
                 finalResult.status = 'plus';
               } else {
                 if (pkceTokens?.needsPhone) console.log(`${p} PKCE requires phone verification`);
-                saveCPAAuthFile(account.email, loginResult.accessToken, loginResult.session);
+                else if (pkceTokens && !pkceTokens.refresh_token) console.log(`${p} PKCE returned no refresh_token`);
+                saveCPAAuthFile(account.email, pkceTokens?.access_token || loginResult.accessToken, pkceTokens || loginResult.session);
               }
             } else {
               saveCPAAuthFile(account.email, loginResult.accessToken, loginResult.session);
@@ -619,6 +620,7 @@ class PipelineEngine extends EventEmitter {
           }
         } catch (error) {
           console.log(`${p} ERROR: ${error.message}`);
+          if (!finalResult.status || finalResult.status === 'running') finalResult.status = 'error';
           finalResult.reason = error.message.slice(0, 200);
         } finally {
           if (this._browser) try { await this._browser.close(); } catch {}

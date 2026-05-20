@@ -72,7 +72,7 @@ const filteredResults = computed(() => {
 
 function statusType(status) {
   const map = {
-    success: 'success',
+    plus: 'success',
     plus_no_rt: 'warning',
     error: 'danger',
     no_link: 'warning',
@@ -105,8 +105,8 @@ function handleDownloadAll() {
 
 async function handleRetry(email) {
   try {
-    const { data } = await api.post(`/results/${encodeURIComponent(email)}/retry`)
-    ElMessage.success(`已加入重试队列，起始位置: ${data.startFrom ?? 0}`)
+    await api.post('/execute', { emails: [email] })
+    ElMessage.success(`已启动重试: ${email}`)
   } catch (err) {
     ElMessage.error(err.response?.data?.error || '重试失败')
   }

@@ -39,6 +39,8 @@ module.exports = function (io) {
 
     engine.start(0, emails || null).catch((err) => {
       io.emit('log', { email: '', phase: 'error', message: `Pipeline error: ${err.message}`, timestamp: new Date().toISOString() });
+      io.emit('execution-complete', { summary: { total: 0, success: 0, noLink: 0, error: 1 } });
+      io.emit('log', { email: '', phase: '', message: 'Execution complete: {"total":0,"success":0,"error":1}', timestamp: new Date().toISOString() });
     });
 
     res.json({ message: 'Pipeline started', accounts: emails ? emails.length : 'all' });

@@ -31,16 +31,16 @@
         <el-input v-model="form.discordToken" type="password" show-password />
       </el-form-item>
       <el-form-item label="Channel ID">
-        <el-input v-model="form.channelId" />
+        <el-input v-model="form.discordChannelId" />
       </el-form-item>
       <el-form-item label="Message ID">
-        <el-input v-model="form.messageId" />
+        <el-input v-model="form.discordMessageId" />
       </el-form-item>
       <el-form-item label="Guild ID">
-        <el-input v-model="form.guildId" />
+        <el-input v-model="form.discordGuildId" />
       </el-form-item>
       <el-form-item label="App ID">
-        <el-input v-model="form.appId" />
+        <el-input v-model="form.discordAppId" />
       </el-form-item>
 
       <el-divider content-position="left">OAuth / CPA 配置</el-divider>
@@ -79,10 +79,10 @@ const form = reactive({
   phone: '',
   smsApiUrl: '',
   discordToken: '',
-  channelId: '',
-  messageId: '',
-  guildId: '',
-  appId: '',
+  discordChannelId: '',
+  discordMessageId: '',
+  discordGuildId: '',
+  discordAppId: '',
   enableCPA: false,
   cpaUrl: '',
   cpaKey: '',

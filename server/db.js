@@ -61,7 +61,7 @@ function save() {
 
 function detectLoginType(email) {
   const domain = (email.split('@')[1] || '').toLowerCase();
-  if (['outlook.com', 'hotmail.com', 'live.com'].includes(domain)) return 'outlook';
+  if (['outlook.com', 'hotmail.com', 'live.com', 'msn.com'].includes(domain)) return 'outlook';
   if (domain === 'gmail.com') return 'google';
   return 'other';
 }

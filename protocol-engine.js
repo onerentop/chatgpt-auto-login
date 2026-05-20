@@ -305,21 +305,26 @@ class ProtocolEngine extends EventEmitter {
             let pChromeProc = null, pBrowser = null;
             try {
               pChromeProc = launchChrome(pkcePort, pkceDir);
+              this._chromeProc = pChromeProc;
+              this._tempDir = pkceDir;
               pBrowser = await waitForCDP(pkcePort);
+              this._browser = pBrowser;
               const pkceTokens = await fetchTokensViaPKCE(pBrowser, account, result.lastOtp).catch((e) => { console.log(`[${progress}] PKCE failed: ${e.message?.slice(0, 60)}`); return null; });
-              if (pkceTokens && !pkceTokens.needsPhone) {
+              if (pkceTokens && !pkceTokens.needsPhone && pkceTokens.refresh_token) {
                 console.log(`[${progress}] PKCE success, saving with refresh_token`);
                 saveCPAAuthFile(account.email, pkceTokens.access_token, pkceTokens);
                 this.emitStatus({ email: account.email, status: 'plus', phase: 'done', progress });
               } else {
                 if (pkceTokens?.needsPhone) console.log(`[${progress}] PKCE requires phone verification`);
-                saveCPAAuthFile(account.email, result.accessToken, result.session);
+                else if (pkceTokens && !pkceTokens.refresh_token) console.log(`[${progress}] PKCE returned no refresh_token`);
+                saveCPAAuthFile(account.email, pkceTokens?.access_token || result.accessToken, pkceTokens || result.session);
                 this.emitStatus({ email: account.email, status: 'plus_no_rt', phase: 'done', progress });
               }
             } finally {
               if (pBrowser) try { await pBrowser.close(); } catch {}
               if (pChromeProc) try { pChromeProc.kill(); } catch {}
               try { fs.rmSync(pkceDir, { recursive: true, force: true }); } catch {}
+              this._browser = null; this._chromeProc = null; this._tempDir = null;
             }
           } else {
             saveCPAAuthFile(account.email, result.accessToken, result.session);
