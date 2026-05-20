@@ -167,8 +167,16 @@ async function fetchTokensViaPKCE(browser, account, lastOtp) {
 
   const authUrl = `https://auth.openai.com/oauth/authorize?client_id=${clientId}&code_challenge=${codeChallenge}&code_challenge_method=S256&codex_cli_simplified_flow=true&id_token_add_organizations=true&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=openid+email+profile+offline_access&state=${state}`;
 
-  // Use current page directly — no session refresh, just navigate to auth URL
+  // Use current page (should be on chatgpt.com after PayPal redirect)
   const page = context.pages()[0] || await context.newPage();
+  const currentUrl = page.url();
+  console.log(`  [PKCE] Current page: ${currentUrl.slice(0, 50)}`);
+  if (!currentUrl.includes('chatgpt.com')) {
+    // Not on chatgpt.com — navigate there
+    try { await page.evaluate(() => { window.onbeforeunload = null; }); } catch {}
+    await page.goto('https://chatgpt.com', { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {});
+    await new Promise(r => setTimeout(r, 1500));
+  }
 
   // Intercept localhost redirect to capture the authorization code
   let authCode = null;
@@ -179,8 +187,9 @@ async function fetchTokensViaPKCE(browser, account, lastOtp) {
   });
 
   try {
-    console.log('  [PKCE] Navigating to auth page...');
-    await page.goto(authUrl, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
+    console.log(`  [PKCE] Navigating to: ${authUrl.slice(0, 60)}...`);
+    await page.goto(authUrl, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch((e) => { console.log(`  [PKCE] goto error: ${e.message?.slice(0, 60)}`); });
+    console.log(`  [PKCE] Auth page: ${page.url().slice(0, 60)}`);
 
     // State machine for auth.openai.com pages
     const handled = {};
@@ -246,6 +255,34 @@ async function fetchTokensViaPKCE(browser, account, lastOtp) {
             await new Promise(r => setTimeout(r, 800));
             await page.evaluate(() => { for (const b of document.querySelectorAll('button')) if (['继续','Continue'].includes(b.textContent.trim())) { b.click(); return; } });
             console.log('  [PKCE] OTP submitted');
+
+            // Check if OTP was accepted — if still on email-verification, code was wrong
+            await new Promise(r => setTimeout(r, 3000));
+            const stillOnVerify = page.url().includes('email-verification');
+            if (stillOnVerify && lastOtp && account.client_id && account.refresh_token) {
+              console.log('  [PKCE] OTP rejected, fetching fresh code...');
+              // Click resend
+              await page.evaluate(() => {
+                for (const a of document.querySelectorAll('a, button')) {
+                  const t = a.textContent.trim();
+                  if (t.includes('重新发送') || t.includes('重新傳送') || t.includes('Resend') || t.includes('resend')) { a.click(); return; }
+                }
+              }).catch(() => {});
+              await new Promise(r => setTimeout(r, 2000));
+              // Fetch fresh OTP from IMAP
+              const freshOtp = await _fetchPkceOtp(page, account);
+              if (freshOtp) {
+                console.log(`  [PKCE] Fresh OTP: ${freshOtp}`);
+                await page.evaluate((code) => {
+                  const inp = document.querySelector('input[name="code"], input[type="text"]');
+                  if (inp) { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(inp, ''); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(inp, code); inp.dispatchEvent(new Event('input', { bubbles: true })); inp.dispatchEvent(new Event('change', { bubbles: true })); }
+                }, freshOtp);
+                await new Promise(r => setTimeout(r, 800));
+                await page.evaluate(() => { for (const b of document.querySelectorAll('button')) if (['继续','Continue'].includes(b.textContent.trim())) { b.click(); return; } });
+                console.log('  [PKCE] Fresh OTP submitted');
+              }
+              handled.otp = false;
+            }
         } else {
           console.log('  [PKCE] No OTP available, giving up');
           break;
@@ -332,41 +369,47 @@ function saveCPAAuthFile(email, accessToken, session) {
   const authDir = path.join(__dirname, 'cpa-auth');
   if (!fs.existsSync(authDir)) fs.mkdirSync(authDir, { recursive: true });
   const sanitized = email.replace(/@/g, '-at-').replace(/\./g, '-');
-  const filePath = path.join(authDir, `codex-${sanitized}.json`);
 
-  // Extract account_id from JWT payload
-  let accountId = '';
-  try {
-    const payload = JSON.parse(Buffer.from(accessToken.split('.')[1], 'base64').toString());
-    accountId = payload['https://api.openai.com/auth']?.chatgpt_account_id || '';
-  } catch (e) { console.log(`  [WARN] JWT parse: ${e.message?.slice(0, 60)}`); }
-
-  // Get refresh_token and id_token from PKCE tokens or session
+  // Parse JWT
+  let payload = {};
+  try { payload = JSON.parse(Buffer.from(accessToken.split('.')[1], 'base64').toString()); } catch {}
+  const authClaim = payload['https://api.openai.com/auth'] || {};
+  const accountId = authClaim.chatgpt_account_id || '';
+  const userId = authClaim.chatgpt_user_id || authClaim.user_id || '';
+  const planType = authClaim.chatgpt_plan_type || session?.account?.planType || 'free';
   const refreshToken = session?.refresh_token || session?.refreshToken || '';
   const idToken = session?.id_token || session?.idToken || '';
-
   const now = new Date();
-  const expired = new Date(now.getTime() + 10 * 24 * 3600000); // 10 days
+  const expiresAt = payload.exp ? new Date(payload.exp * 1000).toISOString().replace('Z', '+08:00') : new Date(now.getTime() + 10 * 24 * 3600000).toISOString().replace('Z', '+08:00');
+  const exportedAt = now.toISOString().replace('Z', '+08:00');
 
-  const data = {
-    access_token: accessToken,
-    account_id: accountId,
-    email: email,
-    expired: expired.toISOString().replace('Z', '+08:00'),
-    id_token: idToken,
-    last_refresh: now.toISOString().replace('Z', '+08:00'),
-    refresh_token: refreshToken,
-    type: 'codex',
+  // CPA format
+  const cpa = {
+    access_token: accessToken, account_id: accountId, email,
+    expired: expiresAt, id_token: idToken, last_refresh: exportedAt,
+    refresh_token: refreshToken, type: 'codex',
   };
+  const cpaPath = path.join(authDir, `codex-${sanitized}.json`);
+  try { fs.writeFileSync(cpaPath, JSON.stringify(cpa, null, 2)); console.log(`  [CPA] Saved: ${cpaPath}`); } catch (e) { console.log(`  [CPA] Failed: ${e.message?.slice(0, 60)}`); }
 
-  try {
-    fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
-    console.log(`  [CPA-Auth] Saved: ${filePath}`);
-    return filePath;
-  } catch (e) {
-    console.log(`  [CPA-Auth] Failed: ${e.message.slice(0, 60)}`);
-    return null;
-  }
+  // Sub2API format
+  const sub2apiDoc = {
+    exported_at: now.toISOString(), proxies: [],
+    accounts: [{
+      name: email, platform: 'openai', type: 'oauth',
+      credentials: {
+        _token_version: now.getTime(), access_token: accessToken,
+        chatgpt_account_id: accountId, chatgpt_user_id: userId, email,
+        expires_at: expiresAt, expires_in: payload.exp ? payload.exp - Math.floor(now.getTime() / 1000) : 864000,
+        id_token: idToken, organization_id: '', refresh_token: refreshToken,
+      },
+      extra: { email }, concurrency: 10, priority: 1, rate_multiplier: 1, auto_pause_on_expired: true,
+    }],
+  };
+  const sub2apiPath = path.join(authDir, `sub2api-${sanitized}.json`);
+  try { fs.writeFileSync(sub2apiPath, JSON.stringify(sub2apiDoc, null, 2)); console.log(`  [Sub2API] Saved: ${sub2apiPath}`); } catch (e) { console.log(`  [Sub2API] Failed: ${e.message?.slice(0, 60)}`); }
+
+  return cpaPath;
 }
 
 module.exports = { loadAccounts, generateTOTP, randomDelay, saveResult, saveSessionData, screenshotPath, saveCPAAuthFile, fetchTokensViaPKCE };
