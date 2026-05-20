@@ -93,9 +93,9 @@ function screenshotPath(email) {
 async function _fetchPkceOtp(page, account) {
   const { ImapFlow } = require('imapflow');
   const tokenBody = new URLSearchParams({ client_id: account.client_id, grant_type: 'refresh_token', refresh_token: account.refresh_token, scope: 'https://outlook.office.com/IMAP.AccessAsUser.All' });
-  const tokenRes = await fetch('https://login.microsoftonline.com/consumers/oauth2/v2.0/token', { method: 'POST', body: tokenBody });
+  const tokenRes = await fetch('https://login.microsoftonline.com/consumers/oauth2/v2.0/token', { method: 'POST', body: tokenBody, signal: AbortSignal.timeout(15000) });
   const tokenData = await tokenRes.json();
-  if (!tokenData.access_token) { console.log('  [PKCE] IMAP token failed'); return null; }
+  if (!tokenData.access_token) { console.log(`  [PKCE] IMAP token failed: ${tokenData.error || 'no access_token'}`); return null; }
 
   // Get baseline UID FIRST (before triggering new email)
   let baseline = 0;
@@ -249,7 +249,7 @@ async function fetchTokensViaPKCE(browser, account, lastOtp) {
         if (otp) {
           console.log(`  [PKCE] Reusing login OTP: ${otp}`);
         } else if (account.client_id && account.refresh_token) {
-          otp = await _fetchPkceOtp(page, account);
+          otp = await _fetchPkceOtp(page, account).catch(e => { console.log(`  [PKCE] OTP fetch error: ${e.message?.slice(0, 60)}`); return null; });
         }
         if (otp) {
             // Click any input on the page, then type OTP via keyboard
@@ -274,7 +274,7 @@ async function fetchTokensViaPKCE(browser, account, lastOtp) {
             if (stillOnVerify && account.client_id && account.refresh_token) {
               console.log('  [PKCE] OTP rejected, resending and fetching fresh code...');
               // _fetchPkceOtp handles: get baseline → click resend → poll IMAP → return code
-              const freshOtp = await _fetchPkceOtp(page, account);
+              const freshOtp = await _fetchPkceOtp(page, account).catch(e => { console.log(`  [PKCE] Fresh OTP fetch error: ${e.message?.slice(0, 60)}`); return null; });
               if (freshOtp) {
                 console.log(`  [PKCE] Fresh OTP: ${freshOtp}`);
                 try { await page.locator('input').first().click({ timeout: 3000 }); } catch { await page.evaluate(() => { const i = document.querySelector('input'); if (i) { i.focus(); i.click(); } }); }
