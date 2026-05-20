@@ -494,6 +494,7 @@ class PipelineEngine extends EventEmitter {
             currentPhase = 'cpa';
             if (PAY_CONFIG.enableCPA !== false) {
               console.log(`${p} Phase 4: CPA OAuth...`);
+              this.emitStatus({ email: account.email, status: 'running', phase: 'cpa', progress });
               try {
                 const cpaOk = await registerToCPA(browser, account.email, account);
                 if (cpaOk) console.log(`${p} CPA OAuth done.`);
@@ -524,16 +525,18 @@ class PipelineEngine extends EventEmitter {
             // Phase 2: Discord bot → payment link
             currentPhase = 'discord';
             console.log(`${p} Phase 2: Discord bot...`);
+            this.emitStatus({ email: account.email, status: 'running', phase: 'discord', progress });
             const discord = await getPaymentLink(gw, loginResult.accessToken);
 
             if (discord.link) {
               console.log(`${p} ${discord.title}`);
               console.log(`${p} Link: ${discord.link.slice(0, 80)}...`);
-              finalResult = { email: account.email, status: 'SUCCESS', paymentLink: discord.link, reason: '' };
+              finalResult = { email: account.email, status: 'PENDING', paymentLink: discord.link, reason: '' };
 
               // Phase 3: Open payment link & auto-fill
               currentPhase = 'payment';
               console.log(`${p} Phase 3: Opening payment page...`);
+              this.emitStatus({ email: account.email, status: 'running', phase: 'payment', progress });
               const ctx = browser.contexts()[0];
               const pages = ctx.pages();
               const page = pages.length > 0 ? pages[0] : await ctx.newPage();
@@ -541,10 +544,19 @@ class PipelineEngine extends EventEmitter {
               await randomDelay(2000, 3000);
 
               console.log(`${p} Phase 3: Auto-filling payment...`);
+              let paymentOk = true;
               try {
                 await autoPayment(page);
               } catch (e) {
                 console.log(`${p} Auto-fill error: ${e.message}`);
+                paymentOk = false;
+              }
+
+              if (paymentOk) {
+                finalResult.status = 'SUCCESS';
+              } else {
+                finalResult.status = 'ERROR';
+                finalResult.reason = 'Payment failed';
               }
 
               console.log(`${p} Payment flow completed. Waiting 10s...`);

@@ -65,11 +65,11 @@
       <el-table-column label="操作" width="80">
         <template #default="{ row }">
           <el-button
-            v-if="row._status === 'failed' || row._status === 'idle'"
+            v-if="row._status === 'failed' || row._status === 'error' || row._status === 'idle'"
             size="small" text type="primary"
             :disabled="running"
             @click="execOne(row.email)"
-          >{{ row._status === 'failed' ? '重试' : '执行' }}</el-button>
+          >{{ (row._status === 'failed' || row._status === 'error') ? '重试' : '执行' }}</el-button>
         </template>
       </el-table-column>
       <!-- Expandable log per account -->
@@ -116,7 +116,7 @@ const selected = ref([])
 
 const search = ref('')
 const selectedEmails = computed(() => selected.value.map(r => r.email))
-const failedEmails = computed(() => accounts.value.filter(a => a._status === 'failed').map(a => a.email))
+const failedEmails = computed(() => accounts.value.filter(a => a._status === 'failed' || a._status === 'error').map(a => a.email))
 const filteredRows = computed(() => {
   if (!search.value) return accounts.value
   const q = search.value.toLowerCase()
@@ -156,8 +156,8 @@ watch(() => socketState.accountStatuses, (statuses) => {
     if (row) {
       row._status = data.status || 'running'
       row._phase = data.phase || ''
-      if (data.status === 'success' || data.status === 'already_plus' || data.status === 'needs_phone') { row._hasAuth = true; row._plan = 'plus'; }
-      if (data.status === 'error' || data.status === 'failed' || data.status === 'no_link') row._plan = 'free'
+      if (['success', 'already_plus', 'needs_phone', 'pending'].includes(data.status)) { row._hasAuth = true; row._plan = 'plus'; }
+      if (['error', 'failed', 'no_link'].includes(data.status)) row._plan = 'free'
     }
   }
 }, { deep: true })
