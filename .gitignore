@@ -14,3 +14,4 @@ discord-results.json
 .playwright-mcp/
 web/dist/
 web/node_modules/
+__pycache__/
