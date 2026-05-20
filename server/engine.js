@@ -521,11 +521,25 @@ class PipelineEngine extends EventEmitter {
             }
           } else {
             // Not Plus → full payment flow
-            // Phase 2: Discord bot → payment link
+            // Phase 2: Discord bot → payment link (retry up to 3 times on timeout)
             currentPhase = 'discord';
             console.log(`${p} Phase 2: Discord bot...`);
             this.emitStatus({ email: account.email, status: 'running', phase: 'discord', progress });
-            const discord = await getPaymentLink(gw, loginResult.accessToken);
+            let discord;
+            for (let dRetry = 0; dRetry < 3; dRetry++) {
+              try {
+                if (dRetry > 0) console.log(`${p} Discord retry ${dRetry + 1}/3...`);
+                discord = await getPaymentLink(gw, loginResult.accessToken);
+                break;
+              } catch (de) {
+                console.log(`${p} Discord error: ${de.message?.slice(0, 60)}`);
+                if (dRetry < 2 && de.message?.includes('Timeout')) {
+                  await new Promise(r => setTimeout(r, 2000));
+                  continue;
+                }
+                throw de;
+              }
+            }
 
             if (discord.link) {
               console.log(`${p} ${discord.title}`);

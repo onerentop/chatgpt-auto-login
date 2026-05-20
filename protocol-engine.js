@@ -364,27 +364,42 @@ class ProtocolEngine extends EventEmitter {
           continue;
         }
 
-        // Step 2: Discord
+        // Step 2: Discord (retry up to 3 times on timeout)
         this.emitStatus({ email: account.email, status: 'running', phase: 'discord', progress });
         console.log(`[${progress}] Discord: ${account.email}...`);
         let link;
-        try {
-          const discord = await getPaymentLink(this._gw, result.accessToken);
-          link = discord.link;
-          if (link) console.log(`[${progress}] ${discord.title || 'Link obtained'}`);
-          console.log(`[${progress}] Link: ${link?.slice(0, 80) || 'none'}`);
-          if (!link) {
-            console.log(`[${progress}] ${(discord.raw || 'No link').slice(0, 80)}`);
-            this.emitStatus({ email: account.email, status: 'no_link', phase: 'done', progress, reason: discord.raw });
-            summary.noLink++;
-            continue;
+        let discordOk = false;
+        for (let dRetry = 0; dRetry < 3; dRetry++) {
+          try {
+            if (dRetry > 0) console.log(`[${progress}] Discord retry ${dRetry + 1}/3...`);
+            const discord = await getPaymentLink(this._gw, result.accessToken);
+            link = discord.link;
+            if (link) console.log(`[${progress}] ${discord.title || 'Link obtained'}`);
+            console.log(`[${progress}] Link: ${link?.slice(0, 80) || 'none'}`);
+            if (!link) {
+              console.log(`[${progress}] ${(discord.raw || 'No link').slice(0, 80)}`);
+              this.emitStatus({ email: account.email, status: 'no_link', phase: 'done', progress, reason: discord.raw });
+              summary.noLink++;
+            }
+            discordOk = true;
+            break;
+          } catch (e) {
+            console.log(`[${progress}] Discord error: ${e.message?.slice(0, 60)}`);
+            if (dRetry < 2 && e.message?.includes('Timeout')) {
+              await new Promise(r => setTimeout(r, 2000));
+              continue;
+            }
+            this.emitStatus({ email: account.email, status: 'error', phase: 'discord', progress, reason: e.message });
+            summary.error++;
+            discordOk = true;
+            break;
           }
-        } catch (e) {
-          console.log(`[${progress}] Discord error: ${e.message?.slice(0, 60)}`);
-          this.emitStatus({ email: account.email, status: 'error', phase: 'discord', progress, reason: e.message });
-          summary.error++;
-          continue;
         }
+        if (!discordOk) {
+          this.emitStatus({ email: account.email, status: 'error', phase: 'discord', progress, reason: 'Discord timeout after 3 retries' });
+          summary.error++;
+        }
+        if (!link) continue;
 
         // Step 3: Payment (fresh Chrome for each account)
         const port = 9222 + i;
