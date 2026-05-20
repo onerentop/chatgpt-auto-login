@@ -1,7 +1,17 @@
 const express = require('express');
+const fs = require('fs');
+const path = require('path');
 const { PipelineEngine } = require('../engine');
+const { ProtocolEngine } = require('../../protocol-engine');
 
 let engine = null;
+
+function readProtocolMode() {
+  try {
+    const cfg = JSON.parse(fs.readFileSync(path.join(__dirname, '../../config.json'), 'utf-8'));
+    return !!cfg.protocolMode;
+  } catch { return false; }
+}
 
 module.exports = function (io) {
   const router = express.Router();
@@ -18,7 +28,7 @@ module.exports = function (io) {
     }
 
     const { emails } = req.body;
-    engine = new PipelineEngine();
+    engine = readProtocolMode() ? new ProtocolEngine() : new PipelineEngine();
 
     engine.on('log', (data) => io.emit('log', data));
     engine.on('account-status', (data) => io.emit('account-status', data));
