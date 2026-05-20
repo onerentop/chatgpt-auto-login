@@ -204,13 +204,11 @@ def _do_pkce_flow(session, email, password, ms_client_id, ms_refresh_token):
                 json={"username": {"kind": "email", "value": email}},
                 headers={"Accept": "application/json", "Content-Type": "application/json",
                     "Origin": AUTH, "Referer": final_url, "oai-device-id": device_id,
-                    "openai-sentinel-token": sentinel}, allow_redirects=True, timeout=30)
-            # Check if we got redirected to localhost callback
-            redir_url = str(r.url)
-            if "localhost:1455" in redir_url and "code=" in redir_url:
-                auth_code = parse_qs(urlparse(redir_url).query).get("code", [None])[0]
-            else:
-                # Check response for next step
+                    "openai-sentinel-token": sentinel,
+                    "ext-passkey-client-capabilities": "conditional-create,conditional-get"}, timeout=30)
+            _log(f"PKCE: authorize/continue response: {r.status_code}")
+            # Check response for next step
+            if r.status_code == 200:
                 try:
                     resp_data = r.json()
                     page_type = (resp_data.get("page") or {}).get("type", "")
@@ -232,15 +230,20 @@ def _do_pkce_flow(session, email, password, ms_client_id, ms_refresh_token):
                         if not otp:
                             _log("PKCE: OTP not received")
                         else:
+                            _log(f"PKCE: Validating OTP: {otp}")
                             try:
                                 sentinel2 = build_sentinel_token(session, device_id, flow="email_otp_validate", user_agent=session.headers.get("User-Agent", ""), sec_ch_ua=session.headers.get("sec-ch-ua", "")) or ""
-                            except:
+                                _log(f"PKCE: Sentinel token: {'yes' if sentinel2 else 'no'}")
+                            except Exception as se:
                                 sentinel2 = ""
+                                _log(f"PKCE: Sentinel build failed: {str(se)[:50]}")
                             r = session.post(f"{AUTH}/api/accounts/email-otp/validate",
                                 json={"code": otp},
                                 headers={"Accept": "application/json", "Content-Type": "application/json",
                                     "Origin": AUTH, "Referer": f"{AUTH}/email-verification",
-                                    "oai-device-id": device_id, "openai-sentinel-token": sentinel2}, timeout=30)
+                                    "oai-device-id": device_id, "openai-sentinel-token": sentinel2,
+                                    "ext-passkey-client-capabilities": "conditional-create,conditional-get"}, timeout=30)
+                            _log(f"PKCE: OTP validate: {r.status_code} body={r.text[:100]}")
                             otp_resp = r.json() if r.status_code == 200 else {}
                             otp_continue = otp_resp.get("continue_url", "")
                             _log(f"PKCE: OTP validate response: {r.status_code} continue={otp_continue[:60]}")
