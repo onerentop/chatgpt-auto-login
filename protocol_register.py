@@ -246,8 +246,12 @@ def _do_pkce_flow(session, email, password, ms_client_id, ms_refresh_token):
                             _log(f"PKCE: OTP validate: {r.status_code} body={r.text[:100]}")
                             otp_resp = r.json() if r.status_code == 200 else {}
                             otp_continue = otp_resp.get("continue_url", "")
+                            otp_page_type = (otp_resp.get("page") or {}).get("type", "")
                             _log(f"PKCE: OTP validate response: {r.status_code} continue={otp_continue[:60]}")
-                            if otp_continue:
+                            if "add_phone" in otp_page_type or "add-phone" in otp_continue or "phone-required" in otp_continue:
+                                _log("PKCE: Phone verification required")
+                                return {"needsPhone": True}
+                            elif otp_continue:
                                 try:
                                     r = session.get(otp_continue, headers={"Accept": "text/html", "Upgrade-Insecure-Requests": "1"}, allow_redirects=True, timeout=30)
                                     redir_url = str(r.url)
