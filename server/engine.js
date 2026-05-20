@@ -7,7 +7,7 @@
  * Events emitted:
  *   'log'            → { email, phase, message, timestamp }
  *   'account-status' → { email, status, phase, progress, paymentLink?, reason? }
- *   'complete'       → { summary: { total, success, alreadyPlus, noLink, error } }
+ *   'complete'       → { summary: { total, success, noLink, error } }
  */
 const { EventEmitter } = require('events');
 const path = require('path');
@@ -487,12 +487,27 @@ class PipelineEngine extends EventEmitter {
           console.log(`${p} Plan: ${planType} (${isPlusOrAbove ? 'Plus member' : 'Not Plus'})`);
 
           if (isPlusOrAbove) {
-            console.log(`${p} Already Plus! Skipping payment flow.`);
-            finalResult = { email: account.email, status: 'already_plus', paymentLink: '', reason: '' };
+            console.log(`${p} Already Plus!`);
+            finalResult = { email: account.email, status: 'success', paymentLink: '', reason: '' };
 
-            currentPhase = 'cpa';
-            if (PAY_CONFIG.enableCPA !== false) {
-              console.log(`${p} Phase 4: CPA OAuth...`);
+            const latestCfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf-8'));
+            if (latestCfg.enableOAuth) {
+              console.log(`${p} Running PKCE for already-Plus account...`);
+              this.emitStatus({ email: account.email, status: 'running', phase: 'pkce', progress });
+              const pkceTokens = await fetchTokensViaPKCE(browser, account, loginResult.lastOtp).catch((e) => { console.log(`  [PKCE] Failed: ${e.message}`); return null; });
+              if (pkceTokens && !pkceTokens.needsPhone) {
+                saveCPAAuthFile(account.email, pkceTokens.access_token, pkceTokens);
+              } else {
+                if (pkceTokens?.needsPhone) console.log(`${p} PKCE requires phone verification`);
+                saveCPAAuthFile(account.email, loginResult.accessToken, loginResult.session);
+                finalResult.status = 'plus_no_rt';
+              }
+            } else {
+              saveCPAAuthFile(account.email, loginResult.accessToken, loginResult.session);
+            }
+
+            if (latestCfg.enableCPA) {
+              console.log(`${p} CPA registration...`);
               this.emitStatus({ email: account.email, status: 'running', phase: 'cpa', progress });
               try {
                 const cpaOk = await registerToCPA(browser, account.email, account);
@@ -500,23 +515,6 @@ class PipelineEngine extends EventEmitter {
                 else console.log(`${p} CPA OAuth may have issues, check manually.`);
               } catch (e) {
                 console.log(`${p} CPA error: ${e.message}`);
-              }
-            } else {
-              console.log(`${p} CPA OAuth skipped. Running PKCE to get full tokens...`);
-              this.emitStatus( { email: account.email, status: 'running', phase: 'pkce', progress });
-              const pkceTokens = await fetchTokensViaPKCE(browser, account, loginResult.lastOtp).catch((e) => { console.log(`  [PKCE] Failed: ${e.message}`); return null; });
-              if (pkceTokens?.needsPhone) {
-                console.log(`${p} PKCE requires phone verification, saving with session token only`);
-                saveCPAAuthFile(account.email, loginResult.accessToken, loginResult.session);
-                finalResult.status = 'needs_phone';
-                this.emitStatus( { email: account.email, status: 'needs_phone', phase: 'done', progress });
-              } else if (pkceTokens) {
-                saveCPAAuthFile(account.email, pkceTokens.access_token, pkceTokens);
-                this.emitStatus( { email: account.email, status: 'already_plus', phase: 'done', progress });
-              } else {
-                console.log(`${p} PKCE failed, saving with session token only`);
-                saveCPAAuthFile(account.email, loginResult.accessToken, loginResult.session);
-                this.emitStatus( { email: account.email, status: 'already_plus', phase: 'done', progress });
               }
             }
           } else {
@@ -544,7 +542,7 @@ class PipelineEngine extends EventEmitter {
             if (discord.link) {
               console.log(`${p} ${discord.title}`);
               console.log(`${p} Link: ${discord.link.slice(0, 80)}...`);
-              finalResult = { email: account.email, status: 'pending', paymentLink: discord.link, reason: '' };
+              finalResult = { email: account.email, status: 'running', paymentLink: discord.link, reason: '' };
 
               // Phase 3: Open payment link & auto-fill
               currentPhase = 'payment';
@@ -586,17 +584,14 @@ class PipelineEngine extends EventEmitter {
                   console.log(`${p} Phase 4: PKCE OAuth...`);
                   this.emitStatus({ email: account.email, status: 'running', phase: 'pkce', progress });
                   const pkceTokens = await fetchTokensViaPKCE(browser, account, loginResult.lastOtp).catch((e) => { console.log(`  [PKCE] Failed: ${e.message}`); return null; });
-                  if (pkceTokens?.needsPhone) {
-                    console.log(`${p} PKCE requires phone verification`);
-                    saveCPAAuthFile(account.email, loginResult.accessToken, loginResult.session);
-                    finalResult.status = 'needs_phone';
-                  } else if (pkceTokens) {
+                  if (pkceTokens && !pkceTokens.needsPhone) {
                     console.log(`${p} PKCE success, saving with refresh_token`);
                     saveCPAAuthFile(account.email, pkceTokens.access_token, pkceTokens);
                   } else {
-                    console.log(`${p} PKCE failed, saving without refresh_token`);
+                    if (pkceTokens?.needsPhone) console.log(`${p} PKCE requires phone verification`);
+                    else console.log(`${p} PKCE failed, saving without refresh_token`);
                     saveCPAAuthFile(account.email, loginResult.accessToken, loginResult.session);
-                    finalResult.status = 'oauth_failed';
+                    finalResult.status = 'plus_no_rt';
                   }
                 }
 
@@ -663,14 +658,13 @@ class PipelineEngine extends EventEmitter {
       // Build summary
       const summary = {
         total: allResults.length,
-        success: allResults.filter((r) => r.status === 'success').length,
-        alreadyPlus: allResults.filter((r) => r.status === 'already_plus').length,
+        success: allResults.filter((r) => r.status === 'success' || r.status === 'plus_no_rt').length,
         noLink: allResults.filter((r) => r.status === 'no_link').length,
         error: allResults.filter((r) => r.status === 'error').length,
       };
 
       console.log('========================================');
-      console.log(`  Success: ${summary.success}  |  Already Plus: ${summary.alreadyPlus}  |  No Link: ${summary.noLink}  |  Error: ${summary.error}`);
+      console.log(`  Success: ${summary.success}  |  No Link: ${summary.noLink}  |  Error: ${summary.error}`);
       console.log(`  Saved to: ${DISCORD_RESULTS}`);
       console.log('========================================');
 

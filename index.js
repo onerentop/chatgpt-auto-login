@@ -215,7 +215,7 @@ async function main() {
 
         if (isPlusOrAbove) {
           console.log(`${p} Already Plus! Skipping payment flow.`);
-          finalResult = { email: account.email, status: 'ALREADY_PLUS', paymentLink: '', reason: '' };
+          finalResult = { email: account.email, status: 'SUCCESS', paymentLink: '', reason: '' };
 
           if (payConfig.enableCPA !== false) {
             console.log(`${p} Phase 4: CPA OAuth...`);

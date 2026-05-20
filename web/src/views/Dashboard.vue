@@ -60,8 +60,9 @@ const results = ref([])
 function statusType(s) {
   if (!s) return 'info'
   const sl = s.toLowerCase()
-  if (sl === 'success' || sl === 'already_plus') return 'success'
-  if (sl === 'error' || sl === 'failed') return 'danger'
+  if (sl === 'success') return 'success'
+  if (sl === 'plus_no_rt') return 'warning'
+  if (sl === 'error') return 'danger'
   if (sl === 'no_link') return 'warning'
   if (sl === 'running') return ''
   return 'info'
@@ -77,9 +78,9 @@ onMounted(async () => {
     const statuses = resultsRes.data || []
 
     stats.total = accounts.length
-    stats.plus = statuses.filter(r => ['success', 'already_plus'].includes((r.status || '').toLowerCase())).length
-    stats.success = statuses.filter(r => ['success', 'already_plus'].includes((r.status || '').toLowerCase())).length
-    stats.error = statuses.filter(r => ['error', 'failed'].includes((r.status || '').toLowerCase())).length
+    stats.plus = statuses.filter(r => ['success', 'plus_no_rt'].includes((r.status || '').toLowerCase())).length
+    stats.success = statuses.filter(r => ['success', 'plus_no_rt'].includes((r.status || '').toLowerCase())).length
+    stats.error = statuses.filter(r => r.status === 'error').length
     results.value = statuses
   } catch {}
 })

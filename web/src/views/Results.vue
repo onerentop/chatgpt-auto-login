@@ -10,9 +10,10 @@
           @change="loadResults"
         >
           <el-option label="全部" value="" />
-          <el-option label="成功" value="success" />
-          <el-option label="失败" value="error" />
-          <el-option label="待处理" value="pending" />
+          <el-option label="Plus成功" value="success" />
+          <el-option label="Plus(无RT)" value="plus_no_rt" />
+          <el-option label="无链接" value="no_link" />
+          <el-option label="错误" value="error" />
         </el-select>
         <el-button @click="handleDownloadAll">下载全部 ZIP</el-button>
         <el-button @click="loadResults">刷新</el-button>
@@ -72,9 +73,11 @@ const filteredResults = computed(() => {
 function statusType(status) {
   const map = {
     success: 'success',
+    plus_no_rt: 'warning',
     error: 'danger',
-    pending: 'info',
-    running: 'warning',
+    no_link: 'warning',
+    running: '',
+    idle: 'info',
   }
   return map[status] || 'info'
 }

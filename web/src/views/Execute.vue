@@ -85,11 +85,11 @@
       <el-table-column label="操作" width="80">
         <template #default="{ row }">
           <el-button
-            v-if="row._status === 'failed' || row._status === 'error' || row._status === 'idle'"
+            v-if="row._status === 'error' || row._status === 'idle'"
             size="small" text type="primary"
             :disabled="running"
             @click="execOne(row.email)"
-          >{{ (row._status === 'failed' || row._status === 'error') ? '重试' : '执行' }}</el-button>
+          >{{ row._status === 'error' ? '重试' : '执行' }}</el-button>
         </template>
       </el-table-column>
       <!-- Expandable log per account -->
@@ -136,7 +136,7 @@ const selected = ref([])
 
 const search = ref('')
 const selectedEmails = computed(() => selected.value.map(r => r.email))
-const failedEmails = computed(() => accounts.value.filter(a => a._status === 'failed' || a._status === 'error').map(a => a.email))
+const failedEmails = computed(() => accounts.value.filter(a => a._status === 'error').map(a => a.email))
 const filteredRows = computed(() => {
   if (!search.value) return accounts.value
   const q = search.value.toLowerCase()
@@ -176,8 +176,8 @@ watch(() => socketState.accountStatuses, (statuses) => {
     if (row) {
       row._status = data.status || 'running'
       row._phase = data.phase || ''
-      if (['success', 'already_plus', 'needs_phone', 'oauth_failed', 'pending'].includes(data.status)) { row._hasAuth = true; row._plan = 'plus'; }
-      if (['error', 'failed', 'no_link'].includes(data.status)) row._plan = 'free'
+      if (['success', 'plus_no_rt'].includes(data.status)) { row._hasAuth = true; row._plan = 'plus'; }
+      if (['error', 'no_link'].includes(data.status)) row._plan = 'free'
     }
   }
 }, { deep: true })
@@ -208,7 +208,7 @@ async function loadResults() {
         if (r.phase) row._phase = r.phase
         row._hasAuth = r.hasAuthFile || false
         const st = (r.status || '').toLowerCase()
-        row._plan = ['success', 'already_plus', 'needs_phone', 'oauth_failed', 'pending'].includes(st) ? 'plus' : (['error', 'failed', 'no_link'].includes(st) ? 'free' : '')
+        row._plan = ['success', 'plus_no_rt'].includes(st) ? 'plus' : (['error', 'no_link'].includes(st) ? 'free' : '')
       }
     }
   } catch {}
@@ -229,11 +229,11 @@ function onRowClick(row, column, event) {
 }
 
 function statusType(s) {
-  return { idle: 'info', running: 'warning', success: 'success', failed: 'danger', already_plus: 'success', no_link: 'warning', error: 'danger', pending: '', needs_phone: 'warning', oauth_failed: '' }[s] || 'info'
+  return { idle: 'info', running: '', success: 'success', plus_no_rt: 'warning', no_link: 'warning', error: 'danger' }[s] || 'info'
 }
 
 function statusLabel(s) {
-  return { idle: '空闲', running: '运行中', success: 'Plus成功', failed: '失败', already_plus: '已是Plus', no_link: '无链接', error: '错误', pending: '待确认', needs_phone: 'Plus需验证', oauth_failed: 'Plus(无RT)' }[s] || s || '空闲'
+  return { idle: '空闲', running: '运行中', success: 'Plus成功', plus_no_rt: 'Plus(无RT)', no_link: '无链接', error: '错误' }[s] || s || '空闲'
 }
 
 async function startExec(emails) {

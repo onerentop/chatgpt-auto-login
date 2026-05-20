@@ -158,80 +158,6 @@ async function waitForCDP(port) {
   throw new Error('CDP timeout');
 }
 
-// ========== Auth JSON generation (CPA + sub2api, no refresh_token) ==========
-function parseJwtPayload(token) {
-  try {
-    return JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
-  } catch { return {}; }
-}
-
-function saveAuthFiles(email, accessToken, session) {
-  const authDir = path.join(ROOT, 'cpa-auth');
-  if (!fs.existsSync(authDir)) fs.mkdirSync(authDir, { recursive: true });
-  const sanitized = email.replace(/@/g, '-at-').replace(/\./g, '-');
-
-  const payload = parseJwtPayload(accessToken);
-  const authClaim = payload['https://api.openai.com/auth'] || {};
-  const accountId = authClaim.chatgpt_account_id || '';
-  const userId = authClaim.chatgpt_user_id || authClaim.user_id || '';
-  const planType = authClaim.chatgpt_plan_type || session?.account?.planType || 'free';
-  const userName = session?.user?.name || '';
-  const now = new Date();
-  const expiresAt = payload.exp ? new Date(payload.exp * 1000).toISOString().replace('Z', '+08:00') : new Date(now.getTime() + 10 * 24 * 3600000).toISOString().replace('Z', '+08:00');
-  const exportedAt = now.toISOString().replace('Z', '+08:00');
-  const sessionToken = session?.sessionToken || '';
-
-  // CPA format (matches real CPA structure)
-  const cpa = {
-    access_token: accessToken,
-    account_id: accountId,
-    email,
-    expired: expiresAt,
-    id_token: '',
-    last_refresh: exportedAt,
-    refresh_token: '',
-    type: 'codex',
-  };
-  const cpaPath = path.join(authDir, `codex-${sanitized}.json`);
-  fs.writeFileSync(cpaPath, JSON.stringify(cpa, null, 2));
-  console.log(`  [CPA] Saved: ${cpaPath}`);
-
-  // sub2api format (matches real sub2api import structure)
-  const tokenVersion = now.getTime();
-  const expiresIn = payload.exp ? payload.exp - Math.floor(now.getTime() / 1000) : 864000;
-  const sub2apiDoc = {
-    exported_at: now.toISOString(),
-    proxies: [],
-    accounts: [{
-      name: email,
-      platform: 'openai',
-      type: 'oauth',
-      credentials: {
-        _token_version: tokenVersion,
-        access_token: accessToken,
-        chatgpt_account_id: accountId,
-        chatgpt_user_id: userId,
-        email,
-        expires_at: expiresAt,
-        expires_in: expiresIn,
-        id_token: '',
-        organization_id: '',
-        refresh_token: '',
-      },
-      extra: { email },
-      concurrency: 10,
-      priority: 1,
-      rate_multiplier: 1,
-      auto_pause_on_expired: true,
-    }],
-  };
-  const sub2apiPath = path.join(authDir, `sub2api-${sanitized}.json`);
-  fs.writeFileSync(sub2apiPath, JSON.stringify(sub2apiDoc, null, 2));
-  console.log(`  [Sub2API] Saved: ${sub2apiPath}`);
-
-  return { cpaPath, sub2apiPath };
-}
-
 // ========== Python subprocess ==========
 function runProtocolRegister(account) {
   return new Promise((resolve, reject) => {
@@ -324,7 +250,7 @@ class ProtocolEngine extends EventEmitter {
     }
     if (accounts.length === 0) throw new Error('No accounts');
 
-    const summary = { total: accounts.length, success: 0, alreadyPlus: 0, noLink: 0, error: 0 };
+    const summary = { total: accounts.length, success: 0, noLink: 0, error: 0 };
 
     try {
       // === Sequential: each account runs login → Discord → payment → done before next ===
@@ -357,10 +283,37 @@ class ProtocolEngine extends EventEmitter {
         // Check if already Plus
         const isPlusOrAbove = ['plus', 'pro', 'team', 'enterprise'].includes((result.planType || 'free').toLowerCase());
         if (isPlusOrAbove) {
-          console.log(`[${progress}] Already Plus, generating auth files...`);
-          saveAuthFiles(account.email, result.accessToken, result.session);
-          this.emitStatus({ email: account.email, status: 'already_plus', phase: 'done', progress });
-          summary.alreadyPlus++;
+          console.log(`[${progress}] Already Plus`);
+          const cfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf-8'));
+          if (cfg.enableOAuth) {
+            console.log(`[${progress}] Running PKCE for already-Plus account...`);
+            this.emitStatus({ email: account.email, status: 'running', phase: 'pkce', progress });
+            const pkcePort = 9222 + i;
+            const pkceDir = path.join(os.tmpdir(), `proto-pkce-${Date.now()}-${i}`);
+            let pChromeProc = null, pBrowser = null;
+            try {
+              pChromeProc = launchChrome(pkcePort, pkceDir);
+              pBrowser = await waitForCDP(pkcePort);
+              const pkceTokens = await fetchTokensViaPKCE(pBrowser, account, result.lastOtp).catch((e) => { console.log(`[${progress}] PKCE failed: ${e.message?.slice(0, 60)}`); return null; });
+              if (pkceTokens && !pkceTokens.needsPhone) {
+                console.log(`[${progress}] PKCE success, saving with refresh_token`);
+                saveCPAAuthFile(account.email, pkceTokens.access_token, pkceTokens);
+                this.emitStatus({ email: account.email, status: 'success', phase: 'done', progress });
+              } else {
+                if (pkceTokens?.needsPhone) console.log(`[${progress}] PKCE requires phone verification`);
+                saveCPAAuthFile(account.email, result.accessToken, result.session);
+                this.emitStatus({ email: account.email, status: 'plus_no_rt', phase: 'done', progress });
+              }
+            } finally {
+              if (pBrowser) try { await pBrowser.close(); } catch {}
+              if (pChromeProc) try { pChromeProc.kill(); } catch {}
+              try { fs.rmSync(pkceDir, { recursive: true, force: true }); } catch {}
+            }
+          } else {
+            saveCPAAuthFile(account.email, result.accessToken, result.session);
+            this.emitStatus({ email: account.email, status: 'success', phase: 'done', progress });
+          }
+          summary.success++;
           continue;
         }
 
@@ -431,31 +384,24 @@ class ProtocolEngine extends EventEmitter {
           if (paymentResult.success) {
             const cfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf-8'));
             if (cfg.enableOAuth) {
-              // PKCE flow to get refresh_token
               console.log(`[${progress}] Running PKCE OAuth...`);
               this.emitStatus({ email: account.email, status: 'running', phase: 'pkce', progress });
               const pkceTokens = await fetchTokensViaPKCE(browser, account, result.lastOtp).catch((e) => { console.log(`[${progress}] PKCE failed: ${e.message?.slice(0, 60)}`); return null; });
-              if (pkceTokens?.needsPhone) {
-                console.log(`[${progress}] PKCE requires phone verification`);
-                saveAuthFiles(account.email, result.accessToken, result.session);
-                this.emitStatus({ email: account.email, status: 'needs_phone', phase: 'done', progress });
-                summary.success++;
-              } else if (pkceTokens) {
+              if (pkceTokens && !pkceTokens.needsPhone) {
                 console.log(`[${progress}] PKCE success, saving with refresh_token`);
                 saveCPAAuthFile(account.email, pkceTokens.access_token, pkceTokens);
                 this.emitStatus({ email: account.email, status: 'success', phase: 'done', progress });
-                summary.success++;
               } else {
-                console.log(`[${progress}] PKCE failed, saving without refresh_token`);
-                saveAuthFiles(account.email, result.accessToken, result.session);
-                this.emitStatus({ email: account.email, status: 'oauth_failed', phase: 'done', progress });
-                summary.success++;
+                if (pkceTokens?.needsPhone) console.log(`[${progress}] PKCE requires phone verification`);
+                else console.log(`[${progress}] PKCE failed, saving without refresh_token`);
+                saveCPAAuthFile(account.email, result.accessToken, result.session);
+                this.emitStatus({ email: account.email, status: 'plus_no_rt', phase: 'done', progress });
               }
             } else {
-              saveAuthFiles(account.email, result.accessToken, result.session);
+              saveCPAAuthFile(account.email, result.accessToken, result.session);
               this.emitStatus({ email: account.email, status: 'success', phase: 'done', progress });
-              summary.success++;
             }
+            summary.success++;
           } else {
             const reason = paymentResult.reason || 'Payment not completed';
             console.log(`[${progress}] Payment incomplete: ${reason}`);
