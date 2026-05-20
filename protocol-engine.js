@@ -407,7 +407,6 @@ class ProtocolEngine extends EventEmitter {
           if (!link) {
             const reason = discord.raw || 'No payment link';
             console.log(`[${progress}] ${reason.slice(0, 80)}`);
-            saveAuthFiles(account.email, result.accessToken, result.session);
             this.emitStatus({ email: account.email, status: 'no_link', phase: 'done', progress, reason });
             summary.noLink++;
             continue;
