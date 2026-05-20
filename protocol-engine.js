@@ -435,18 +435,35 @@ class ProtocolEngine extends EventEmitter {
           console.log(`[${progress}] Payment flow completed. Verifying plan...`);
           await randomDelay(10000, 12000);
 
-          // Verify plan by re-fetching session
+          // Verify plan: navigate Chrome to chatgpt.com first (establish session), then check
           let finalPlan = 'free';
           try {
             const ctx2 = this._browser.contexts()[0];
             const verifyPage = ctx2.pages()[0] || await ctx2.newPage();
-            await verifyPage.goto('https://chatgpt.com/api/auth/session', { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {});
+            // Navigate to chatgpt.com to establish session via cookies
+            await verifyPage.goto('https://chatgpt.com', { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {});
+            await new Promise(r => setTimeout(r, 2000));
+            // Now check session
+            await verifyPage.goto('https://chatgpt.com/api/auth/session', { waitUntil: 'domcontentloaded', timeout: 10000 }).catch(() => {});
             const body = await verifyPage.locator('body, pre').first().textContent({ timeout: 5000 }).catch(() => '{}');
             try {
               const sd = JSON.parse(body);
               finalPlan = sd?.account?.planType || sd?.chatgpt_plan_type || 'free';
             } catch {}
           } catch {}
+          // Fallback: use accessToken API
+          if (finalPlan === 'free') {
+            try {
+              const r = await fetch('https://chatgpt.com/backend-api/accounts/check/v4-2023-04-27', {
+                headers: { 'Authorization': `Bearer ${result.accessToken}` },
+              });
+              if (r.ok) {
+                const d = await r.json();
+                const plans = d?.accounts?.default?.entitlement?.subscription_plan || '';
+                if (plans) finalPlan = 'plus';
+              }
+            } catch {}
+          }
           const isPlusNow = ['plus', 'pro', 'team', 'enterprise'].includes(finalPlan.toLowerCase());
           console.log(`[${progress}] Plan: ${finalPlan} (${isPlusNow ? 'Plus!' : 'still free'})`);
 
