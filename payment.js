@@ -7,11 +7,22 @@ const CONFIG_PATH = path.join(__dirname, 'config.json');
 function loadConfig() {
   if (!fs.existsSync(CONFIG_PATH)) {
     console.log(`config.json not found, creating template at ${CONFIG_PATH}`);
-    const tpl = { phone: '1234567890', cardNumber: '1234561234568888', cardExpiry: '03 / 30', cardCvv: '996' };
+    const tpl = { threads: 1, phoneSlots: [{ phone: '1234567890', smsApiUrl: '' }], cardNumber: '1234561234568888', cardExpiry: '03 / 30', cardCvv: '996' };
     fs.writeFileSync(CONFIG_PATH, JSON.stringify(tpl, null, 2));
     return tpl;
   }
-  return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
+  const cfg = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
+  // Backward compat: old single phone → phoneSlots array
+  if (!cfg.phoneSlots && cfg.phone) {
+    cfg.phoneSlots = [{ phone: cfg.phone, smsApiUrl: cfg.smsApiUrl || '' }];
+  }
+  if (!cfg.threads) cfg.threads = 1;
+  // Default phone/smsApiUrl from first slot (for backward compat)
+  if (cfg.phoneSlots?.length > 0) {
+    cfg.phone = cfg.phone || cfg.phoneSlots[0].phone;
+    cfg.smsApiUrl = cfg.smsApiUrl || cfg.phoneSlots[0].smsApiUrl;
+  }
+  return cfg;
 }
 
 const CONFIG = loadConfig();
@@ -32,23 +43,27 @@ function randPass() {
 }
 
 async function fetchAddress() {
-  try {
-    const res = await fetch('https://www.meiguodizhi.com/api/v1/dz', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ path: '/', method: 'address' }),
-    });
-    const d = await res.json();
-    const a = d.address || d;
-    return {
-      street: a.Address || a.street || '123 Main St',
-      city: a.City || a.city || 'New York',
-      state: a.State_Full || a.State || a.state || 'New York',
-      zip: (a.Zip_Code || a.zip || '10001').substring(0, 5),
-    };
-  } catch {
-    return { street: '123 Main St', city: 'New York', state: 'New York', zip: '10001' };
+  // Retry up to 3 times (multi-thread may hit rate limit)
+  for (let retry = 0; retry < 3; retry++) {
+    try {
+      const res = await fetch('https://www.meiguodizhi.com/api/v1/dz', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: '/', method: 'address' }),
+      });
+      const d = await res.json();
+      const a = d.address || d;
+      return {
+        street: a.Address || a.street || '123 Main St',
+        city: a.City || a.city || 'New York',
+        state: a.State_Full || a.State || a.state || 'New York',
+        zip: (a.Zip_Code || a.zip || '10001').substring(0, 5),
+      };
+    } catch {
+      if (retry < 2) await new Promise(r => setTimeout(r, 2000));
+    }
   }
+  return { street: '123 Main St', city: 'New York', state: 'New York', zip: '10001' };
 }
 
 async function fillInput(page, selector, value) {
@@ -105,7 +120,7 @@ async function clickSubmit(page) {
         }
       } catch {}
     }
-    const texts = ['下一页', 'Next', 'Subscribe', 'Pay', 'Continue', 'Agree', '订阅', '同意'];
+    const texts = ['訂閱', '订阅', '下一页', 'Next', 'Subscribe', 'Pay', 'Continue', 'Agree', '同意'];
     for (const t of texts) {
       try {
         const btn = page.locator(`button:has-text("${t}")`).first();
@@ -123,40 +138,57 @@ async function clickSubmit(page) {
 
 async function handleOpenAIPage(page) {
   console.log('    [Pay] OpenAI/Stripe page detected');
-  await randomDelay(2000, 3000);
 
   // Step 0: Inject CSS to hide Google autocomplete (before any interaction)
   await page.addStyleTag({ content: '.AddressAutocomplete-results,.pac-container{display:none!important;height:0!important;overflow:hidden!important;pointer-events:none!important}' }).catch(() => {});
 
-  // Step 1: Click PayPal with real Playwright mouse event (not JS .click())
+  // Step 1: Select PayPal via JS .click() on data-testid (proven to expand accordion)
   console.log('    [Pay] Selecting PayPal...');
-  let ppClicked = false;
-  // Find the PayPal text element and get its bounding box for a real click
-  const ppLoc = page.locator('text=PayPal').first();
-  try {
-    await ppLoc.waitFor({ state: 'visible', timeout: 5000 });
-    const box = await ppLoc.boundingBox();
-    if (box) {
-      // Click the center of the PayPal text
-      await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-      ppClicked = true;
-      console.log('    [Pay] PayPal clicked (mouse)');
+  let ppClicked = await page.evaluate(() => {
+    var sels = [
+      '[data-testid="paypal-accordion-item-button"]',
+      '#payment-method-accordion-item-title-paypal',
+      '[id*="paypal"]',
+      '[data-testid*="paypal"]',
+    ];
+    for (var i = 0; i < sels.length; i++) {
+      var el = document.querySelector(sels[i]);
+      if (el) { el.click(); return sels[i]; }
     }
-  } catch {}
-  if (!ppClicked) {
-    // Fallback: try clicking parent containers
-    try { await page.locator('div:has(> span:text("PayPal"))').first().click(); ppClicked = true; } catch {}
-  }
-  if (!ppClicked) {
-    try { await page.getByText('PayPal', { exact: true }).click(); ppClicked = true; } catch {}
-  }
-  console.log('    [Pay] PayPal selected:', ppClicked);
+    return null;
+  }).catch(() => null);
+  console.log('    [Pay] PayPal clicked:', ppClicked || 'FAILED');
+  // Double click like userscript
+  if (ppClicked) { await new Promise(r => setTimeout(r, 500)); await page.evaluate(() => { var el = document.querySelector('[data-testid="paypal-accordion-item-button"]') || document.querySelector('#payment-method-accordion-item-title-paypal'); if (el) el.click(); }).catch(() => {}); }
 
-  // Wait for PayPal billing form to render
+  // Verify billing form appears
   await randomDelay(2000, 3000);
+  let formFound = false;
+  for (let w = 0; w < 10; w++) {
+    const hasForm = await page.locator('#billingAddressLine1').isVisible({ timeout: 1000 }).catch(() => false);
+    if (hasForm) { formFound = true; break; }
+    await new Promise(r => setTimeout(r, 1000));
+  }
+  if (!formFound) {
+    console.log('    [Pay] Billing form not visible, reloading to retry...');
+    await page.reload({ waitUntil: 'networkidle', timeout: 30000 }).catch(() => {});
+    await randomDelay(3000, 4000);
+    ppClicked = await page.evaluate(() => { var el = document.querySelector('[data-testid="paypal-accordion-item-button"]') || document.querySelector('#payment-method-accordion-item-title-paypal'); if (el) { el.click(); return true; } return false; }).catch(() => false);
+    console.log('    [Pay] PayPal retry:', ppClicked);
+    if (ppClicked) { await new Promise(r => setTimeout(r, 500)); await page.evaluate(() => { var el = document.querySelector('[data-testid="paypal-accordion-item-button"]') || document.querySelector('#payment-method-accordion-item-title-paypal'); if (el) el.click(); }).catch(() => {}); }
+    await randomDelay(2000, 3000);
+  }
 
   const addr = await fetchAddress();
   console.log('    [Pay] Address:', JSON.stringify(addr));
+
+  // Wait for billing address form to appear after PayPal selection
+  console.log('    [Pay] Waiting for billing form...');
+  for (let w = 0; w < 10; w++) {
+    const hasForm = await page.locator('#billingAddressLine1, input[name*="addressLine1"]').first().isVisible({ timeout: 1000 }).catch(() => false);
+    if (hasForm) break;
+    await new Promise(r => setTimeout(r, 1000));
+  }
 
   // Step 2: Fill address fields (after PayPal form has loaded)
   const fillResult = await page.evaluate((addr) => {
@@ -263,7 +295,7 @@ async function handlePayPalLogin(page) {
   console.log('    [Pay] PayPal login submitted');
 }
 
-async function handlePayPalCheckout(page) {
+async function handlePayPalCheckout(page, phoneOverride, smsOverride) {
   console.log('    [Pay] PayPal checkout page detected');
   await randomDelay(2000, 3000);
 
@@ -289,7 +321,7 @@ async function handlePayPalCheckout(page) {
   console.log('    [Pay] Address:', JSON.stringify(addr));
 
   await fillInput(page, '#email', email);
-  await fillInput(page, '#phone', CONFIG.phone);
+  await fillInput(page, '#phone', phoneOverride || CONFIG.phone);
   await fillInput(page, '#cardNumber', CONFIG.cardNumber);
   await fillInput(page, '#cardExpiry', CONFIG.cardExpiry);
   await fillInput(page, '#cardCvv', CONFIG.cardCvv);
@@ -306,11 +338,12 @@ async function handlePayPalCheckout(page) {
   console.log('    [Pay] PayPal checkout submitted');
 
   // Handle SMS verification code dialog
-  await handleSmsVerification(page);
+  await handleSmsVerification(page, smsOverride);
 }
 
-async function handleSmsVerification(page) {
-  if (!CONFIG.smsApiUrl) return;
+async function handleSmsVerification(page, smsOverride) {
+  const SMS_URL = smsOverride || CONFIG.smsApiUrl;
+  if (!SMS_URL) return;
 
   await randomDelay(2000, 3000);
 
@@ -328,7 +361,7 @@ async function handleSmsVerification(page) {
   let smsCode = null;
   for (let attempt = 0; attempt < 30; attempt++) {
     try {
-      const res = await fetch(CONFIG.smsApiUrl);
+      const res = await fetch(SMS_URL);
       const text = await res.text();
       console.log(`    [Pay] SMS API attempt ${attempt + 1}: ${text.slice(0, 100)}`);
 
@@ -378,7 +411,10 @@ async function handleSmsVerification(page) {
 
 // ========== Main Auto-Pay ==========
 
-async function autoPayment(page) {
+async function autoPayment(page, phoneConfig) {
+  // phoneConfig: { phone, smsApiUrl } — thread-local override
+  const PHONE = phoneConfig?.phone || CONFIG.phone;
+  const SMS_API = phoneConfig?.smsApiUrl || CONFIG.smsApiUrl;
   console.log('    [Pay] Starting auto-payment flow...');
 
   // Inject CSS to hide CAPTCHA
@@ -400,7 +436,7 @@ async function autoPayment(page) {
     if (currentUrl.includes('paypal.com/pay')) {
       await handlePayPalLogin(page);
     } else if (currentUrl.includes('paypal.com') && (currentUrl.includes('checkoutweb') || currentUrl.includes('signup'))) {
-      await handlePayPalCheckout(page);
+      await handlePayPalCheckout(page, PHONE, SMS_API);
       paypalHandled = true;
       break;
     } else if (currentUrl.includes('pay.openai.com') || currentUrl.includes('checkout.stripe.com')) {

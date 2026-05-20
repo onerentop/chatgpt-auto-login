@@ -391,8 +391,16 @@ class PipelineEngine extends EventEmitter {
 
     try {
       // Load accounts
-      const accounts = loadAccounts(CSV_PATH);
-      if (accounts.length === 0) throw new Error('No accounts in accounts.csv');
+      const { accountsDB } = require('./db');
+      const accounts = accountsDB.list().map(a => ({
+        email: a.email,
+        password: a.password,
+        loginType: a.login_type === 'google' ? 'google' : 'outlook',
+        totp_secret: a.totp_secret || '',
+        client_id: a.client_id || '',
+        refresh_token: a.refresh_token || '',
+      }));
+      if (accounts.length === 0) throw new Error('No accounts in database');
       if (!findChrome()) throw new Error('Chrome not found!');
       if (!fs.existsSync(SESSIONS_DIR)) fs.mkdirSync(SESSIONS_DIR, { recursive: true });
 

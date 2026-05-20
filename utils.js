@@ -268,6 +268,12 @@ async function fetchTokensViaPKCE(browser, account, lastOtp) {
         return { needsPhone: true };
       }
 
+      // STATE: add-phone (OpenAI requires phone verification for Codex)
+      if (url.includes('add-phone') || url.includes('phone-required')) {
+        console.log('  [PKCE] State: add-phone — phone verification required, skipping PKCE');
+        return { needsPhone: true };
+      }
+
       // STATE 4: about-you (first-time registration)
       if (url.includes('about-you') || url.includes('about')) {
         if (!handled.about) {
