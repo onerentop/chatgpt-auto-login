@@ -152,28 +152,78 @@ async function waitForCDP(port) {
   throw new Error('CDP timeout');
 }
 
-// ========== CPA JSON (no refresh_token) ==========
-function saveCPAJson(email, accessToken, session) {
+// ========== Auth JSON generation (CPA + sub2api, no refresh_token) ==========
+function parseJwtPayload(token) {
+  try {
+    return JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
+  } catch { return {}; }
+}
+
+function saveAuthFiles(email, accessToken, session) {
   const authDir = path.join(ROOT, 'cpa-auth');
   if (!fs.existsSync(authDir)) fs.mkdirSync(authDir, { recursive: true });
   const sanitized = email.replace(/@/g, '-at-').replace(/\./g, '-');
-  const filePath = path.join(authDir, `codex-${sanitized}.json`);
-  let accountId = '';
-  try {
-    const payload = JSON.parse(Buffer.from(accessToken.split('.')[1], 'base64').toString());
-    accountId = payload['https://api.openai.com/auth']?.chatgpt_account_id || '';
-  } catch {}
+
+  const payload = parseJwtPayload(accessToken);
+  const authClaim = payload['https://api.openai.com/auth'] || {};
+  const accountId = authClaim.chatgpt_account_id || '';
+  const userId = authClaim.chatgpt_user_id || authClaim.user_id || '';
+  const planType = authClaim.chatgpt_plan_type || session?.account?.planType || 'free';
+  const userName = session?.user?.name || '';
   const now = new Date();
-  const expired = new Date(now.getTime() + 10 * 24 * 3600000);
-  const data = {
-    access_token: accessToken, account_id: accountId, email,
-    expired: expired.toISOString().replace('Z', '+08:00'),
-    id_token: '', last_refresh: now.toISOString().replace('Z', '+08:00'),
-    refresh_token: '', type: 'codex',
+  const expiresAt = payload.exp ? new Date(payload.exp * 1000).toISOString().replace('Z', '+08:00') : new Date(now.getTime() + 10 * 24 * 3600000).toISOString().replace('Z', '+08:00');
+  const exportedAt = now.toISOString().replace('Z', '+08:00');
+  const sessionToken = session?.sessionToken || '';
+
+  // CPA format
+  const cpa = {
+    type: 'codex',
+    account_id: accountId,
+    chatgpt_account_id: accountId,
+    email,
+    name: userName,
+    plan_type: planType,
+    chatgpt_plan_type: planType,
+    id_token: '',
+    access_token: accessToken,
+    refresh_token: '',
+    session_token: sessionToken,
+    last_refresh: exportedAt,
+    expired: expiresAt,
   };
-  fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
-  console.log(`  [CPA-Auth] Saved: ${filePath}`);
-  return filePath;
+  const cpaPath = path.join(authDir, `codex-${sanitized}.json`);
+  fs.writeFileSync(cpaPath, JSON.stringify(cpa, null, 2));
+  console.log(`  [CPA] Saved: ${cpaPath}`);
+
+  // sub2api format
+  const sub2api = {
+    name: userName || email,
+    platform: 'openai',
+    type: 'oauth',
+    concurrency: 10,
+    priority: 1,
+    credentials: {
+      access_token: accessToken,
+      chatgpt_account_id: accountId,
+      chatgpt_user_id: userId,
+      email,
+      expires_at: expiresAt,
+      expires_in: payload.exp ? payload.exp - Math.floor(now.getTime() / 1000) : 864000,
+      plan_type: planType,
+    },
+    extra: {
+      email,
+      email_key: email.replace(/@/g, '_at_').replace(/\./g, '_'),
+      name: userName,
+      source: 'chatgpt_web_session',
+      last_refresh: exportedAt,
+    },
+  };
+  const sub2apiPath = path.join(authDir, `sub2api-${sanitized}.json`);
+  fs.writeFileSync(sub2apiPath, JSON.stringify(sub2api, null, 2));
+  console.log(`  [Sub2API] Saved: ${sub2apiPath}`);
+
+  return { cpaPath, sub2apiPath };
 }
 
 // ========== Python subprocess ==========
@@ -302,7 +352,7 @@ class ProtocolEngine extends EventEmitter {
           const isPlusOrAbove = ['plus', 'pro', 'team', 'enterprise'].includes((result.planType || 'free').toLowerCase());
           if (isPlusOrAbove) {
             console.log(`[Proto-Engine] ${account.email} already Plus, generating CPA JSON...`);
-            saveCPAJson(account.email, result.accessToken, result.session);
+            saveAuthFiles(account.email, result.accessToken, result.session);
             this.emitStatus({ email: account.email, status: 'already_plus', phase: 'done', progress: '' });
             summary.alreadyPlus++;
           } else {
@@ -394,7 +444,7 @@ class ProtocolEngine extends EventEmitter {
           console.log(`[${progress}] Plan: ${finalPlan} (${isPlusNow ? 'Plus!' : 'still free'})`);
 
           // Generate CPA JSON (no refresh_token)
-          saveCPAJson(account.email, result.accessToken, result.session);
+          saveAuthFiles(account.email, result.accessToken, result.session);
 
           if (isPlusNow) {
             this.emitStatus({ email: account.email, status: 'success', phase: 'done', progress });
