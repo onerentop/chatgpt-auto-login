@@ -153,19 +153,23 @@ def main():
             raise Exception(f"Homepage failed: {r.status_code}")
         time.sleep(random.uniform(0.5, 1.5))
 
-        # Step 1: PKCE Authorize (direct, not via chatgpt.com/signin)
-        _log("Step 1: PKCE Authorize...")
-        code_verifier = base64.urlsafe_b64encode(secrets.token_bytes(64)).rstrip(b"=").decode("ascii")
-        code_challenge = base64.urlsafe_b64encode(hashlib.sha256(code_verifier.encode("ascii")).digest()).rstrip(b"=").decode("ascii")
-        oauth_state = secrets.token_urlsafe(24)
-        OAUTH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
-        OAUTH_REDIRECT_URI = "http://localhost:1455/auth/callback"
+        # Step 1: Signin (chatgpt.com flow — no add_phone requirement)
+        _log("Step 1: CSRF + Signin...")
+        r = session.get(f"{BASE}/api/auth/csrf", headers={"Accept": "application/json"}, timeout=15)
+        csrf = r.json().get("csrfToken", "")
+        if not csrf: raise Exception("CSRF failed")
+        time.sleep(random.uniform(0.3, 0.8))
 
-        auth_params = urlencode({"response_type": "code", "client_id": OAUTH_CLIENT_ID,
-            "redirect_uri": OAUTH_REDIRECT_URI, "scope": "openid profile email offline_access",
-            "code_challenge": code_challenge, "code_challenge_method": "S256", "state": oauth_state})
-        auth_url = f"{AUTH}/oauth/authorize?{auth_params}"
+        signin_params = {"prompt": "login", "ext-oai-did": device_id,
+            "auth_session_logging_id": str(uuid.uuid4()), "screen_hint": "login_or_signup", "login_hint": email}
+        r = session.post(f"{BASE}/api/auth/signin/openai", params=signin_params,
+            data={"callbackUrl": f"{BASE}/", "csrfToken": csrf, "json": "true"},
+            headers={"Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json"}, timeout=15)
+        auth_url = r.json().get("url", "")
+        if not auth_url: raise Exception("Signin failed")
+        time.sleep(random.uniform(0.5, 1.2))
 
+        _log("Step 2: Authorize...")
         r = session.get(auth_url, headers={"Accept": "text/html", "Upgrade-Insecure-Requests": "1", "Referer": f"{BASE}/"}, allow_redirects=True, timeout=30)
         final_url = str(r.url)
         final_path = urlparse(final_url).path
@@ -281,15 +285,19 @@ def main():
                 names_last = ["Smith", "Johnson", "Williams", "Brown", "Jones", "Davis"]
                 name = f"{random.choice(names_first)} {random.choice(names_last)}"
                 bdate = f"{random.randint(1990, 2002)}-{random.randint(1,12):02d}-{random.randint(1,28):02d}"
+                _log(f"create_account: name={name}, bdate={bdate}")
+                # Try with sentinel token (flow=create_account, not oauth_create_account)
                 sentinel = ""
-                try: sentinel = build_sentinel_token(session, device_id, flow="oauth_create_account", user_agent=ua, sec_ch_ua=sec_ch_ua) or ""
+                try: sentinel = build_sentinel_token(session, device_id, flow="create_account", user_agent=ua, sec_ch_ua=sec_ch_ua) or ""
                 except: pass
+                headers_ca = {"Accept": "application/json", "Content-Type": "application/json",
+                    "Origin": AUTH, "Referer": f"{AUTH}/about-you", "oai-device-id": device_id,
+                    "ext-passkey-client-capabilities": "conditional-create,conditional-get"}
+                if sentinel:
+                    headers_ca["openai-sentinel-token"] = sentinel
                 r = session.post(f"{AUTH}/api/accounts/create_account",
-                    json={"name": name, "birthdate": bdate},
-                    headers={"Accept": "application/json", "Content-Type": "application/json",
-                        "Origin": AUTH, "Referer": f"{AUTH}/about-you", "oai-device-id": device_id,
-                        "openai-sentinel-token": sentinel, "ext-passkey-client-capabilities": "conditional-create,conditional-get"}, timeout=30)
-                _log(f"create_account: {r.status_code}")
+                    json={"name": name, "birthdate": bdate}, headers=headers_ca, timeout=30)
+                _log(f"create_account: {r.status_code} {r.text[:120]}")
                 if r.status_code == 200:
                     try:
                         ca_data = r.json()
@@ -301,83 +309,51 @@ def main():
                     continue_url = f"{AUTH}/sign-in-with-chatgpt/codex/consent"
                     page_type = "consent"
 
-        # Step 6b: Handle add-phone
-        if "add_phone" in str(page_type) or "add-phone" in str(continue_url):
-            _log("add-phone required — cannot skip via protocol")
-            print(json.dumps({"status": "needs_phone", "error": "Phone verification required"}))
+        # Step 7: Follow continue_url (callback) to get accessToken
+        _log("Step 7: Getting accessToken...")
+        access_token = None
+        session_data = {}
+
+        # Follow continue_url from OTP (contains callback URL with code)
+        final_continue = otp_continue if need_otp else continue_url
+        if final_continue and "chatgpt.com" in final_continue:
+            _log(f"Following callback: {final_continue[:60]}...")
+            try:
+                r = session.get(final_continue, headers={"Accept": "text/html", "Upgrade-Insecure-Requests": "1"}, allow_redirects=True, timeout=30)
+                _log(f"Callback -> {str(r.url)[:60]}")
+            except Exception as e:
+                _log(f"Callback error: {str(e)[:50]}")
+
+        # Get session
+        time.sleep(1)
+        try:
+            r = session.get(f"{BASE}/api/auth/session", headers={"Accept": "application/json"}, timeout=15)
+            session_data = r.json()
+            access_token = session_data.get("accessToken")
+        except: pass
+
+        if not access_token and final_continue and "auth.openai.com" in str(final_continue):
+            # continue_url is on auth.openai.com (about_you/add_phone) — follow then retry
+            _log(f"Following auth continue: {final_continue[:60]}...")
+            try:
+                r = session.get(final_continue, headers={"Accept": "text/html", "Upgrade-Insecure-Requests": "1"}, allow_redirects=True, timeout=30)
+            except: pass
+            time.sleep(1)
+            try:
+                r = session.get(f"{BASE}/api/auth/session", headers={"Accept": "application/json"}, timeout=15)
+                session_data = r.json()
+                access_token = session_data.get("accessToken")
+            except: pass
+
+        if not access_token:
+            page_info = page_type or (otp_page if need_otp else "unknown")
+            _log(f"No accessToken (page: {page_info})")
+            print(json.dumps({"status": "error", "error": f"Auth OK but no accessToken (page: {page_info})"}))
             return
 
-        # Step 7: Extract authorization code from consent/redirect chain
-        _log("Step 7: Getting authorization code...")
-        code = locals().get("code", None)
+        _log(f"accessToken: {access_token[:20]}...")
 
-        if not code:
-            consent_url = continue_url or f"{AUTH}/sign-in-with-chatgpt/codex/consent"
-            if not consent_url.startswith("http"):
-                consent_url = f"{AUTH}{consent_url}"
-            try:
-                r = session.get(consent_url, headers={"Accept": "text/html", "Upgrade-Insecure-Requests": "1"},
-                    allow_redirects=False, timeout=15)
-                loc = r.headers.get("location", "")
-                for hop in range(16):
-                    if not loc: break
-                    if "code=" in loc:
-                        full = loc if loc.startswith("http") else f"{AUTH}{loc}"
-                        code = parse_qs(urlparse(full).query).get("code", [None])[0]
-                        break
-                    try:
-                        full = loc if loc.startswith("http") else f"{AUTH}{loc}"
-                        r2 = session.get(full, allow_redirects=False, timeout=15)
-                        loc = r2.headers.get("location", "")
-                    except Exception as e:
-                        m = re.search(r"code=([^&\s]+)", str(e))
-                        if m: code = m.group(1)
-                        break
-            except Exception as e:
-                m = re.search(r"code=([^&\s]+)", str(e))
-                if m: code = m.group(1)
-
-        if not code:
-            # Last resort: re-GET authorize URL
-            _log("Re-authorize for code...")
-            try:
-                r = session.get(auth_url, headers={"Accept": "text/html", "Upgrade-Insecure-Requests": "1"},
-                    allow_redirects=False, timeout=30)
-                loc = r.headers.get("location", "")
-                for hop in range(10):
-                    if not loc: break
-                    if "code=" in loc:
-                        full = loc if loc.startswith("http") else f"{AUTH}{loc}"
-                        code = parse_qs(urlparse(full).query).get("code", [None])[0]
-                        break
-                    try:
-                        full = loc if loc.startswith("http") else f"{AUTH}{loc}"
-                        r2 = session.get(full, allow_redirects=False, timeout=15)
-                        loc = r2.headers.get("location", "")
-                    except Exception as e:
-                        m = re.search(r"code=([^&\s]+)", str(e))
-                        if m: code = m.group(1)
-                        break
-            except Exception as e:
-                m = re.search(r"code=([^&\s]+)", str(e))
-                if m: code = m.group(1)
-
-        if not code:
-            raise Exception("Failed to get authorization code")
-        _log("Got authorization code!")
-
-        # Step 8: Token exchange (PKCE)
-        _log("Step 8: Token exchange...")
-        r = session.post(f"{AUTH}/oauth/token",
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-            data={"grant_type": "authorization_code", "code": code,
-                  "redirect_uri": OAUTH_REDIRECT_URI, "client_id": OAUTH_CLIENT_ID,
-                  "code_verifier": code_verifier}, timeout=30)
-        token_data = r.json()
-        access_token = token_data.get("access_token")
-        if not access_token:
-            raise Exception(f"Token exchange failed: {json.dumps(token_data)[:100]}")
-        session_data = {"accessToken": access_token}
+        # accessToken obtained — skip PKCE code exchange
         _log(f"accessToken: {access_token[:20]}...")
 
         # Step 8: Generate checkout link
