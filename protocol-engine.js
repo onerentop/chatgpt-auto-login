@@ -10,7 +10,7 @@ const WebSocket = require('ws');
 const { chromium } = require('playwright');
 
 const { autoPayment, CONFIG: PAY_CONFIG } = require('./payment');
-const { randomDelay } = require('./utils');
+const { randomDelay, fetchTokensViaPKCE, saveCPAAuthFile } = require('./utils');
 
 const ROOT = __dirname;
 const PYTHON_SCRIPT = path.join(ROOT, 'protocol_register.py');
@@ -429,10 +429,33 @@ class ProtocolEngine extends EventEmitter {
           } catch (e) { console.log(`[${progress}] Payment error: ${e.message?.slice(0, 60)}`); }
 
           if (paymentResult.success) {
-            // Payment completed (SMS verified) — generate auth files
-            saveAuthFiles(account.email, result.accessToken, result.session);
-            this.emitStatus({ email: account.email, status: 'success', phase: 'done', progress });
-            summary.success++;
+            const cfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf-8'));
+            if (cfg.enableOAuth) {
+              // PKCE flow to get refresh_token
+              console.log(`[${progress}] Running PKCE OAuth...`);
+              this.emitStatus({ email: account.email, status: 'running', phase: 'pkce', progress });
+              const pkceTokens = await fetchTokensViaPKCE(browser, account, result.lastOtp).catch((e) => { console.log(`[${progress}] PKCE failed: ${e.message?.slice(0, 60)}`); return null; });
+              if (pkceTokens?.needsPhone) {
+                console.log(`[${progress}] PKCE requires phone verification`);
+                saveAuthFiles(account.email, result.accessToken, result.session);
+                this.emitStatus({ email: account.email, status: 'needs_phone', phase: 'done', progress });
+                summary.success++;
+              } else if (pkceTokens) {
+                console.log(`[${progress}] PKCE success, saving with refresh_token`);
+                saveCPAAuthFile(account.email, pkceTokens.access_token, pkceTokens);
+                this.emitStatus({ email: account.email, status: 'success', phase: 'done', progress });
+                summary.success++;
+              } else {
+                console.log(`[${progress}] PKCE failed, saving without refresh_token`);
+                saveAuthFiles(account.email, result.accessToken, result.session);
+                this.emitStatus({ email: account.email, status: 'oauth_failed', phase: 'done', progress });
+                summary.success++;
+              }
+            } else {
+              saveAuthFiles(account.email, result.accessToken, result.session);
+              this.emitStatus({ email: account.email, status: 'success', phase: 'done', progress });
+              summary.success++;
+            }
           } else {
             const reason = paymentResult.reason || 'Payment not completed';
             console.log(`[${progress}] Payment incomplete: ${reason}`);

@@ -43,7 +43,11 @@
         <el-input v-model="form.appId" />
       </el-form-item>
 
-      <el-divider content-position="left">CPA 配置</el-divider>
+      <el-divider content-position="left">OAuth / CPA 配置</el-divider>
+      <el-form-item label="启用 OAuth (PKCE)">
+        <el-switch v-model="form.enableOAuth" />
+        <span style="color:#909399;margin-left:8px;font-size:12px">开启后支付完走 PKCE 获取 refresh_token</span>
+      </el-form-item>
       <el-form-item label="启用 CPA">
         <el-switch v-model="form.enableCPA" />
       </el-form-item>
@@ -71,6 +75,7 @@ const saving = ref(false)
 const form = reactive({
   protocolMode: false,
   protocolConcurrency: 3,
+  enableOAuth: false,
   phone: '',
   smsApiUrl: '',
   discordToken: '',

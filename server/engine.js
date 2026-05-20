@@ -577,31 +577,37 @@ class PipelineEngine extends EventEmitter {
               console.log(`${p} Payment flow completed. Waiting 10s...`);
               await randomDelay(10000, 12000);
 
-              // Phase 4: CPA OAuth or local auth file (only on payment success)
+              // Phase 4: OAuth (PKCE) + CPA (only on payment success)
               if (paymentOk) {
-                currentPhase = 'cpa';
-                if (PAY_CONFIG.enableCPA !== false) {
-                  console.log(`${p} Phase 4: CPA OAuth...`);
-                  try {
-                    const cpaOk = await registerToCPA(browser, account.email, account);
-                    if (cpaOk) console.log(`${p} CPA OAuth done.`);
-                    else console.log(`${p} CPA OAuth may have issues, check manually.`);
-                  } catch (e) {
-                    console.log(`${p} CPA error: ${e.message}`);
-                  }
-                } else {
-                  console.log(`${p} CPA OAuth skipped. Running PKCE to get full tokens...`);
-                  this.emitStatus( { email: account.email, status: 'running', phase: 'pkce', progress });
+                currentPhase = 'oauth';
+                const latestCfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf-8'));
+
+                if (latestCfg.enableOAuth) {
+                  console.log(`${p} Phase 4: PKCE OAuth...`);
+                  this.emitStatus({ email: account.email, status: 'running', phase: 'pkce', progress });
                   const pkceTokens = await fetchTokensViaPKCE(browser, account, loginResult.lastOtp).catch((e) => { console.log(`  [PKCE] Failed: ${e.message}`); return null; });
                   if (pkceTokens?.needsPhone) {
                     console.log(`${p} PKCE requires phone verification`);
                     saveCPAAuthFile(account.email, loginResult.accessToken, loginResult.session);
                     finalResult.status = 'needs_phone';
                   } else if (pkceTokens) {
+                    console.log(`${p} PKCE success, saving with refresh_token`);
                     saveCPAAuthFile(account.email, pkceTokens.access_token, pkceTokens);
                   } else {
-                    console.log(`${p} PKCE failed, saving with session token only`);
+                    console.log(`${p} PKCE failed, saving without refresh_token`);
                     saveCPAAuthFile(account.email, loginResult.accessToken, loginResult.session);
+                    finalResult.status = 'oauth_failed';
+                  }
+                }
+
+                if (latestCfg.enableCPA) {
+                  console.log(`${p} Phase 4: CPA registration...`);
+                  try {
+                    const cpaOk = await registerToCPA(browser, account.email, account);
+                    if (cpaOk) console.log(`${p} CPA OAuth done.`);
+                    else console.log(`${p} CPA OAuth may have issues, check manually.`);
+                  } catch (e) {
+                    console.log(`${p} CPA error: ${e.message}`);
                   }
                 }
               }
