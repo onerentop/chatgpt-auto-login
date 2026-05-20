@@ -108,6 +108,7 @@ async function loginAccount(browser, account) {
       let baselineUid = 0;
       try {
         const pre = new ImapFlow({ host: 'outlook.office365.com', port: 993, secure: true, auth: { user: account.email, accessToken: tokenData.access_token }, logger: false });
+        pre.on('error', () => {});
         await pre.connect();
         const lock = await pre.getMailboxLock('INBOX');
         try {
@@ -120,7 +121,7 @@ async function loginAccount(browser, account) {
         } finally {
           lock.release();
         }
-        await pre.logout();
+        pre.close();
       } catch (e) {
         // baseline fetch failed, continue with baselineUid = 0
       }
@@ -147,6 +148,7 @@ async function loginAccount(browser, account) {
         let client;
         try {
           client = new ImapFlow({ host: 'outlook.office365.com', port: 993, secure: true, auth: { user: account.email, accessToken: tokenData.access_token }, logger: false });
+          client.on('error', () => {});
           await client.connect();
           const lock = await client.getMailboxLock('INBOX');
           try {
@@ -171,7 +173,7 @@ async function loginAccount(browser, account) {
         } catch (e) {
           if (attempt === 0) console.log(`  [4/10] IMAP: ${e.message.slice(0, 60)}`);
         } finally {
-          try { await client?.logout(); } catch {}
+          try { client?.close(); } catch {}
         }
 
         if (otp) break;
@@ -429,6 +431,7 @@ async function fetchOutlookOTP(clientId, refreshToken, email, requestTime) {
   let baselineUid = 0;
   try {
     const pre = new ImapFlow({ host: 'outlook.office365.com', port: 993, secure: true, auth: { user: email, accessToken }, logger: false });
+    pre.on('error', () => {});
     await pre.connect();
     const lock = await pre.getMailboxLock('INBOX');
     if (pre.mailbox.exists > 0) {
@@ -437,7 +440,7 @@ async function fetchOutlookOTP(clientId, refreshToken, email, requestTime) {
       }
     }
     lock.release();
-    await pre.logout();
+    pre.close();
     console.log(`  [OTP] Baseline UID: ${baselineUid} (will only read newer)`);
   } catch (e) {
     console.log(`  [OTP] Baseline error: ${e.message.slice(0, 80)}`);
@@ -448,6 +451,7 @@ async function fetchOutlookOTP(clientId, refreshToken, email, requestTime) {
     let client;
     try {
       client = new ImapFlow({ host: 'outlook.office365.com', port: 993, secure: true, auth: { user: email, accessToken }, logger: false });
+      client.on('error', () => {});
       await client.connect();
       const lock = await client.getMailboxLock('INBOX');
       try {
@@ -467,7 +471,7 @@ async function fetchOutlookOTP(clientId, refreshToken, email, requestTime) {
             if (match) {
               console.log(`  [OTP] Found code in: "${subject}" (UID:${msg.uid})`);
               lock.release();
-              await client.logout();
+              client.close();
               return match[1];
             }
           }
@@ -475,10 +479,10 @@ async function fetchOutlookOTP(clientId, refreshToken, email, requestTime) {
       } finally {
         lock.release();
       }
-      await client.logout();
+      client.close();
     } catch (e) {
       console.log(`  [OTP] IMAP error: ${e.message.slice(0, 100)}`);
-      try { await client?.logout(); } catch {}
+      try { client?.close(); } catch {}
     }
 
     console.log(`  [OTP] Attempt ${attempt + 1}/20 - waiting for new email...`);

@@ -101,11 +101,12 @@ async function _fetchPkceOtp(page, account) {
   let baseline = 0;
   try {
     const pre = new ImapFlow({ host: 'outlook.office365.com', port: 993, secure: true, auth: { user: account.email, accessToken: tokenData.access_token }, logger: false });
+    pre.on('error', () => {});
     await pre.connect(); const lock = await pre.getMailboxLock('INBOX');
     console.log(`  [PKCE] INBOX total: ${pre.mailbox.exists}`);
     const s = Math.max(1, pre.mailbox.exists - 9);
     for await (const m of pre.fetch({ seq: `${s}:*` }, { uid: true })) { if (m.uid > baseline) baseline = m.uid; }
-    lock.release(); await pre.logout();
+    lock.release(); pre.close();
   } catch (e) { console.log(`  [PKCE] Baseline error: ${e.message?.slice(0, 50)}`); }
 
   // THEN click resend to trigger fresh code
@@ -125,6 +126,7 @@ async function _fetchPkceOtp(page, account) {
     let client;
     try {
       client = new ImapFlow({ host: 'outlook.office365.com', port: 993, secure: true, auth: { user: account.email, accessToken: tokenData.access_token }, logger: false });
+      client.on('error', () => {});
       await client.connect(); const lock = await client.getMailboxLock('INBOX');
       let newMsgCount = 0;
       for await (const msg of client.fetch({ uid: `${baseline + 1}:*` }, { envelope: true, source: true, uid: true })) {
@@ -136,17 +138,17 @@ async function _fetchPkceOtp(page, account) {
         if (subject.includes('ChatGPT') || subject.includes('验证') || subject.includes('OpenAI') || subject.includes('code') || subject.includes('verify') || subject.includes('代码') || from.includes('openai')) {
           // Try subject first (e.g. "你的 OpenAI 代码为 382661")
           const subjectMatch = subject.match(/\b(\d{6})\b/);
-          if (subjectMatch) { lock.release(); await client.logout(); console.log(`  [PKCE] Got OTP from subject: ${subjectMatch[1]} (UID:${msg.uid})`); return subjectMatch[1]; }
+          if (subjectMatch) { lock.release(); client.close(); console.log(`  [PKCE] Got OTP from subject: ${subjectMatch[1]} (UID:${msg.uid})`); return subjectMatch[1]; }
           // Then try HTML body
           const src = msg.source?.toString() || '';
           const html = src.indexOf('<html') > -1 ? src.slice(src.indexOf('<html')).replace(/<[^>]+>/g, ' ') : src;
           const match = html.match(/\b(\d{6})\b/);
-          if (match) { lock.release(); await client.logout(); console.log(`  [PKCE] Got OTP from body: ${match[1]} (UID:${msg.uid})`); return match[1]; }
+          if (match) { lock.release(); client.close(); console.log(`  [PKCE] Got OTP from body: ${match[1]} (UID:${msg.uid})`); return match[1]; }
         }
       }
-      lock.release(); await client.logout();
+      lock.release(); client.close();
       if (a === 0 && newMsgCount === 0) console.log('  [PKCE] No new emails after baseline');
-    } catch (e) { if (a === 0) console.log(`  [PKCE] IMAP error: ${e.message?.slice(0, 50)}`); try { await client?.logout(); } catch {} }
+    } catch (e) { if (a === 0) console.log(`  [PKCE] IMAP error: ${e.message?.slice(0, 50)}`); try { client?.close(); } catch {} }
     if (a % 5 === 4) console.log(`  [PKCE] OTP attempt ${a + 1}/20 - waiting...`);
     await new Promise(r => setTimeout(r, 3000));
   }
