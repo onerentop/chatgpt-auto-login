@@ -230,6 +230,20 @@ class ProtocolEngine extends EventEmitter {
     this.status = 'running';
     this.stopFlag = false;
 
+    // LogCapture: hijack console.log to emit 'log' events (same as PipelineEngine)
+    const { LogCapture } = require('./server/logger');
+    this._logCapture = new LogCapture();
+    let currentEmail = '';
+    const logHandler = (message) => {
+      const ts = new Date().toISOString();
+      this.emit('log', { email: currentEmail, phase: '', message, timestamp: ts });
+      if (currentEmail) {
+        try { const { logsDB } = require('./server/db'); logsDB.add(currentEmail, '', message, ts); } catch {}
+      }
+    };
+    this._logCapture.onLog(logHandler);
+    this._logCapture.start();
+
     const { accountsDB } = require('./server/db');
     let accounts = accountsDB.list().map(a => ({
       email: a.email, password: a.password, loginType: a.login_type,
@@ -259,6 +273,7 @@ class ProtocolEngine extends EventEmitter {
           if (this.stopFlag) throw new Error('Stopped');
           const progress = `${i + 1}/${accounts.length}`;
           this.emitStatus({ email: account.email, status: 'running', phase: 'protocol-login', progress });
+          currentEmail = account.email;
           console.log(`[${progress}] === ${account.email} (protocol) ===`);
           const result = await runProtocolRegister(account);
           console.log(`[${progress}] Protocol login OK: ${result.accessToken?.slice(0, 20)}...`);
@@ -312,6 +327,7 @@ class ProtocolEngine extends EventEmitter {
 
         try {
           // Discord
+          currentEmail = account.email;
           this.emitStatus({ email: account.email, status: 'running', phase: 'discord', progress });
           console.log(`[${progress}] Discord: ${account.email}...`);
           let link = result.checkoutUrl;
@@ -366,6 +382,7 @@ class ProtocolEngine extends EventEmitter {
       if (this._gw) try { this._gw.cleanup(); } catch {}
       if (this._tempDir) try { fs.rmSync(this._tempDir, { recursive: true, force: true }); } catch {}
       this._browser = null; this._chromeProc = null; this._gw = null; this._tempDir = null;
+      if (this._logCapture) { this._logCapture.stop(); this._logCapture.offLog(logHandler); }
     }
 
     console.log(`[Proto-Engine] Complete: ${JSON.stringify(summary)}`);
