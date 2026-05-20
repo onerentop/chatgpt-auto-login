@@ -488,7 +488,7 @@ class PipelineEngine extends EventEmitter {
 
           if (isPlusOrAbove) {
             console.log(`${p} Already Plus!`);
-            finalResult = { email: account.email, status: 'success', paymentLink: '', reason: '' };
+            finalResult = { email: account.email, status: 'plus_no_rt', paymentLink: '', reason: '' };
 
             const latestCfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf-8'));
             if (latestCfg.enableOAuth) {
@@ -497,10 +497,10 @@ class PipelineEngine extends EventEmitter {
               const pkceTokens = await fetchTokensViaPKCE(browser, account, loginResult.lastOtp).catch((e) => { console.log(`  [PKCE] Failed: ${e.message}`); return null; });
               if (pkceTokens && !pkceTokens.needsPhone) {
                 saveCPAAuthFile(account.email, pkceTokens.access_token, pkceTokens);
+                finalResult.status = 'plus';
               } else {
                 if (pkceTokens?.needsPhone) console.log(`${p} PKCE requires phone verification`);
                 saveCPAAuthFile(account.email, loginResult.accessToken, loginResult.session);
-                finalResult.status = 'plus_no_rt';
               }
             } else {
               saveCPAAuthFile(account.email, loginResult.accessToken, loginResult.session);
@@ -564,7 +564,7 @@ class PipelineEngine extends EventEmitter {
               }
 
               if (paymentOk) {
-                finalResult.status = 'success';
+                finalResult.status = 'plus_no_rt';
                 console.log(`${p} Payment succeeded (redirect_status=succeeded)`);
               } else {
                 finalResult.status = 'error';
@@ -587,11 +587,11 @@ class PipelineEngine extends EventEmitter {
                   if (pkceTokens && !pkceTokens.needsPhone) {
                     console.log(`${p} PKCE success, saving with refresh_token`);
                     saveCPAAuthFile(account.email, pkceTokens.access_token, pkceTokens);
+                    finalResult.status = 'plus';
                   } else {
                     if (pkceTokens?.needsPhone) console.log(`${p} PKCE requires phone verification`);
                     else console.log(`${p} PKCE failed, saving without refresh_token`);
                     saveCPAAuthFile(account.email, loginResult.accessToken, loginResult.session);
-                    finalResult.status = 'plus_no_rt';
                   }
                 }
 
@@ -658,7 +658,7 @@ class PipelineEngine extends EventEmitter {
       // Build summary
       const summary = {
         total: allResults.length,
-        success: allResults.filter((r) => r.status === 'success' || r.status === 'plus_no_rt').length,
+        success: allResults.filter((r) => r.status === 'plus' || r.status === 'plus_no_rt').length,
         noLink: allResults.filter((r) => r.status === 'no_link').length,
         error: allResults.filter((r) => r.status === 'error').length,
       };

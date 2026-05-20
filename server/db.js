@@ -44,8 +44,8 @@ async function initDB() {
   `);
 
   // Migrate old status values
-  db.run(`UPDATE account_status SET status = 'plus_no_rt' WHERE status IN ('needs_phone', 'oauth_failed')`);
-  db.run(`UPDATE account_status SET status = 'success' WHERE status = 'already_plus'`);
+  db.run(`UPDATE account_status SET status = 'plus_no_rt' WHERE status IN ('needs_phone', 'oauth_failed', 'success')`);
+  db.run(`UPDATE account_status SET status = 'plus_no_rt' WHERE status = 'already_plus'`);
   db.run(`UPDATE account_status SET status = 'error' WHERE status = 'failed'`);
   db.run(`UPDATE account_status SET status = 'idle' WHERE status = 'pending'`);
 

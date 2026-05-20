@@ -298,7 +298,7 @@ class ProtocolEngine extends EventEmitter {
               if (pkceTokens && !pkceTokens.needsPhone) {
                 console.log(`[${progress}] PKCE success, saving with refresh_token`);
                 saveCPAAuthFile(account.email, pkceTokens.access_token, pkceTokens);
-                this.emitStatus({ email: account.email, status: 'success', phase: 'done', progress });
+                this.emitStatus({ email: account.email, status: 'plus', phase: 'done', progress });
               } else {
                 if (pkceTokens?.needsPhone) console.log(`[${progress}] PKCE requires phone verification`);
                 saveCPAAuthFile(account.email, result.accessToken, result.session);
@@ -311,7 +311,7 @@ class ProtocolEngine extends EventEmitter {
             }
           } else {
             saveCPAAuthFile(account.email, result.accessToken, result.session);
-            this.emitStatus({ email: account.email, status: 'success', phase: 'done', progress });
+            this.emitStatus({ email: account.email, status: 'plus_no_rt', phase: 'done', progress });
           }
           summary.success++;
           continue;
@@ -390,7 +390,7 @@ class ProtocolEngine extends EventEmitter {
               if (pkceTokens && !pkceTokens.needsPhone) {
                 console.log(`[${progress}] PKCE success, saving with refresh_token`);
                 saveCPAAuthFile(account.email, pkceTokens.access_token, pkceTokens);
-                this.emitStatus({ email: account.email, status: 'success', phase: 'done', progress });
+                this.emitStatus({ email: account.email, status: 'plus', phase: 'done', progress });
               } else {
                 if (pkceTokens?.needsPhone) console.log(`[${progress}] PKCE requires phone verification`);
                 else console.log(`[${progress}] PKCE failed, saving without refresh_token`);
@@ -399,7 +399,7 @@ class ProtocolEngine extends EventEmitter {
               }
             } else {
               saveCPAAuthFile(account.email, result.accessToken, result.session);
-              this.emitStatus({ email: account.email, status: 'success', phase: 'done', progress });
+              this.emitStatus({ email: account.email, status: 'plus_no_rt', phase: 'done', progress });
             }
             summary.success++;
           } else {

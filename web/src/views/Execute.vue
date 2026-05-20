@@ -176,7 +176,7 @@ watch(() => socketState.accountStatuses, (statuses) => {
     if (row) {
       row._status = data.status || 'running'
       row._phase = data.phase || ''
-      if (['success', 'plus_no_rt'].includes(data.status)) { row._hasAuth = true; row._plan = 'plus'; }
+      if (['plus', 'plus_no_rt'].includes(data.status)) { row._hasAuth = true; row._plan = 'plus'; }
       if (['error', 'no_link'].includes(data.status)) row._plan = 'free'
     }
   }
@@ -208,7 +208,7 @@ async function loadResults() {
         if (r.phase) row._phase = r.phase
         row._hasAuth = r.hasAuthFile || false
         const st = (r.status || '').toLowerCase()
-        row._plan = ['success', 'plus_no_rt'].includes(st) ? 'plus' : (['error', 'no_link'].includes(st) ? 'free' : '')
+        row._plan = ['plus', 'plus_no_rt'].includes(st) ? 'plus' : (['error', 'no_link'].includes(st) ? 'free' : '')
       }
     }
   } catch {}
@@ -229,11 +229,11 @@ function onRowClick(row, column, event) {
 }
 
 function statusType(s) {
-  return { idle: 'info', running: '', success: 'success', plus_no_rt: 'warning', no_link: 'warning', error: 'danger' }[s] || 'info'
+  return { idle: 'info', running: '', plus: 'success', plus_no_rt: 'warning', no_link: 'warning', error: 'danger' }[s] || 'info'
 }
 
 function statusLabel(s) {
-  return { idle: '空闲', running: '运行中', success: 'Plus成功', plus_no_rt: 'Plus(无RT)', no_link: '无链接', error: '错误' }[s] || s || '空闲'
+  return { idle: '空闲', running: '运行中', plus: 'Plus(有RT)', plus_no_rt: 'Plus(无RT)', no_link: '无链接', error: '错误' }[s] || s || '空闲'
 }
 
 async function startExec(emails) {
