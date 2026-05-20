@@ -252,36 +252,17 @@ async function fetchTokensViaPKCE(browser, account, lastOtp) {
           otp = await _fetchPkceOtp(page, account);
         }
         if (otp) {
-            // Find OTP input — try placeholder first (most reliable), then selectors
-            const otpLocators = [
-              page.getByPlaceholder(/验证码|code|Code/i),
-              page.locator('input[name="code"]').first(),
-              page.locator('input[autocomplete="one-time-code"]').first(),
-              page.locator('input[inputmode="numeric"]').first(),
-              page.locator('input[type="text"]').first(),
-            ];
-            let clicked = false;
-            for (let li = 0; li < otpLocators.length; li++) {
-              const inp = otpLocators[li];
-              if (await inp.isVisible({ timeout: 1500 }).catch(() => false)) {
-                await inp.click();
-                console.log(`  [PKCE] OTP input found (locator #${li})`);
-                clicked = true;
-                break;
-              }
+            // Click any input on the page, then type OTP via keyboard
+            try {
+              await page.locator('input').first().click({ timeout: 5000 });
+              console.log('  [PKCE] Clicked input');
+            } catch (e) {
+              console.log(`  [PKCE] Input click failed: ${e.message?.slice(0, 60)}, trying evaluate`);
+              await page.evaluate(() => { const i = document.querySelector('input'); if (i) { i.focus(); i.click(); } });
             }
-            if (!clicked) {
-              // Last resort: log all visible inputs for debugging
-              const inputCount = await page.locator('input').count().catch(() => 0);
-              console.log(`  [PKCE] No OTP input matched! Visible inputs: ${inputCount}`);
-              const attrs = await page.evaluate(() => Array.from(document.querySelectorAll('input')).map(i => ({ type: i.type, name: i.name, placeholder: i.placeholder, id: i.id, visible: i.offsetParent !== null })));
-              console.log(`  [PKCE] Input details: ${JSON.stringify(attrs)}`);
-              // Try clicking the first visible input
-              if (inputCount > 0) await page.locator('input').first().click().catch(() => {});
-            }
-            await new Promise(r => setTimeout(r, 300));
+            await new Promise(r => setTimeout(r, 500));
             await page.keyboard.press('Control+a');
-            await page.keyboard.type(otp, { delay: 80 });
+            await page.keyboard.type(otp, { delay: 100 });
             console.log(`  [PKCE] OTP typed: ${otp}`);
             await new Promise(r => setTimeout(r, 800));
             await page.evaluate(() => { for (const b of document.querySelectorAll('button')) if (['继续','Continue'].includes(b.textContent.trim())) { b.click(); return; } });
@@ -296,14 +277,10 @@ async function fetchTokensViaPKCE(browser, account, lastOtp) {
               const freshOtp = await _fetchPkceOtp(page, account);
               if (freshOtp) {
                 console.log(`  [PKCE] Fresh OTP: ${freshOtp}`);
-                for (const loc of otpLocators) {
-                  if (await loc.isVisible({ timeout: 1000 }).catch(() => false)) {
-                    await loc.click();
-                    break;
-                  }
-                }
+                try { await page.locator('input').first().click({ timeout: 3000 }); } catch { await page.evaluate(() => { const i = document.querySelector('input'); if (i) { i.focus(); i.click(); } }); }
+                await new Promise(r => setTimeout(r, 500));
                 await page.keyboard.press('Control+a');
-                await page.keyboard.type(freshOtp, { delay: 80 });
+                await page.keyboard.type(freshOtp, { delay: 100 });
                 console.log(`  [PKCE] Fresh OTP typed: ${freshOtp}`);
                 await new Promise(r => setTimeout(r, 800));
                 await page.evaluate(() => { for (const b of document.querySelectorAll('button')) if (['继续','Continue'].includes(b.textContent.trim())) { b.click(); return; } });
