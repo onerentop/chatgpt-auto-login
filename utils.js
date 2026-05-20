@@ -252,25 +252,25 @@ async function fetchTokensViaPKCE(browser, account, lastOtp) {
           otp = await _fetchPkceOtp(page, account);
         }
         if (otp) {
-            // Try multiple selectors to find the OTP input
-            let filled = false;
-            const selectors = ['input[name="code"]', 'input[autocomplete="one-time-code"]', 'input[inputmode="numeric"]', 'input[type="text"]'];
-            for (const sel of selectors) {
+            // Click input to set CDP focus, then type via keyboard (most reliable on CDP Chrome)
+            const otpSelectors = ['input[name="code"]', 'input[autocomplete="one-time-code"]', 'input[inputmode="numeric"]', 'input[type="text"]'];
+            let clicked = false;
+            for (const sel of otpSelectors) {
               const inp = page.locator(sel).first();
               if (await inp.isVisible({ timeout: 1000 }).catch(() => false)) {
                 await inp.click();
-                await inp.fill('');
-                await inp.fill(otp);
-                console.log(`  [PKCE] OTP filled via ${sel}`);
-                filled = true;
+                console.log(`  [PKCE] OTP input found: ${sel}`);
+                clicked = true;
                 break;
               }
             }
-            if (!filled) {
-              // Fallback: try typing into focused element
-              await page.keyboard.type(otp, { delay: 50 });
-              console.log('  [PKCE] OTP typed via keyboard fallback');
+            if (!clicked) {
+              console.log('  [PKCE] No OTP input found, trying tab to focus');
+              await page.keyboard.press('Tab');
             }
+            await page.keyboard.press('Control+a');
+            await page.keyboard.type(otp, { delay: 80 });
+            console.log(`  [PKCE] OTP typed: ${otp}`);
             await new Promise(r => setTimeout(r, 800));
             await page.evaluate(() => { for (const b of document.querySelectorAll('button')) if (['继续','Continue'].includes(b.textContent.trim())) { b.click(); return; } });
             console.log('  [PKCE] OTP submitted');
@@ -284,22 +284,16 @@ async function fetchTokensViaPKCE(browser, account, lastOtp) {
               const freshOtp = await _fetchPkceOtp(page, account);
               if (freshOtp) {
                 console.log(`  [PKCE] Fresh OTP: ${freshOtp}`);
-                let retryFilled = false;
-                for (const sel of ['input[name="code"]', 'input[autocomplete="one-time-code"]', 'input[inputmode="numeric"]', 'input[type="text"]']) {
+                for (const sel of otpSelectors) {
                   const rinp = page.locator(sel).first();
                   if (await rinp.isVisible({ timeout: 1000 }).catch(() => false)) {
                     await rinp.click();
-                    await rinp.fill('');
-                    await rinp.fill(freshOtp);
-                    console.log(`  [PKCE] Fresh OTP filled via ${sel}`);
-                    retryFilled = true;
                     break;
                   }
                 }
-                if (!retryFilled) {
-                  await page.keyboard.type(freshOtp, { delay: 50 });
-                  console.log('  [PKCE] Fresh OTP typed via keyboard fallback');
-                }
+                await page.keyboard.press('Control+a');
+                await page.keyboard.type(freshOtp, { delay: 80 });
+                console.log(`  [PKCE] Fresh OTP typed: ${freshOtp}`);
                 await new Promise(r => setTimeout(r, 800));
                 await page.evaluate(() => { for (const b of document.querySelectorAll('button')) if (['继续','Continue'].includes(b.textContent.trim())) { b.click(); return; } });
                 console.log('  [PKCE] Fresh OTP submitted');
