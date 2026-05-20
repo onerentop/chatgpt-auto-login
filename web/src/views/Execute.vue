@@ -46,6 +46,7 @@
       stripe border size="small"
       @selection-change="onSelectionChange"
       @expand-change="onExpand"
+      @row-click="onRowClick"
     >
       <el-table-column type="selection" width="45" />
       <el-table-column type="index" label="#" width="50" />
@@ -221,6 +222,12 @@ onMounted(() => { loadAccounts(); checkStatus() })
 
 function onSelectionChange(rows) { selected.value = rows }
 
+function onRowClick(row, column, event) {
+  if (column?.type === 'selection' || column?.type === 'expand') return
+  if (event?.target?.closest('.el-button, .el-dropdown, a')) return
+  tableRef.value?.toggleRowSelection(row)
+}
+
 function statusType(s) {
   return { idle: 'info', running: 'warning', success: 'success', failed: 'danger', already_plus: 'success', no_link: 'warning', error: 'danger', pending: '', needs_phone: 'warning' }[s] || 'info'
 }
@@ -265,3 +272,9 @@ function downloadSelectedAs(format) {
   }
 }
 </script>
+
+<style scoped>
+:deep(.el-table__body tr) {
+  cursor: pointer;
+}
+</style>
