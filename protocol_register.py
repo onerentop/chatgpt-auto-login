@@ -258,13 +258,14 @@ def main():
                     "ext-passkey-client-capabilities": "conditional-create,conditional-get"}, timeout=30)
             otp_data = r.json()
             otp_page = (otp_data.get("page") or {}).get("type", "")
-            _log(f"OTP response: {r.status_code} page={otp_page}")
+            otp_continue = otp_data.get("continue_url", "")
+            _log(f"OTP response: {r.status_code} page={otp_page} continue={otp_continue[:60]}")
             if r.status_code != 200:
                 raise Exception(f"OTP validation failed: {r.status_code}")
 
-        # Step 6: About-you (if needed)
-        if "about_you" in str(otp_page if need_otp else "") or need_register:
-            _log("Step 6: About-you...")
+        # Step 6: About-you (if needed) — skip for existing accounts (400 = already exists)
+        if need_register or ("about_you" in str(otp_page if need_otp else "") and need_register):
+            _log("Step 6: About-you (new account)...")
             names_first = ["James", "Mary", "John", "Linda", "Robert", "Sarah"]
             names_last = ["Smith", "Johnson", "Williams", "Brown", "Jones", "Davis"]
             name = f"{random.choice(names_first)} {random.choice(names_last)}"
@@ -283,8 +284,20 @@ def main():
 
         # Step 7: Get session token
         _log("Step 7: Getting session...")
+
+        # Follow continue_url from OTP or about_you if available
+        final_continue = otp_continue if need_otp else ""
+        if final_continue:
+            try:
+                full = final_continue if final_continue.startswith("http") else f"{AUTH}{final_continue}"
+                _log(f"Following continue_url: {full[:60]}...")
+                r = session.get(full, headers={"Accept": "text/html", "Upgrade-Insecure-Requests": "1"}, allow_redirects=True, timeout=30)
+                _log(f"Continue -> {str(r.url)[:60]}")
+            except Exception as e:
+                _log(f"Continue URL error: {str(e)[:50]}")
+
+        # Visit chatgpt.com to pick up session cookies
         time.sleep(1)
-        # Re-visit chatgpt.com to trigger callback
         session.get(f"{BASE}/", headers={"Accept": "text/html", "Upgrade-Insecure-Requests": "1"}, allow_redirects=True, timeout=30)
         time.sleep(1)
         r = session.get(f"{BASE}/api/auth/session", headers={"Accept": "application/json"}, timeout=15)
@@ -292,7 +305,21 @@ def main():
         access_token = session_data.get("accessToken")
 
         if not access_token:
-            raise Exception("Failed to get accessToken from session")
+            # Fallback: use reference project's full OAuth method (handles about_you + consent + PKCE)
+            _log("Session token failed, trying full OAuth login via reference project...")
+            try:
+                from chatgpt_register.chatgpt_register import ChatGPTRegister
+                reg = ChatGPTRegister(proxy=None)
+                tokens = reg.perform_codex_oauth_login_http(email=email, password=password, email_addr=email)
+                if tokens and tokens.get("access_token"):
+                    access_token = tokens["access_token"]
+                    session_data = {"accessToken": access_token}
+                    _log(f"OAuth login OK: {access_token[:20]}...")
+            except Exception as e:
+                _log(f"OAuth login failed: {str(e)[:60]}")
+
+        if not access_token:
+            raise Exception("Failed to get accessToken")
         _log(f"accessToken: {access_token[:20]}...")
 
         # Step 8: Generate checkout link
