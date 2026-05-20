@@ -107,10 +107,14 @@ async function getPaymentLink(gw, accessToken) {
   await new Promise(r => setTimeout(r, 1000));
   await interact({ type: 5, nonce: nn(), guild_id: GUILD_ID, channel_id: CHANNEL_ID, application_id: modal.application.id, session_id: gw.sessionId, data: { id: modal.id, custom_id: modal.custom_id, components: comps } });
   const result = await resultP;
-  const raw = JSON.stringify(result);
-  const linkMatch = raw.match(/https:\/\/pay\.openai\.com[^\s"')]+/);
-  const titleMatch = raw.match(/✅[^"'\n]+/);
-  return { link: linkMatch?.[0] || '', title: titleMatch?.[0] || '', raw: raw.slice(0, 300) };
+  // Extract link same way as engine.js
+  const all = (result.content || '') + ' ' + JSON.stringify(result.embeds || []);
+  const linkMatch = all.match(/https:\/\/pay\.openai\.com[^\s"\\|)]+/);
+  return {
+    link: linkMatch ? linkMatch[0] : '',
+    title: result.embeds?.[0]?.title || '',
+    raw: result.embeds?.[0]?.description || result.content || '',
+  };
 }
 
 // ========== Chrome helpers ==========
@@ -357,10 +361,22 @@ class ProtocolEngine extends EventEmitter {
           const ctx = this._browser.contexts()[0];
           const page = ctx.pages()[0] || await ctx.newPage();
           await page.goto(link, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
+          // Wait same as browser mode: PayPal element visible + delay
+          try { await page.locator('text=PayPal').first().waitFor({ state: 'visible', timeout: 15000 }); } catch {}
           await randomDelay(2000, 3000);
 
+          console.log(`[${progress}] Auto-filling payment...`);
           let paymentOk = true;
-          try { await autoPayment(page); } catch (e) { console.log(`[${progress}] Payment error: ${e.message?.slice(0, 60)}`); paymentOk = false; }
+          try {
+            // Read phone config for autoPayment (same as browser mode)
+            const cfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf-8'));
+            const slot = cfg.phoneSlots?.[0] || { phone: cfg.phone, smsApiUrl: cfg.smsApiUrl };
+            await autoPayment(page, { phone: slot.phone, smsApiUrl: slot.smsApiUrl });
+          } catch (e) { console.log(`[${progress}] Payment error: ${e.message?.slice(0, 60)}`); paymentOk = false; }
+
+          // Wait for payment to process (same as engine.js: 10s)
+          console.log(`[${progress}] Payment flow completed. Waiting 10s...`);
+          await randomDelay(10000, 12000);
 
           // Generate CPA JSON (no refresh_token)
           saveCPAJson(account.email, result.accessToken, result.session);
