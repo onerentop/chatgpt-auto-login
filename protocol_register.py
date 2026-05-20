@@ -129,94 +129,207 @@ def _do_pkce_flow(session, email, password, ms_client_id, ms_refresh_token):
     state = secrets.token_hex(16)
     pkce_client_id = "app_EMoamEEZ73f0CkXaXp7hrann"
     redirect_uri = "http://localhost:1455/auth/callback"
+    AUTH = "https://auth.openai.com"
+    device_id = session.cookies.get("oai-did") or str(uuid.uuid4())
 
     auth_url = (
-        f"https://auth.openai.com/oauth/authorize?"
+        f"{AUTH}/oauth/authorize?"
         f"client_id={pkce_client_id}&code_challenge={code_challenge}&code_challenge_method=S256"
         f"&codex_cli_simplified_flow=true&id_token_add_organizations=true"
         f"&redirect_uri={quote(redirect_uri, safe='')}&response_type=code"
         f"&scope=openid+email+profile+offline_access&state={state}"
     )
 
-    _log(f"PKCE: Navigating to authorize...")
-    try:
-        r = session.get(auth_url, headers={"Accept": "text/html"}, allow_redirects=False, timeout=15)
-    except Exception as e:
-        _log(f"PKCE: Auth request failed: {str(e)[:60]}")
-        return {"error": str(e)[:200]}
+    # Step 1: Navigate to authorize (follow redirects, stop at localhost)
+    # Get IMAP baseline BEFORE any PKCE auth requests (so we don't miss OTP emails)
+    pkce_imap_baseline = 0
+    if ms_client_id and ms_refresh_token:
+        try:
+            pkce_imap_baseline = _get_imap_baseline(email, ms_client_id, ms_refresh_token)
+            _log(f"PKCE: Pre-auth IMAP baseline: {pkce_imap_baseline}")
+        except:
+            pass
 
+    _log("PKCE: Navigating to authorize...")
     auth_code = None
-    max_redirects = 15
+    try:
+        r = session.get(auth_url, headers={"Accept": "text/html", "Upgrade-Insecure-Requests": "1"}, allow_redirects=True, timeout=30)
+    except Exception as e:
+        # Connection refused to localhost means we got the callback!
+        err_url = str(e)
+        if "localhost" in err_url or "1455" in err_url:
+            _log("PKCE: Redirect to localhost (connection refused, expected)")
+        else:
+            _log(f"PKCE: Auth request failed: {str(e)[:60]}")
+            return {"error": str(e)[:200]}
 
-    for redir in range(max_redirects):
-        location = r.headers.get("location", "")
-        status = r.status_code
-        _log(f"PKCE: [{status}] -> {location[:80] if location else '(no redirect)'}")
+    if not auth_code:
+        final_url = str(r.url) if r else ""
+        final_path = urlparse(final_url).path
+        _log(f"PKCE: Landed on {final_path}")
 
-        if not location:
-            # Not a redirect — check if it's a page we need to interact with
-            page_url = str(r.url)
-            body = r.text
+        # Check if we got the code directly (auto-consent)
+        if "localhost:1455" in final_url and "code=" in final_url:
+            auth_code = parse_qs(urlparse(final_url).query).get("code", [None])[0]
 
-            if "localhost:1455" in page_url and "code=" in page_url:
-                parsed = parse_qs(urlparse(page_url).query)
-                auth_code = parsed.get("code", [None])[0]
-                _log(f"PKCE: Got auth code from URL")
-                break
+        # Choose account page — select our account
+        elif "/choose-an-account" in final_path:
+            _log("PKCE: Choose account page, selecting account...")
+            try:
+                from chatgpt_register.chatgpt_register import build_sentinel_token
+                sentinel = build_sentinel_token(session, device_id, flow="authorize_continue", user_agent=session.headers.get("User-Agent", ""), sec_ch_ua=session.headers.get("sec-ch-ua", "")) or ""
+            except:
+                sentinel = ""
+            r = session.post(f"{AUTH}/api/accounts/authorize/continue",
+                json={"username": {"kind": "email", "value": email}},
+                headers={"Accept": "application/json", "Content-Type": "application/json",
+                    "Origin": AUTH, "Referer": final_url, "oai-device-id": device_id,
+                    "openai-sentinel-token": sentinel}, allow_redirects=True, timeout=30)
+            # Check if we got redirected to localhost callback
+            redir_url = str(r.url)
+            if "localhost:1455" in redir_url and "code=" in redir_url:
+                auth_code = parse_qs(urlparse(redir_url).query).get("code", [None])[0]
+            else:
+                # Check response for next step
+                try:
+                    resp_data = r.json()
+                    page_type = (resp_data.get("page") or {}).get("type", "")
+                    continue_url = resp_data.get("continue_url", "")
+                    _log(f"PKCE: Choose-account response: page={page_type} continue={continue_url[:60]}")
 
-            if "/log-in" in page_url or "log-in" in body[:500]:
-                _log("PKCE: Need to log in again")
-                # Submit email
-                r = session.post("https://auth.openai.com/api/accounts/authorize/continue",
-                    json={"username": {"kind": "email", "value": email}},
-                    headers={"Content-Type": "application/json", "Accept": "application/json"},
-                    allow_redirects=False, timeout=15)
-                continue
+                    # May need OTP verification
+                    if "email_otp" in page_type or "email-verification" in continue_url:
+                        _log("PKCE: OTP verification needed after account selection...")
+                        try:
+                            session.get(f"{AUTH}/api/accounts/email-otp/send",
+                                headers={"Accept": "text/html", "Referer": f"{AUTH}/email-verification",
+                                    "oai-device-id": device_id, "Upgrade-Insecure-Requests": "1"}, timeout=10, allow_redirects=True)
+                            _log("PKCE: OTP send triggered")
+                        except:
+                            pass
+                        time.sleep(8)
+                        otp = _fetch_otp_for_pkce(ms_client_id, ms_refresh_token, email, pkce_imap_baseline)
+                        if not otp:
+                            _log("PKCE: OTP not received")
+                        else:
+                            try:
+                                sentinel2 = build_sentinel_token(session, device_id, flow="email_otp_validate", user_agent=session.headers.get("User-Agent", ""), sec_ch_ua=session.headers.get("sec-ch-ua", "")) or ""
+                            except:
+                                sentinel2 = ""
+                            r = session.post(f"{AUTH}/api/accounts/email-otp/validate",
+                                json={"code": otp},
+                                headers={"Accept": "application/json", "Content-Type": "application/json",
+                                    "Origin": AUTH, "Referer": f"{AUTH}/email-verification",
+                                    "oai-device-id": device_id, "openai-sentinel-token": sentinel2}, timeout=30)
+                            otp_resp = r.json() if r.status_code == 200 else {}
+                            otp_continue = otp_resp.get("continue_url", "")
+                            _log(f"PKCE: OTP validate response: {r.status_code} continue={otp_continue[:60]}")
+                            if otp_continue:
+                                try:
+                                    r = session.get(otp_continue, headers={"Accept": "text/html", "Upgrade-Insecure-Requests": "1"}, allow_redirects=True, timeout=30)
+                                    redir_url = str(r.url)
+                                    if "localhost:1455" in redir_url and "code=" in redir_url:
+                                        auth_code = parse_qs(urlparse(redir_url).query).get("code", [None])[0]
+                                except Exception as e:
+                                    code_match = re.search(r'code=([^&\s]+)', str(e))
+                                    if code_match:
+                                        auth_code = code_match.group(1)
+                                        _log("PKCE: Got code from connection error")
 
-            if "email-verification" in page_url or "email-otp" in body[:500]:
-                _log("PKCE: Need OTP verification")
-                otp = _fetch_otp_for_pkce(ms_client_id, ms_refresh_token, email)
+                    elif continue_url:
+                        _log(f"PKCE: Following continue URL: {continue_url[:60]}")
+                        try:
+                            r = session.get(continue_url, headers={"Accept": "text/html", "Upgrade-Insecure-Requests": "1"}, allow_redirects=True, timeout=30)
+                            redir_url = str(r.url)
+                            if "localhost:1455" in redir_url and "code=" in redir_url:
+                                auth_code = parse_qs(urlparse(redir_url).query).get("code", [None])[0]
+                        except Exception as e:
+                            code_match = re.search(r'code=([^&\s]+)', str(e))
+                            if code_match:
+                                auth_code = code_match.group(1)
+                                _log("PKCE: Got code from connection error")
+                except:
+                    _log(f"PKCE: Choose-account response: {r.status_code} {str(r.url)[:60]}")
+
+        # Need to log in
+        elif "/log-in" in final_path:
+            _log("PKCE: Need to log in, submitting email...")
+            try:
+                from chatgpt_register.chatgpt_register import build_sentinel_token
+                sentinel = build_sentinel_token(session, device_id, flow="authorize_continue", user_agent=session.headers.get("User-Agent", ""), sec_ch_ua=session.headers.get("sec-ch-ua", "")) or ""
+            except:
+                sentinel = ""
+            r = session.post(f"{AUTH}/api/accounts/authorize/continue",
+                json={"username": {"kind": "email", "value": email}},
+                headers={"Accept": "application/json", "Content-Type": "application/json",
+                    "Origin": AUTH, "Referer": final_url, "oai-device-id": device_id,
+                    "openai-sentinel-token": sentinel}, timeout=30)
+            page_data = r.json() if r.status_code == 200 else {}
+            page_type = (page_data.get("page") or {}).get("type", "")
+            _log(f"PKCE: Email response: page={page_type}")
+
+            # OTP verification needed
+            if "email_otp" in page_type or "email-verification" in str(page_data.get("continue_url", "")):
+                _log("PKCE: OTP verification needed, triggering send...")
+                # Explicitly trigger OTP send (authorize/continue may not always trigger it)
+                try:
+                    session.get(f"{AUTH}/api/accounts/email-otp/send",
+                        headers={"Accept": "text/html", "Referer": f"{AUTH}/email-verification",
+                            "oai-device-id": device_id, "Upgrade-Insecure-Requests": "1"}, timeout=10, allow_redirects=True)
+                    _log("PKCE: OTP send triggered")
+                except:
+                    pass
+                time.sleep(8)
+                otp = _fetch_otp_for_pkce(ms_client_id, ms_refresh_token, email, pkce_imap_baseline)
                 if not otp:
                     return {"error": "OTP not received for PKCE"}
-                r = session.post("https://auth.openai.com/api/accounts/email-otp/validate",
+                try:
+                    sentinel = build_sentinel_token(session, device_id, flow="email_otp_validate", user_agent=session.headers.get("User-Agent", ""), sec_ch_ua=session.headers.get("sec-ch-ua", "")) or ""
+                except:
+                    sentinel = ""
+                r = session.post(f"{AUTH}/api/accounts/email-otp/validate",
                     json={"code": otp},
-                    headers={"Content-Type": "application/json", "Accept": "application/json"},
-                    allow_redirects=False, timeout=15)
-                continue
+                    headers={"Accept": "application/json", "Content-Type": "application/json",
+                        "Origin": AUTH, "Referer": f"{AUTH}/email-verification",
+                        "oai-device-id": device_id, "openai-sentinel-token": sentinel}, timeout=30)
+                otp_data = r.json() if r.status_code == 200 else {}
+                otp_page = (otp_data.get("page") or {}).get("type", "")
+                continue_url = otp_data.get("continue_url", "")
+                _log(f"PKCE: OTP response: page={otp_page} continue={continue_url[:60]}")
 
-            if "consent" in page_url or "authorize" in body[:1000]:
-                _log("PKCE: Consent page, accepting...")
-                # Try to find and follow the consent form action
-                r = session.post("https://auth.openai.com/api/accounts/authorize/consent",
-                    json={},
-                    headers={"Content-Type": "application/json", "Accept": "application/json"},
-                    allow_redirects=False, timeout=15)
-                continue
+                if "add_phone" in otp_page or "add-phone" in str(continue_url):
+                    return {"needsPhone": True}
 
-            if "add-phone" in page_url or "phone-required" in page_url:
-                _log("PKCE: Phone verification required")
-                return {"needsPhone": True}
+                # Follow continue URL to get the auth code
+                if continue_url:
+                    try:
+                        r = session.get(continue_url, headers={"Accept": "text/html", "Upgrade-Insecure-Requests": "1"}, allow_redirects=True, timeout=30)
+                        final_redir = str(r.url)
+                        if "localhost:1455" in final_redir and "code=" in final_redir:
+                            auth_code = parse_qs(urlparse(final_redir).query).get("code", [None])[0]
+                    except Exception as e:
+                        err_str = str(e)
+                        if "localhost" in err_str or "1455" in err_str:
+                            # Extract code from the error/redirect URL
+                            import traceback
+                            tb = traceback.format_exc()
+                            code_match = re.search(r'code=([^&\s]+)', tb + err_str)
+                            if code_match:
+                                auth_code = code_match.group(1)
+                                _log(f"PKCE: Got code from connection error")
 
-            _log(f"PKCE: Unknown page: {page_url[:60]}")
-            break
+        elif "add-phone" in final_path or "phone-required" in final_path:
+            return {"needsPhone": True}
 
-        # Follow redirect
-        if "localhost:1455" in location and "code=" in location:
-            parsed = parse_qs(urlparse(location).query)
-            auth_code = parsed.get("code", [None])[0]
-            _log(f"PKCE: Got auth code from redirect")
-            break
-
-        try:
-            r = session.get(location, headers={"Accept": "text/html"}, allow_redirects=False, timeout=15)
-        except Exception as e:
-            if "localhost" in location and "code=" in location:
-                parsed = parse_qs(urlparse(location).query)
-                auth_code = parsed.get("code", [None])[0]
-                _log(f"PKCE: Got auth code (connection refused to localhost, expected)")
-                break
-            _log(f"PKCE: Redirect error: {str(e)[:50]}")
-            break
+    if not auth_code:
+        # Last resort: check response history for localhost redirect
+        if hasattr(r, 'history'):
+            for hr in (r.history if r.history else []):
+                loc = hr.headers.get("location", "")
+                if "localhost:1455" in loc and "code=" in loc:
+                    auth_code = parse_qs(urlparse(loc).query).get("code", [None])[0]
+                    _log("PKCE: Found code in redirect history")
+                    break
 
     if not auth_code:
         _log("PKCE: Failed to get auth code")
@@ -251,77 +364,83 @@ def _do_pkce_flow(session, email, password, ms_client_id, ms_refresh_token):
         return {"error": str(e)[:200]}
 
 
-def _fetch_otp_for_pkce(ms_client_id, ms_refresh_token, email):
-    """Fetch OTP via IMAP for PKCE re-authentication."""
+def _fetch_otp_for_pkce(ms_client_id, ms_refresh_token, email, pre_baseline=0):
+    """Fetch OTP via IMAP for PKCE re-authentication. Same approach as _fetch_imap_otp."""
     if not ms_client_id or not ms_refresh_token:
         _log("PKCE OTP: No Microsoft credentials")
         return None
-    import imaplib
     try:
-        # Get IMAP access token
-        from urllib.request import Request, urlopen
-        token_body = urlencode({
-            "client_id": ms_client_id, "grant_type": "refresh_token",
-            "refresh_token": ms_refresh_token,
-            "scope": "https://outlook.office.com/IMAP.AccessAsUser.All"
-        }).encode()
-        req = Request("https://login.microsoftonline.com/consumers/oauth2/v2.0/token", data=token_body, method="POST")
-        with urlopen(req, timeout=15) as resp:
-            token_data = json.loads(resp.read())
-        if not token_data.get("access_token"):
-            _log(f"PKCE OTP: IMAP token failed: {token_data.get('error', 'unknown')}")
+        # Get IMAP token (use curl_cffi if available, fallback to urllib)
+        try:
+            from curl_cffi import requests as curl_requests
+            r = curl_requests.post("https://login.microsoftonline.com/consumers/oauth2/v2.0/token",
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+                data=urlencode({"client_id": ms_client_id, "grant_type": "refresh_token",
+                    "refresh_token": ms_refresh_token, "scope": "https://outlook.office.com/IMAP.AccessAsUser.All"}),
+                timeout=15)
+            imap_token = r.json().get("access_token")
+        except ImportError:
+            from urllib.request import Request, urlopen
+            body = urlencode({"client_id": ms_client_id, "grant_type": "refresh_token",
+                "refresh_token": ms_refresh_token, "scope": "https://outlook.office.com/IMAP.AccessAsUser.All"}).encode()
+            with urlopen(Request("https://login.microsoftonline.com/consumers/oauth2/v2.0/token", data=body, method="POST"), timeout=15) as resp:
+                imap_token = json.loads(resp.read()).get("access_token")
+        if not imap_token:
+            _log("PKCE OTP: IMAP token failed")
             return None
 
-        access_token = token_data["access_token"]
-        auth_string = f"user={email}\x01auth=Bearer {access_token}\x01\x01"
+        auth_str = f"user={email}\x01auth=Bearer {imap_token}\x01\x01"
 
-        # Get baseline
-        imap = imaplib.IMAP4_SSL("outlook.office365.com")
-        imap.authenticate("XOAUTH2", lambda x: auth_string.encode())
-        imap.select("INBOX")
-        _, data = imap.search(None, "ALL")
-        all_uids = data[0].split()
-        baseline = int(all_uids[-1]) if all_uids else 0
-        imap.logout()
-        _log(f"PKCE OTP: Baseline UID: {baseline}")
+        # Use pre-auth baseline if provided (captured before OTP was triggered)
+        if pre_baseline > 0:
+            baseline = pre_baseline
+            _log(f"PKCE OTP: Using pre-auth baseline UID: {baseline}")
+        else:
+            imap = imaplib.IMAP4_SSL("outlook.office365.com", 993)
+            imap.authenticate("XOAUTH2", lambda x: auth_str.encode())
+            imap.select("INBOX")
+            _, msgs = imap.search(None, "ALL")
+            uids = msgs[0].split()
+            baseline = int(uids[-1]) if uids else 0
+            imap.logout()
+            _log(f"PKCE OTP: Baseline UID: {baseline}")
 
-        # Trigger resend by waiting (code was already sent when we navigated to email-verification)
-        time.sleep(3)
+        time.sleep(5)
 
-        # Poll for new OTP
+        # Poll — same pattern as _fetch_imap_otp
         for attempt in range(20):
             try:
-                imap = imaplib.IMAP4_SSL("outlook.office365.com")
-                imap.authenticate("XOAUTH2", lambda x: auth_string.encode())
+                imap = imaplib.IMAP4_SSL("outlook.office365.com", 993)
+                imap.authenticate("XOAUTH2", lambda x: auth_str.encode())
                 imap.select("INBOX")
-                _, data = imap.search(None, f"(UNSEEN)")
-                new_uids = [uid for uid in data[0].split() if int(uid) > baseline]
-                for uid in new_uids:
-                    _, msg_data = imap.fetch(uid, "(RFC822)")
-                    msg = email_lib.message_from_bytes(msg_data[0][1])
+                _, msgs = imap.search(None, f"UID {baseline + 1}:*")
+                new_uids = [u for u in msgs[0].split() if int(u) > baseline]
+                if attempt == 0:
+                    _log(f"PKCE OTP: Found {len(new_uids)} new emails")
+                for uid in reversed(new_uids):
+                    _, data = imap.fetch(uid, "(BODY[])")
+                    msg = email_lib.message_from_bytes(data[0][1])
                     subject = str(msg.get("Subject", ""))
                     from_addr = str(msg.get("From", ""))
-                    if "openai" in from_addr.lower() or "openai" in subject.lower() or "代码" in subject or "code" in subject.lower():
-                        match = re.search(r"\b(\d{6})\b", subject)
-                        if match:
-                            _log(f"PKCE OTP: Got code from subject: {match.group(1)}")
+                    if "openai" in from_addr.lower() or "chatgpt" in subject.lower() or "code" in subject.lower() or "代码" in subject:
+                        m = re.search(r"\b(\d{6})\b", subject)
+                        if m:
+                            _log(f"PKCE OTP: Got code: {m.group(1)} (subj)")
                             imap.logout()
-                            return match.group(1)
-                        # Check body
+                            return m.group(1)
                         body = ""
                         if msg.is_multipart():
                             for part in msg.walk():
                                 if part.get_content_type() == "text/html":
-                                    body = part.get_payload(decode=True).decode(errors="ignore")
+                                    body = part.get_payload(decode=True).decode("utf-8", errors="ignore")
                                     break
                         else:
-                            body = msg.get_payload(decode=True).decode(errors="ignore")
-                        body_clean = re.sub(r"<[^>]+>", " ", body)
-                        match = re.search(r"\b(\d{6})\b", body_clean)
-                        if match:
-                            _log(f"PKCE OTP: Got code from body: {match.group(1)}")
+                            body = msg.get_payload(decode=True).decode("utf-8", errors="ignore")
+                        m = re.search(r"\b(\d{6})\b", re.sub(r"<[^>]+>", " ", body))
+                        if m:
+                            _log(f"PKCE OTP: Got code: {m.group(1)} (body)")
                             imap.logout()
-                            return match.group(1)
+                            return m.group(1)
                 imap.logout()
             except Exception as e:
                 if attempt == 0:
