@@ -167,19 +167,14 @@ async function fetchTokensViaPKCE(browser, account, lastOtp) {
 
   const authUrl = `https://auth.openai.com/oauth/authorize?client_id=${clientId}&code_challenge=${codeChallenge}&code_challenge_method=S256&codex_cli_simplified_flow=true&id_token_add_organizations=true&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=openid+email+profile+offline_access&state=${state}`;
 
-  // Close ALL existing pages (PayPal pages may block navigation due to cross-origin/beforeunload)
-  console.log('  [PKCE] Closing old pages and creating fresh page...');
-  const allPages = context.pages();
-  for (const p of allPages) {
-    try { await p.evaluate(() => { window.onbeforeunload = null; }); } catch {}
-    await p.close().catch(() => {});
-  }
-  const freshPage = await context.newPage();
-
+  // Close old pages (PayPal blocks navigation), create fresh page in same window
+  console.log('  [PKCE] Closing old pages...');
+  for (const p of context.pages()) { await p.close().catch(() => {}); }
+  const page = await context.newPage();
   console.log('  [PKCE] Refreshing session cookies...');
-  await freshPage.goto('https://chatgpt.com/api/auth/session', { waitUntil: 'domcontentloaded', timeout: 15000 }).catch((e) => { console.log(`  [PKCE] Session nav error: ${e.message?.slice(0, 60)}`); });
+  await page.goto('https://chatgpt.com/api/auth/session', { waitUntil: 'domcontentloaded', timeout: 15000 }).catch((e) => { console.log(`  [PKCE] Session error: ${e.message?.slice(0, 50)}`); });
   await new Promise(r => setTimeout(r, 1000));
-  await freshPage.goto('https://chatgpt.com', { waitUntil: 'domcontentloaded', timeout: 15000 }).catch((e) => { console.log(`  [PKCE] ChatGPT nav error: ${e.message?.slice(0, 60)}`); });
+  await page.goto('https://chatgpt.com', { waitUntil: 'domcontentloaded', timeout: 15000 }).catch((e) => { console.log(`  [PKCE] ChatGPT error: ${e.message?.slice(0, 50)}`); });
   await new Promise(r => setTimeout(r, 1500));
 
   // Intercept localhost redirect to capture the authorization code
@@ -190,8 +185,6 @@ async function fetchTokensViaPKCE(browser, account, lastOtp) {
     route.abort();
   });
 
-  // Use the fresh page for PKCE auth flow
-  const page = freshPage;
   try {
     console.log('  [PKCE] Navigating to auth page...');
     await page.goto(authUrl, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
