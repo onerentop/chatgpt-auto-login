@@ -60,7 +60,23 @@ function findChrome() {
   return null;
 }
 
+let _screenSize = null;
+function getScreenQuarter() {
+  if (!_screenSize) {
+    try {
+      const { execSync } = require('child_process');
+      const out = execSync('powershell -command "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Screen]::PrimaryScreen.Bounds | Select Width,Height | ConvertTo-Json"', { encoding: 'utf-8', timeout: 5000 });
+      const { Width, Height } = JSON.parse(out);
+      _screenSize = { w: Math.floor(Width / 2), h: Math.floor(Height / 2) };
+    } catch {
+      _screenSize = { w: 960, h: 540 };
+    }
+  }
+  return _screenSize;
+}
+
 function launchChrome(port, tempDir) {
+  const q = getScreenQuarter();
   return spawn(findChrome(), [
     `--remote-debugging-port=${port}`,
     '--incognito',
@@ -69,7 +85,8 @@ function launchChrome(port, tempDir) {
     '--no-default-browser-check',
     '--disable-default-apps',
     '--disable-popup-blocking',
-    '--window-size=1920,1080',
+    `--window-size=${q.w},${q.h}`,
+    '--window-position=0,0',
     'about:blank',
   ], { stdio: 'ignore', detached: false });
 }
@@ -478,7 +495,12 @@ class PipelineEngine extends EventEmitter {
               console.log(`${p} CPA OAuth skipped. Running PKCE to get full tokens...`);
               this.emitStatus( { email: account.email, status: 'running', phase: 'pkce', progress });
               const pkceTokens = await fetchTokensViaPKCE(browser, account, loginResult.lastOtp).catch((e) => { console.log(`  [PKCE] Failed: ${e.message}`); return null; });
-              if (pkceTokens) {
+              if (pkceTokens?.needsPhone) {
+                console.log(`${p} PKCE requires phone verification, saving with session token only`);
+                saveCPAAuthFile(account.email, loginResult.accessToken, loginResult.session);
+                finalResult.status = 'NEEDS_PHONE';
+                this.emitStatus( { email: account.email, status: 'needs_phone', phase: 'done (needs phone)', progress });
+              } else if (pkceTokens) {
                 saveCPAAuthFile(account.email, pkceTokens.access_token, pkceTokens);
                 this.emitStatus( { email: account.email, status: 'already_plus', phase: 'done', progress });
               } else {
@@ -533,7 +555,11 @@ class PipelineEngine extends EventEmitter {
                 console.log(`${p} CPA OAuth skipped. Running PKCE to get full tokens...`);
                 this.emitStatus( { email: account.email, status: 'running', phase: 'pkce', progress });
                 const pkceTokens = await fetchTokensViaPKCE(browser, account, loginResult.lastOtp).catch((e) => { console.log(`  [PKCE] Failed: ${e.message}`); return null; });
-                if (pkceTokens) {
+                if (pkceTokens?.needsPhone) {
+                  console.log(`${p} PKCE requires phone verification`);
+                  saveCPAAuthFile(account.email, loginResult.accessToken, loginResult.session);
+                  finalResult.status = 'NEEDS_PHONE';
+                } else if (pkceTokens) {
                   saveCPAAuthFile(account.email, pkceTokens.access_token, pkceTokens);
                 } else {
                   console.log(`${p} PKCE failed, saving with session token only`);
