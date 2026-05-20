@@ -562,7 +562,9 @@ class PipelineEngine extends EventEmitter {
               console.log(`${p} Phase 3: Auto-filling payment...`);
               let paymentOk = false;
               try {
-                const payResult = await autoPayment(page) || {};
+                const freshCfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf-8'));
+                const phoneSlot = freshCfg.phoneSlots?.[0] || { phone: freshCfg.phone, smsApiUrl: freshCfg.smsApiUrl };
+                const payResult = await autoPayment(page, { phone: phoneSlot.phone, smsApiUrl: phoneSlot.smsApiUrl }) || {};
                 paymentOk = !!payResult.success;
               } catch (e) {
                 console.log(`${p} Auto-fill error: ${e.message}`);

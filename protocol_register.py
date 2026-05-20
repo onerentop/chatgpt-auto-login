@@ -62,7 +62,7 @@ def _fetch_imap_otp(email_addr, client_id, refresh_token, baseline_uid, timeout=
         if time.time() - start > timeout:
             break
         try:
-            imap = imaplib.IMAP4_SSL("outlook.office365.com", 993)
+            imap = imaplib.IMAP4_SSL("outlook.office365.com", 993, timeout=15)
             auth_str = f"user={email_addr}\x01auth=Bearer {imap_token}\x01\x01"
             imap.authenticate("XOAUTH2", lambda x: auth_str.encode())
             imap.select("INBOX")
@@ -110,7 +110,7 @@ def _get_imap_baseline(email_addr, client_id, refresh_token):
         imap_token = r.json().get("access_token")
         if not imap_token:
             return 0
-        imap = imaplib.IMAP4_SSL("outlook.office365.com", 993)
+        imap = imaplib.IMAP4_SSL("outlook.office365.com", 993, timeout=15)
         auth_str = f"user={email_addr}\x01auth=Bearer {imap_token}\x01\x01"
         imap.authenticate("XOAUTH2", lambda x: auth_str.encode())
         imap.select("INBOX")
@@ -159,7 +159,7 @@ def _do_pkce_flow(session, email, password, ms_client_id, ms_refresh_token):
                     imap_tok = json.loads(resp.read()).get("access_token")
             if imap_tok:
                 auth_s = f"user={email}\x01auth=Bearer {imap_tok}\x01\x01"
-                im = imaplib.IMAP4_SSL("outlook.office365.com", 993)
+                im = imaplib.IMAP4_SSL("outlook.office365.com", 993, timeout=15)
                 im.authenticate("XOAUTH2", lambda x: auth_s.encode())
                 im.select("INBOX")
                 _, msgs = im.search(None, "ALL")
@@ -172,13 +172,17 @@ def _do_pkce_flow(session, email, password, ms_client_id, ms_refresh_token):
 
     _log("PKCE: Navigating to authorize...")
     auth_code = None
+    r = None
     try:
         r = session.get(auth_url, headers={"Accept": "text/html", "Upgrade-Insecure-Requests": "1"}, allow_redirects=True, timeout=30)
     except Exception as e:
-        # Connection refused to localhost means we got the callback!
-        err_url = str(e)
-        if "localhost" in err_url or "1455" in err_url:
+        err_str = str(e)
+        if "localhost" in err_str or "1455" in err_str:
             _log("PKCE: Redirect to localhost (connection refused, expected)")
+            code_match = re.search(r'code=([^&\s\'"]+)', err_str)
+            if code_match:
+                auth_code = code_match.group(1)
+                _log(f"PKCE: Got auth code from connection error")
         else:
             _log(f"PKCE: Auth request failed: {str(e)[:60]}")
             return {"error": str(e)[:200]}
@@ -410,7 +414,7 @@ def _fetch_otp_for_pkce(ms_client_id, ms_refresh_token, email, pre_baseline=0):
             baseline = pre_baseline
             _log(f"PKCE OTP: Using pre-auth baseline UID: {baseline}")
         else:
-            imap = imaplib.IMAP4_SSL("outlook.office365.com", 993)
+            imap = imaplib.IMAP4_SSL("outlook.office365.com", 993, timeout=15)
             imap.authenticate("XOAUTH2", lambda x: auth_str.encode())
             imap.select("INBOX")
             _, msgs = imap.search(None, "ALL")
@@ -424,7 +428,7 @@ def _fetch_otp_for_pkce(ms_client_id, ms_refresh_token, email, pre_baseline=0):
         # Poll — same pattern as _fetch_imap_otp
         for attempt in range(20):
             try:
-                imap = imaplib.IMAP4_SSL("outlook.office365.com", 993)
+                imap = imaplib.IMAP4_SSL("outlook.office365.com", 993, timeout=15)
                 imap.authenticate("XOAUTH2", lambda x: auth_str.encode())
                 imap.select("INBOX")
                 _, msgs = imap.search(None, f"UID {baseline + 1}:*")

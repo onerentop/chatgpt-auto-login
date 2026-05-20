@@ -166,9 +166,10 @@ async function waitForCDP(port) {
 }
 
 // ========== Python subprocess ==========
-function runProtocolRegister(account) {
+function runProtocolRegister(account, engine) {
   return new Promise((resolve, reject) => {
     const py = spawn('py', ['-3', PYTHON_SCRIPT], { cwd: ROOT, stdio: ['pipe', 'pipe', 'pipe'] });
+    if (engine) engine._pyProc = py;
     let settled = false;
     const timeout = setTimeout(() => { if (!settled) { settled = true; py.kill(); reject(new Error('Python timeout (120s)')); } }, 120000);
     const input = JSON.stringify({ email: account.email, password: account.password, client_id: account.client_id || '', refresh_token: account.refresh_token || '' });
@@ -197,9 +198,10 @@ function runProtocolRegister(account) {
   });
 }
 
-function runProtocolPKCE(account) {
+function runProtocolPKCE(account, engine) {
   return new Promise((resolve, reject) => {
     const py = spawn('py', ['-3', PYTHON_SCRIPT], { cwd: ROOT, stdio: ['pipe', 'pipe', 'pipe'] });
+    if (engine) engine._pyProc = py;
     let settled = false;
     const timeout = setTimeout(() => { if (!settled) { settled = true; py.kill(); reject(new Error('PKCE Python timeout (180s)')); } }, 180000);
     const input = JSON.stringify({ email: account.email, password: account.password, client_id: account.client_id || '', refresh_token: account.refresh_token || '', pkce: true });
@@ -253,11 +255,12 @@ class ProtocolEngine extends EventEmitter {
   stop() {
     if (this.status !== 'idle') {
       this.stopFlag = true;
+      if (this._pyProc) try { this._pyProc.kill(); } catch {}
       if (this._chromeProc) try { this._chromeProc.kill(); } catch {}
       if (this._browser) try { this._browser.close(); } catch {}
       if (this._gw) try { this._gw.cleanup(); } catch {}
       if (this._tempDir) try { fs.rmSync(this._tempDir, { recursive: true, force: true }); } catch {}
-      this._chromeProc = null; this._browser = null; this._gw = null; this._tempDir = null;
+      this._pyProc = null; this._chromeProc = null; this._browser = null; this._gw = null; this._tempDir = null;
       this.status = 'idle';
       this.emit('log', { email: '', phase: '', message: 'Protocol engine force stopped.', timestamp: new Date().toISOString() });
     }
@@ -315,7 +318,7 @@ class ProtocolEngine extends EventEmitter {
         console.log(`[${progress}] === ${account.email} (protocol) ===`);
         let result;
         try {
-          result = await runProtocolRegister(account);
+          result = await runProtocolRegister(account, this);
           console.log(`[${progress}] Protocol login OK: ${result.accessToken?.slice(0, 20)}...`);
         } catch (e) {
           console.log(`[${progress}] Protocol login failed: ${e.message?.slice(0, 80)}`);
@@ -332,7 +335,7 @@ class ProtocolEngine extends EventEmitter {
             console.log(`[${progress}] Running PKCE via protocol...`);
             this.emitStatus({ email: account.email, status: 'running', phase: 'pkce', progress });
             try {
-              const pkceResult = await runProtocolPKCE(account);
+              const pkceResult = await runProtocolPKCE(account, this);
               const pkce = pkceResult.pkce || {};
               if (pkce.refresh_token) {
                 console.log(`[${progress}] PKCE success, saving with refresh_token`);
@@ -364,6 +367,14 @@ class ProtocolEngine extends EventEmitter {
         this.emitStatus({ email: account.email, status: 'running', phase: 'discord', progress });
         console.log(`[${progress}] Discord: ${account.email}...`);
         let link;
+        // Reconnect Gateway if disconnected
+        if (this._gw?.ws?.readyState !== 1) {
+          console.log(`[${progress}] Gateway disconnected, reconnecting...`);
+          try { this._gw?.cleanup(); } catch {}
+          this._gw = await connectGateway();
+          console.log(`[${progress}] Gateway reconnected`);
+        }
+
         let discordOk = false;
         for (let dRetry = 0; dRetry < 3; dRetry++) {
           try {
@@ -428,7 +439,7 @@ class ProtocolEngine extends EventEmitter {
               console.log(`[${progress}] Running PKCE via protocol...`);
               this.emitStatus({ email: account.email, status: 'running', phase: 'pkce', progress });
               try {
-                const pkceResult = await runProtocolPKCE(account);
+                const pkceResult = await runProtocolPKCE(account, this);
                 const pkce = pkceResult.pkce || {};
                 if (pkce.refresh_token) {
                   console.log(`[${progress}] PKCE success, saving with refresh_token`);

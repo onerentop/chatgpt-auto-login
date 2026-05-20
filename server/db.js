@@ -43,11 +43,14 @@ async function initDB() {
     );
   `);
 
-  // Migrate old status values
-  db.run(`UPDATE account_status SET status = 'plus_no_rt' WHERE status IN ('needs_phone', 'oauth_failed', 'success')`);
-  db.run(`UPDATE account_status SET status = 'plus_no_rt' WHERE status = 'already_plus'`);
-  db.run(`UPDATE account_status SET status = 'error' WHERE status = 'failed'`);
-  db.run(`UPDATE account_status SET status = 'idle' WHERE status = 'pending'`);
+  // One-time migration of old status values
+  const hasOld = db.exec("SELECT COUNT(*) FROM account_status WHERE status IN ('needs_phone','oauth_failed','success','already_plus','failed','pending')");
+  if (hasOld[0]?.values?.[0]?.[0] > 0) {
+    db.run(`UPDATE account_status SET status = 'plus_no_rt' WHERE status IN ('needs_phone', 'oauth_failed', 'success')`);
+    db.run(`UPDATE account_status SET status = 'plus_no_rt' WHERE status = 'already_plus'`);
+    db.run(`UPDATE account_status SET status = 'error' WHERE status = 'failed'`);
+    db.run(`UPDATE account_status SET status = 'idle' WHERE status = 'pending'`);
+  }
 
   save();
   return db;

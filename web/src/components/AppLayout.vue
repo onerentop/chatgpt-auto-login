@@ -35,7 +35,7 @@
 
 <script setup>
 import { useRoute } from 'vue-router'
-import { Monitor, User, Setting, VideoPlay, Document } from '@element-plus/icons-vue'
+import { Monitor, User, Setting, VideoPlay } from '@element-plus/icons-vue'
 
 const route = useRoute()
 </script>
