@@ -8,8 +8,24 @@
         <el-button type="warning" :disabled="running || failedEmails.length === 0" @click="retryFailed">重试失败 ({{ failedEmails.length }})</el-button>
         <el-button type="danger" :disabled="!running" @click="handleStop">停止</el-button>
         <el-divider direction="vertical" />
-        <el-button :disabled="selectedEmails.length === 0" @click="downloadSelected">下载选中 Auth</el-button>
-        <el-button @click="downloadAll">下载全部 Auth (ZIP)</el-button>
+        <el-dropdown :disabled="selectedEmails.length === 0" @command="downloadSelectedAs" split-button size="default">
+          下载选中 ({{ selectedEmails.length }})
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="cpa">CPA 格式</el-dropdown-item>
+              <el-dropdown-item command="sub2api">Sub2API 格式</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
+        <el-dropdown @command="downloadAllAs" split-button size="default" style="margin-left:8px">
+          下载全部 (ZIP)
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="cpa">CPA 格式</el-dropdown-item>
+              <el-dropdown-item command="sub2api">Sub2API 格式</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
         <el-divider direction="vertical" />
         <el-tag :type="running ? 'warning' : 'info'">{{ running ? '运行中' : '空闲' }}</el-tag>
         <el-tag v-if="socketState.connected" type="success" style="margin-left: 8px">WS</el-tag>
@@ -56,9 +72,12 @@
           <span style="color:#909399">{{ row._phase || '-' }}</span>
         </template>
       </el-table-column>
-      <el-table-column label="Auth" width="70">
+      <el-table-column label="Auth" width="120">
         <template #default="{ row }">
-          <el-button v-if="row._hasAuth" size="small" text type="success" @click="downloadAuth(row.email)">下载</el-button>
+          <template v-if="row._hasAuth">
+            <el-button size="small" text type="success" @click="downloadAuth(row.email, 'cpa')">CPA</el-button>
+            <el-button size="small" text type="primary" @click="downloadAuth(row.email, 'sub2api')">Sub</el-button>
+          </template>
           <span v-else style="color:#c0c4cc">-</span>
         </template>
       </el-table-column>
@@ -237,12 +256,12 @@ async function handleStop() {
 }
 
 function getToken() { return localStorage.getItem('token') || '' }
-function downloadAuth(email) { window.open(`/api/results/${encodeURIComponent(email)}/auth-file?token=${getToken()}`) }
-function downloadAll() { window.open(`/api/results/download-all?token=${getToken()}`) }
-function downloadSelected() {
+function downloadAuth(email, format = 'cpa') { window.open(`/api/results/${encodeURIComponent(email)}/auth-file?token=${getToken()}&format=${format}`) }
+function downloadAllAs(format) { window.open(`/api/results/download-all?token=${getToken()}&format=${format || 'cpa'}`) }
+function downloadSelectedAs(format) {
   for (const email of selectedEmails.value) {
     const row = accounts.value.find(a => a.email === email)
-    if (row?._hasAuth) downloadAuth(email)
+    if (row?._hasAuth) downloadAuth(email, format || 'cpa')
   }
 }
 </script>

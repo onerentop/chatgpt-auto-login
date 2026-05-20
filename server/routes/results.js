@@ -7,8 +7,9 @@ const { statusDB, logsDB } = require('../db');
 const router = express.Router();
 const CPA_AUTH_DIR = path.join(__dirname, '..', '..', 'cpa-auth');
 
-function emailToAuthFilename(email) {
-  return `codex-${email.replace('@', '-at-').replace(/\./g, '-')}.json`;
+function emailToAuthFilename(email, format = 'cpa') {
+  const sanitized = email.replace('@', '-at-').replace(/\./g, '-');
+  return format === 'sub2api' ? `sub2api-${sanitized}.json` : `codex-${sanitized}.json`;
 }
 
 // GET / — list all account statuses
@@ -21,7 +22,7 @@ router.get('/', (req, res) => {
       phase: s.phase,
       progress: s.progress,
       reason: s.reason,
-      hasAuthFile: s.has_auth_file === 1 || fs.existsSync(path.join(CPA_AUTH_DIR, emailToAuthFilename(s.email))),
+      hasAuthFile: s.has_auth_file === 1 || fs.existsSync(path.join(CPA_AUTH_DIR, emailToAuthFilename(s.email, 'cpa'))) || fs.existsSync(path.join(CPA_AUTH_DIR, emailToAuthFilename(s.email, 'sub2api'))),
       updatedAt: s.updated_at,
     }));
     res.json(results);
@@ -40,22 +41,22 @@ router.get('/statuses', (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// GET /download-all — ZIP all auth files (MUST be before /:email routes)
+// GET /download-all — ZIP all auth files (?format=cpa|sub2api, MUST be before /:email routes)
 router.get('/download-all', (req, res) => {
   if (!fs.existsSync(CPA_AUTH_DIR)) return res.status(404).json({ error: 'No auth files' });
-  // Only include auth files for accounts in the current account list
+  const format = req.query.format === 'sub2api' ? 'sub2api' : 'cpa';
   const { accountsDB } = require('../db');
   const accountEmails = new Set(accountsDB.list().map(a => a.email));
   const allFiles = fs.readdirSync(CPA_AUTH_DIR).filter(f => f.endsWith('.json'));
   const files = allFiles.filter(f => {
     for (const email of accountEmails) {
-      if (f === emailToAuthFilename(email)) return true;
+      if (f === emailToAuthFilename(email, format)) return true;
     }
     return false;
   });
-  if (files.length === 0) return res.status(404).json({ error: 'No auth files for current accounts' });
+  if (files.length === 0) return res.status(404).json({ error: `No ${format} auth files for current accounts` });
   res.setHeader('Content-Type', 'application/zip');
-  res.setHeader('Content-Disposition', 'attachment; filename=cpa-auth-files.zip');
+  res.setHeader('Content-Disposition', `attachment; filename=${format}-auth-files.zip`);
   const archive = archiver('zip', { zlib: { level: 9 } });
   archive.pipe(res);
   for (const f of files) archive.file(path.join(CPA_AUTH_DIR, f), { name: f });
@@ -70,9 +71,10 @@ router.get('/:email/logs', (req, res) => {
   } catch { res.json([]); }
 });
 
-// GET /:email/auth-file — download CPA auth JSON
+// GET /:email/auth-file — download CPA or Sub2API auth JSON (?format=cpa|sub2api)
 router.get('/:email/auth-file', (req, res) => {
-  const filePath = path.resolve(CPA_AUTH_DIR, emailToAuthFilename(decodeURIComponent(req.params.email)));
+  const format = req.query.format === 'sub2api' ? 'sub2api' : 'cpa';
+  const filePath = path.resolve(CPA_AUTH_DIR, emailToAuthFilename(decodeURIComponent(req.params.email), format));
   // Prevent path traversal — resolved path must be inside CPA_AUTH_DIR
   if (!filePath.startsWith(path.resolve(CPA_AUTH_DIR) + path.sep)) {
     return res.status(403).json({ error: 'Forbidden' });
