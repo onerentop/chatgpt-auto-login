@@ -263,7 +263,7 @@ async function fetchTokensViaPKCE(browser, account, lastOtp) {
             // Check if OTP was accepted — if still on email-verification, code was wrong
             await new Promise(r => setTimeout(r, 3000));
             const stillOnVerify = page.url().includes('email-verification');
-            if (stillOnVerify && lastOtp && account.client_id && account.refresh_token) {
+            if (stillOnVerify && account.client_id && account.refresh_token) {
               console.log('  [PKCE] OTP rejected, resending and fetching fresh code...');
               // _fetchPkceOtp handles: get baseline → click resend → poll IMAP → return code
               const freshOtp = await _fetchPkceOtp(page, account);

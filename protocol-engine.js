@@ -309,7 +309,7 @@ class ProtocolEngine extends EventEmitter {
               this._tempDir = pkceDir;
               pBrowser = await waitForCDP(pkcePort);
               this._browser = pBrowser;
-              const pkceTokens = await fetchTokensViaPKCE(pBrowser, account, result.lastOtp).catch((e) => { console.log(`[${progress}] PKCE failed: ${e.message?.slice(0, 60)}`); return null; });
+              const pkceTokens = await fetchTokensViaPKCE(pBrowser, account, null).catch((e) => { console.log(`[${progress}] PKCE failed: ${e.message?.slice(0, 60)}`); return null; });
               if (pkceTokens && !pkceTokens.needsPhone && pkceTokens.refresh_token) {
                 console.log(`[${progress}] PKCE success, saving with refresh_token`);
                 saveCPAAuthFile(account.email, pkceTokens.access_token, pkceTokens);
@@ -401,7 +401,7 @@ class ProtocolEngine extends EventEmitter {
             if (runtimeCfg.enableOAuth) {
               console.log(`[${progress}] Running PKCE OAuth...`);
               this.emitStatus({ email: account.email, status: 'running', phase: 'pkce', progress });
-              const pkceTokens = await fetchTokensViaPKCE(browser, account, result.lastOtp).catch((e) => { console.log(`[${progress}] PKCE failed: ${e.message?.slice(0, 60)}`); return null; });
+              const pkceTokens = await fetchTokensViaPKCE(browser, account, null).catch((e) => { console.log(`[${progress}] PKCE failed: ${e.message?.slice(0, 60)}`); return null; });
               if (pkceTokens && !pkceTokens.needsPhone) {
                 console.log(`[${progress}] PKCE success, saving with refresh_token`);
                 saveCPAAuthFile(account.email, pkceTokens.access_token, pkceTokens);
