@@ -179,8 +179,7 @@ async function handleOpenAIPage(page) {
     return null;
   }).catch(() => null);
   console.log('    [Pay] PayPal clicked:', ppClicked || 'FAILED');
-  // Double click like userscript
-  if (ppClicked) { await new Promise(r => setTimeout(r, 500)); await page.evaluate(() => { var el = document.querySelector('[data-testid="paypal-accordion-item-button"]') || document.querySelector('#payment-method-accordion-item-title-paypal'); if (el) el.click(); }).catch(() => {}); }
+  // Wait for accordion to expand (no double click — it would collapse it)
 
   // Verify billing form appears
   await randomDelay(2000, 3000);
@@ -196,7 +195,6 @@ async function handleOpenAIPage(page) {
     await randomDelay(3000, 4000);
     ppClicked = await page.evaluate(() => { var el = document.querySelector('[data-testid="paypal-accordion-item-button"]') || document.querySelector('#payment-method-accordion-item-title-paypal'); if (el) { el.click(); return true; } return false; }).catch(() => false);
     console.log('    [Pay] PayPal retry:', ppClicked);
-    if (ppClicked) { await new Promise(r => setTimeout(r, 500)); await page.evaluate(() => { var el = document.querySelector('[data-testid="paypal-accordion-item-button"]') || document.querySelector('#payment-method-accordion-item-title-paypal'); if (el) el.click(); }).catch(() => {}); }
     await randomDelay(2000, 3000);
   }
 
@@ -460,7 +458,8 @@ async function autoPayment(page, phoneConfig) {
   let paypalHandled = false;
   for (let round = 0; round < 15; round++) {
     await randomDelay(2000, 3000);
-    const currentUrl = page.url();
+    let currentUrl;
+    try { currentUrl = page.url(); } catch (e) { console.log(`    [Pay] Page closed/crashed: ${e.message?.slice(0, 40)}`); break; }
 
     if (currentUrl.includes('paypal.com/pay')) {
       await handlePayPalLogin(page);
@@ -489,7 +488,8 @@ async function autoPayment(page, phoneConfig) {
   let paymentSuccess = false;
   for (let w = 0; w < 15; w++) {
     await new Promise(r => setTimeout(r, 2000));
-    const currentUrl = page.url();
+    let currentUrl;
+    try { currentUrl = page.url(); } catch { break; }
     if (currentUrl.includes('pay.openai.com') && currentUrl.includes('redirect_status=succeeded')) {
       console.log('    [Pay] Payment succeeded! (redirect_status=succeeded)');
       paymentSuccess = true;
