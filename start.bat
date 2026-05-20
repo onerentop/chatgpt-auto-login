@@ -1,64 +1,104 @@
 @echo off
 chcp 65001 >nul
-title ChatGPT Auto Login Pipeline
+title ChatGPT Auto Login - Web Dashboard
+cd /d "%~dp0"
 
 echo ==========================================
 echo   ChatGPT Auto Login ^& Plus Activation
+echo   Web Dashboard
 echo ==========================================
 echo.
-
-cd /d "%~dp0"
 
 :: Check Node.js
 where node >nul 2>&1
 if %errorlevel% neq 0 (
-    echo [ERROR] Node.js not found! Please install Node.js first.
+    echo [ERROR] Node.js not found! Please install from https://nodejs.org/
     pause
     exit /b 1
 )
+for /f "tokens=*" %%v in ('node -v') do echo [OK] Node.js %%v
 
-:: Check node_modules
+:: Check Chrome
+set CHROME_FOUND=0
+if exist "C:\Program Files\Google\Chrome\Application\chrome.exe" set CHROME_FOUND=1
+if exist "C:\Program Files (x86)\Google\Chrome\Application\chrome.exe" set CHROME_FOUND=1
+if exist "%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe" set CHROME_FOUND=1
+if %CHROME_FOUND%==0 (
+    echo [ERROR] Google Chrome not found!
+    pause
+    exit /b 1
+)
+echo [OK] Chrome found
+
+:: Install backend dependencies
 if not exist "node_modules" (
-    echo [INFO] Installing dependencies...
-    npm install
     echo.
+    echo [INFO] Installing backend dependencies...
+    call npm install
+    if %errorlevel% neq 0 (
+        echo [ERROR] npm install failed!
+        pause
+        exit /b 1
+    )
 )
 
-:: Check config.json
-if not exist "config.json" (
-    echo [ERROR] config.json not found!
-    echo [INFO] Copy config.example.json to config.json and fill in your values.
-    copy config.example.json config.json >nul 2>&1
-    echo [INFO] Template created. Please edit config.json first.
-    pause
-    exit /b 1
+:: Install and build frontend
+if not exist "web\dist\index.html" (
+    echo.
+    echo [INFO] Building frontend...
+    cd web
+    if not exist "node_modules" (
+        call npm install
+    )
+    call npm run build
+    cd ..
+    if not exist "web\dist\index.html" (
+        echo [ERROR] Frontend build failed!
+        pause
+        exit /b 1
+    )
 )
 
-:: Check accounts.csv
-if not exist "accounts.csv" (
-    echo [ERROR] accounts.csv not found!
-    echo [INFO] Copy accounts.example.csv to accounts.csv and add your accounts.
-    copy accounts.example.csv accounts.csv >nul 2>&1
-    echo [INFO] Template created. Please edit accounts.csv first.
-    pause
-    exit /b 1
-)
-
-:: Create output directories
-if not exist "screenshots" mkdir screenshots
+:: Create directories
 if not exist "sessions" mkdir sessions
+if not exist "cpa-auth" mkdir cpa-auth
 
-:: Parse arguments
-set START_ARG=
-if not "%~1"=="" set START_ARG=--start %~1
-
-echo [INFO] Starting pipeline...
-echo.
-
-node index.js %START_ARG%
+:: Check config
+if not exist "config.json" (
+    echo.
+    echo [INFO] Creating default config.json...
+    echo { > config.json
+    echo   "threads": 1, >> config.json
+    echo   "phoneSlots": [{"phone": "", "smsApiUrl": ""}], >> config.json
+    echo   "cardNumber": "", >> config.json
+    echo   "cardExpiry": "", >> config.json
+    echo   "cardCvv": "", >> config.json
+    echo   "enableCPA": false, >> config.json
+    echo   "cpaUrl": "", >> config.json
+    echo   "cpaKey": "", >> config.json
+    echo   "discordToken": "", >> config.json
+    echo   "discordChannelId": "", >> config.json
+    echo   "discordMessageId": "", >> config.json
+    echo   "discordGuildId": "", >> config.json
+    echo   "discordAppId": "", >> config.json
+    echo   "webPassword": "admin" >> config.json
+    echo } >> config.json
+    echo [INFO] Please configure via web dashboard after startup.
+)
 
 echo.
 echo ==========================================
-echo   Done! Press any key to exit.
+echo   Starting server...
+echo   Dashboard: http://localhost:3000
 echo ==========================================
-pause >nul
+echo.
+
+:: Open browser after 2 seconds
+start "" /b cmd /c "timeout /t 3 /nobreak >nul && start http://localhost:3000"
+
+:: Start server
+node server/index.js
+
+echo.
+echo [INFO] Server stopped.
+pause
