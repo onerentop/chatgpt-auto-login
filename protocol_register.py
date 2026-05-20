@@ -218,13 +218,7 @@ def _do_pkce_flow(session, email, password, ms_client_id, ms_refresh_token):
                     # May need OTP verification
                     if "email_otp" in page_type or "email-verification" in continue_url:
                         _log("PKCE: OTP verification needed after account selection...")
-                        try:
-                            session.get(f"{AUTH}/api/accounts/email-otp/send",
-                                headers={"Accept": "text/html", "Referer": f"{AUTH}/email-verification",
-                                    "oai-device-id": device_id, "Upgrade-Insecure-Requests": "1"}, timeout=10, allow_redirects=True)
-                            _log("PKCE: OTP send triggered")
-                        except:
-                            pass
+                        # Do NOT call email-otp/send — it resends old code and breaks session
                         time.sleep(8)
                         otp = _fetch_otp_for_pkce(ms_client_id, ms_refresh_token, email, pkce_imap_baseline)
                         if not otp:
