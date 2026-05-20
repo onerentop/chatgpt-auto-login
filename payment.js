@@ -368,11 +368,9 @@ async function handleSmsVerification(page, smsOverride) {
   const SMS_URL = smsOverride || CONFIG.smsApiUrl;
   if (!SMS_URL) return;
 
-  await randomDelay(2000, 3000);
-
-  // Check if SMS code dialog appeared ("Enter your code")
+  // Wait for SMS dialog to appear (PayPal may take 10-20s to show it)
   const codeDialog = page.locator('text=Enter your code').or(page.locator('text=输入验证码').or(page.locator('text=输入你的验证码')));
-  const dialogVisible = await codeDialog.isVisible({ timeout: 8000 }).catch(() => false);
+  const dialogVisible = await codeDialog.isVisible({ timeout: 20000 }).catch(() => false);
   if (!dialogVisible) {
     console.log('    [Pay] No SMS verification dialog detected');
     return;
