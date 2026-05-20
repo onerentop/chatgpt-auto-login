@@ -167,14 +167,20 @@ async function fetchTokensViaPKCE(browser, account, lastOtp) {
 
   const authUrl = `https://auth.openai.com/oauth/authorize?client_id=${clientId}&code_challenge=${codeChallenge}&code_challenge_method=S256&codex_cli_simplified_flow=true&id_token_add_organizations=true&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=openid+email+profile+offline_access&state=${state}`;
 
-  // Navigate to chatgpt.com/api/auth/session to refresh session cookies on both domains
-  const ctxPages = context.pages();
-  const mainPage = ctxPages.length > 0 ? ctxPages[0] : await context.newPage();
+  // Close ALL existing pages (PayPal pages may block navigation due to cross-origin/beforeunload)
+  console.log('  [PKCE] Closing old pages and creating fresh page...');
+  const allPages = context.pages();
+  for (const p of allPages) {
+    try { await p.evaluate(() => { window.onbeforeunload = null; }); } catch {}
+    await p.close().catch(() => {});
+  }
+  const freshPage = await context.newPage();
+
   console.log('  [PKCE] Refreshing session cookies...');
-  await mainPage.goto('https://chatgpt.com/api/auth/session', { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {});
+  await freshPage.goto('https://chatgpt.com/api/auth/session', { waitUntil: 'domcontentloaded', timeout: 15000 }).catch((e) => { console.log(`  [PKCE] Session nav error: ${e.message?.slice(0, 60)}`); });
   await new Promise(r => setTimeout(r, 1000));
-  await mainPage.goto('https://chatgpt.com', { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {});
-  await new Promise(r => setTimeout(r, 2000));
+  await freshPage.goto('https://chatgpt.com', { waitUntil: 'domcontentloaded', timeout: 15000 }).catch((e) => { console.log(`  [PKCE] ChatGPT nav error: ${e.message?.slice(0, 60)}`); });
+  await new Promise(r => setTimeout(r, 1500));
 
   // Intercept localhost redirect to capture the authorization code
   let authCode = null;
@@ -184,10 +190,10 @@ async function fetchTokensViaPKCE(browser, account, lastOtp) {
     route.abort();
   });
 
-  // Use current page (same tab, user already logged in)
-  const pages = context.pages();
-  const page = pages.length > 0 ? pages[0] : await context.newPage();
+  // Use the fresh page for PKCE auth flow
+  const page = freshPage;
   try {
+    console.log('  [PKCE] Navigating to auth page...');
     await page.goto(authUrl, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
 
     // State machine for auth.openai.com pages
