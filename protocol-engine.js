@@ -110,6 +110,12 @@ async function getPaymentLink(gw, accessToken) {
   // Extract link same way as engine.js
   const all = (result.content || '') + ' ' + JSON.stringify(result.embeds || []);
   const linkMatch = all.match(/https:\/\/pay\.openai\.com[^\s"\\|)]+/);
+  const title = result.embeds?.[0]?.title || '';
+  if (title) console.log(`[Discord] Title: ${title}`);
+  if (!linkMatch) {
+    console.log(`[Discord] No link found. Content: ${(result.content || '').slice(0, 150)}`);
+    console.log(`[Discord] Embeds: ${JSON.stringify(result.embeds || []).slice(0, 300)}`);
+  }
   return {
     link: linkMatch ? linkMatch[0] : '',
     title: result.embeds?.[0]?.title || '',
@@ -396,11 +402,15 @@ class ProtocolEngine extends EventEmitter {
           const discord = await getPaymentLink(this._gw, result.accessToken);
           const link = discord.link;
           if (link) console.log(`[${progress}] ${discord.title || 'Link obtained'}`);
-          console.log(`[${progress}] Link: ${link?.slice(0, 60) || 'none'}`);
+          console.log(`[${progress}] Link: ${link?.slice(0, 80) || 'none'}`);
+          if (!link && discord.raw) console.log(`[${progress}] Discord raw: ${discord.raw.slice(0, 150)}`);
 
           if (!link) {
-            console.log(`[${progress}] No payment link`);
-            this.emitStatus({ email: account.email, status: 'no_link', phase: 'done', progress });
+            const reason = discord.raw || 'No payment link';
+            console.log(`[${progress}] No link: ${reason.slice(0, 80)}`);
+            // Still generate CPA/Sub2API with free plan (accessToken is valid)
+            saveAuthFiles(account.email, result.accessToken, result.session);
+            this.emitStatus({ email: account.email, status: 'no_link', phase: 'done', progress, reason });
             summary.noLink++;
             continue;
           }

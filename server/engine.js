@@ -590,6 +590,8 @@ class PipelineEngine extends EventEmitter {
             } else {
               console.log(`${p} No link: ${discord.raw.slice(0, 150)}`);
               finalResult = { email: account.email, status: 'no_link', paymentLink: '', reason: discord.raw.slice(0, 200) };
+              // Still generate CPA auth file (accessToken is valid even without payment)
+              saveCPAAuthFile(account.email, loginResult.accessToken, loginResult.session);
             }
           }
         } catch (error) {
