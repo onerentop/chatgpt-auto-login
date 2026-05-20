@@ -286,10 +286,24 @@ def main():
                 name = f"{random.choice(names_first)} {random.choice(names_last)}"
                 bdate = f"{random.randint(1990, 2002)}-{random.randint(1,12):02d}-{random.randint(1,28):02d}"
                 _log(f"create_account: name={name}, bdate={bdate}")
-                # Try with sentinel token (flow=create_account, not oauth_create_account)
+
+                # Try 1: with browser-based Turnstile sentinel (headless, no visible window)
                 sentinel = ""
-                try: sentinel = build_sentinel_token(session, device_id, flow="create_account", user_agent=ua, sec_ch_ua=sec_ch_ua) or ""
-                except: pass
+                try:
+                    from chatgpt_register.sentinel_browser import get_sentinel_token_browser
+                    sentinel = get_sentinel_token_browser(device_id) or ""
+                    if sentinel:
+                        _log("Sentinel token (Turnstile) obtained")
+                except Exception as e:
+                    _log(f"Turnstile failed: {str(e)[:40]}")
+
+                # Try 2: protocol PoW fallback
+                if not sentinel:
+                    try: sentinel = build_sentinel_token(session, device_id, flow="create_account", user_agent=ua, sec_ch_ua=sec_ch_ua) or ""
+                    except: pass
+                    if sentinel:
+                        _log("Sentinel token (PoW) obtained")
+
                 headers_ca = {"Accept": "application/json", "Content-Type": "application/json",
                     "Origin": AUTH, "Referer": f"{AUTH}/about-you", "oai-device-id": device_id,
                     "ext-passkey-client-capabilities": "conditional-create,conditional-get"}
@@ -314,8 +328,8 @@ def main():
         access_token = None
         session_data = {}
 
-        # Follow continue_url from OTP (contains callback URL with code)
-        final_continue = otp_continue if need_otp else continue_url
+        # Follow continue_url — prefer updated continue_url (from create_account) over otp_continue
+        final_continue = continue_url or (otp_continue if need_otp else "")
         if final_continue and "chatgpt.com" in final_continue:
             _log(f"Following callback: {final_continue[:60]}...")
             try:
