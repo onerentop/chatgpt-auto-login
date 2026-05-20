@@ -5,7 +5,7 @@ cd /d "%~dp0"
 
 echo ==========================================
 echo   ChatGPT Auto Login ^& Plus Activation
-echo   Web Dashboard
+echo   Web Dashboard v2.4
 echo ==========================================
 echo.
 
@@ -17,6 +17,22 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 for /f "tokens=*" %%v in ('node -v') do echo [OK] Node.js %%v
+
+:: Check Python (for protocol mode)
+where py >nul 2>&1
+if %errorlevel% neq 0 (
+    echo [WARN] Python not found - protocol mode will not work
+    echo        Install from https://www.python.org/downloads/
+) else (
+    for /f "tokens=*" %%v in ('py -3 --version 2^>nul') do echo [OK] %%v
+    py -3 -c "import curl_cffi" >nul 2>&1
+    if %errorlevel% neq 0 (
+        echo [WARN] curl_cffi not installed - protocol mode requires it
+        echo        Run: pip install curl_cffi
+    ) else (
+        echo [OK] curl_cffi installed
+    )
+)
 
 :: Check Chrome
 set CHROME_FOUND=0
@@ -70,6 +86,8 @@ if not exist "config.json" (
     echo { > config.json
     echo   "threads": 1, >> config.json
     echo   "phoneSlots": [{"phone": "", "smsApiUrl": ""}], >> config.json
+    echo   "protocolMode": false, >> config.json
+    echo   "enableOAuth": false, >> config.json
     echo   "enableCPA": false, >> config.json
     echo   "cpaUrl": "", >> config.json
     echo   "cpaKey": "", >> config.json
@@ -80,6 +98,7 @@ if not exist "config.json" (
     echo   "discordAppId": "", >> config.json
     echo   "webPassword": "admin" >> config.json
     echo } >> config.json
+    echo [INFO] Default password: admin
     echo [INFO] Please configure via web dashboard after startup.
 )
 
@@ -87,10 +106,11 @@ echo.
 echo ==========================================
 echo   Starting server...
 echo   Dashboard: http://localhost:3000
+echo   Default password: admin
 echo ==========================================
 echo.
 
-:: Open browser after 2 seconds
+:: Open browser after 3 seconds
 start "" /b cmd /c "timeout /t 3 /nobreak >nul && start http://localhost:3000"
 
 :: Start server

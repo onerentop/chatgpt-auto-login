@@ -1,232 +1,186 @@
 # ChatGPT Auto Login & Plus Activation Pipeline
 
-Automated pipeline for batch ChatGPT account login, Plus free trial activation, PayPal payment, and CPA OAuth credential registration.
+批量 ChatGPT 账号登录、Plus 免费试用激活、PayPal 支付、OAuth 凭证生成的自动化流水线。
 
-## Features
+支持**浏览器模式**（Playwright Chrome 全流程自动化）和**协议模式**（Python curl_cffi 协议登录 + 仅支付时开浏览器），通过 Web 仪表盘统一管理。
 
-- **Multi-provider login**: Gmail (Google OAuth + TOTP 2FA) and Outlook (email OTP via IMAP)
-- **Auto account creation**: Random name/age generation for new accounts
-- **Plan detection**: Automatically skip payment if account is already Plus
-- **Discord bot integration**: Get $0 free trial checkout links via Discord bot
-- **Automated payment**: PayPal auto-fill with address generation, SMS verification
-- **CPA OAuth**: Automatic Codex OAuth credential registration to CPA management
-- **Anti-detection**: Real Chrome browser via CDP, human-like typing delays
-- **Batch processing**: Process multiple accounts sequentially with `--start N` resume support
+## 快速开始
 
-## Prerequisites
+### Windows
 
-- **Node.js** >= 18
-- **Google Chrome** installed on the system
-- **Playwright** (installed automatically via npm)
+```
+双击 start.bat
+```
 
-## Installation
+自动检测环境、安装依赖、构建前端、启动服务，浏览器打开 `http://localhost:3000`。
+
+### 手动启动
 
 ```bash
-git clone https://github.com/youruser/chatgpt-auto-login.git
-cd chatgpt-auto-login
+# 安装依赖
 npm install
+cd web && npm install && npm run build && cd ..
+
+# 启动服务
+node server/index.js
 ```
 
-## Configuration
+浏览器访问 `http://localhost:3000`，默认密码 `admin`。
 
-### 1. config.json
+## 环境要求
 
-Copy the template and fill in your values:
+| 依赖 | 版本 | 用途 |
+|------|------|------|
+| Node.js | >= 18 | 后端服务、引擎 |
+| Google Chrome | 最新版 | 浏览器自动化（CDP） |
+| Python 3 | >= 3.8（协议模式） | 协议登录注册 |
+| curl_cffi | >= 0.15（协议模式） | TLS 指纹模拟 |
 
-```bash
-cp config.example.json config.json
-```
+## 两种模式
 
-```json
-{
-  "phone": "US phone number for PayPal",
-  "smsApiUrl": "SMS verification code API URL",
-  "cardNumber": "Payment card number",
-  "cardExpiry": "MM / YY",
-  "cardCvv": "CVV",
-  "enableCPA": true,
-  "cpaUrl": "https://your-cpa-domain/management.html",
-  "cpaKey": "CPA management key",
-  "discordToken": "Your Discord user token",
-  "discordChannelId": "Discord channel ID with bot",
-  "discordMessageId": "Bot hub message ID",
-  "discordGuildId": "Discord server ID",
-  "discordAppId": "Bot application ID"
-}
-```
+### 浏览器模式（默认）
 
-#### Field Reference
+Chrome 全流程自动化：登录 → Discord → 支付 → PKCE → 生成凭证。
 
-| Field | Description | Phase |
-|-------|-------------|-------|
-| `phone` | US phone number for PayPal registration | Payment |
-| `smsApiUrl` | SMS API endpoint to receive PayPal verification codes (bound to phone) | Payment |
-| `cardNumber` | Payment card number for PayPal | Payment |
-| `cardExpiry` | Card expiry date, format `MM / YY` | Payment |
-| `cardCvv` | Card CVV code | Payment |
-| `enableCPA` | Enable CPA OAuth after login/payment (`true`/`false`, default: `true`) | CPA |
-| `cpaUrl` | CPA management panel URL | CPA |
-| `cpaKey` | CPA management login key | CPA |
-| `discordToken` | Discord user token (F12 -> Network -> Authorization header) | Discord |
-| `discordChannelId` | Channel ID where the bot buttons are located | Discord |
-| `discordMessageId` | Message ID containing the hub:chatgpt button | Discord |
-| `discordGuildId` | Discord server (guild) ID | Discord |
-| `discordAppId` | Bot's application ID | Discord |
+适合需要完整浏览器会话的场景。
 
-### 2. accounts.csv
+### 协议模式
 
-Copy the template and add your accounts:
+Python curl_cffi 协议登录（无浏览器），仅支付环节启动 Chrome。
 
-```bash
-cp accounts.example.csv accounts.csv
-```
+登录速度更快，资源占用低。在配置页开启「协议注册模式」。
 
-```csv
-email,password,totp_secret,client_id,refresh_token
-user@gmail.com,password,TOTP_BASE32_SECRET,,
-user@outlook.com,password,,microsoft-client-id,microsoft-refresh-token
-```
+## 配置说明
 
-#### Account Types
+首次启动后通过 Web 仪表盘 **配置设置** 页面配置，或直接编辑 `config.json`：
 
-| Field | Gmail | Outlook |
-|-------|-------|---------|
-| `email` | Gmail address | Outlook/Hotmail address |
-| `password` | Gmail password | Outlook password (backup) |
-| `totp_secret` | Google Authenticator TOTP secret (required) | Leave empty |
-| `client_id` | Leave empty | Microsoft app client ID |
-| `refresh_token` | Leave empty | Microsoft OAuth refresh token (for IMAP email reading) |
+| 字段 | 说明 |
+|------|------|
+| `webPassword` | Web 登录密码（默认 `admin`） |
+| `protocolMode` | 协议模式开关 |
+| `enableOAuth` | PKCE OAuth 开关（获取 refresh_token） |
+| `enableCPA` | CPA 外部注册开关 |
+| `phone` | PayPal 绑定的美国手机号 |
+| `smsApiUrl` | 短信验证码接口 URL |
+| `discordToken` | Discord 用户 Token |
+| `channelId` | Discord 频道 ID |
+| `messageId` | Bot Hub 消息 ID |
+| `guildId` | Discord 服务器 ID |
+| `appId` | Bot 应用 ID |
+| `cpaUrl` | CPA 管理面板 URL |
+| `cpaKey` | CPA 管理密钥 |
 
-Login type is auto-detected by email domain:
-- `@gmail.com` -> Google OAuth + TOTP 2FA
-- `@outlook.com` / `@hotmail.com` / `@live.com` -> Email OTP (read via IMAP)
+## 账户格式
 
-#### Outlook Login String Format
-
-Outlook accounts are typically provided as:
-```
-email----password----client_id----refresh_token
-```
-
-Split by `----` and map to CSV columns accordingly.
-
-## Usage
-
-### Run Full Pipeline
-
-```bash
-node index.js
-```
-
-### Resume From Account N
-
-```bash
-node index.js --start 6
-```
-
-### Run Discord Bot Standalone
-
-```bash
-node discord-bot.js
-```
-
-### Open Payment Links Manually
-
-```bash
-node open-links.js
-```
-
-## Pipeline Flow
+通过 Web 仪表盘 **账户管理** 页面批量导入，每行一个账号：
 
 ```
-node index.js
-  |
-  +-- Phase 1: Login to ChatGPT
-  |     Gmail:   Chrome -> chatgpt.com -> Google OAuth -> TOTP 2FA
-  |     Outlook: Chrome -> chatgpt.com -> Email OTP (IMAP auto-read)
-  |     New account: auto-fill random name + age (18-25)
-  |
-  +-- Plan Check: read session.planType
-  |     |
-  |     +-- Already Plus/Pro -> skip to Phase 4
-  |     |
-  |     +-- Free -> continue to Phase 2
-  |
-  +-- Phase 2: Discord Bot -> $0 Checkout Link
-  |     Connect Discord Gateway -> click hub:chatgpt
-  |     -> click "US Plus (Free Trial)" -> submit accessToken
-  |     -> receive Stripe $0 payment link
-  |
-  +-- Phase 3: Automated Payment
-  |     Open payment link in same browser
-  |     -> Select PayPal -> fill US address -> submit
-  |     -> PayPal login (random email) -> PayPal checkout
-  |     -> fill card/address/info -> SMS verification (auto)
-  |
-  +-- Phase 4: CPA OAuth (if enableCPA=true)
-  |     Open CPA management in same tab
-  |     -> login -> OAuth page -> start Codex OAuth
-  |     -> click "Open Link" -> complete Google/Outlook auth
-  |     -> capture localhost callback -> submit to CPA
-  |     -> credentials saved
-  |
-  +-- Close browser -> next account
+email----password----clientId/TOTP----refreshToken
 ```
 
-## Output Files
+| 账号类型 | 第三列 | 第四列 |
+|----------|--------|--------|
+| Outlook | Microsoft Client ID | OAuth Refresh Token |
+| Gmail | TOTP 密钥 | 留空 |
 
-| File | Description |
-|------|-------------|
-| `discord-results.json` | Final results for all accounts (status, payment links) |
-| `results.csv` | Login results per account |
-| `sessions/*.json` | Session data with accessToken per account |
-| `screenshots/*.png` | Screenshots at key steps for debugging |
+邮箱域名自动识别类型：`@outlook.com` / `@hotmail.com` / `@live.com` → Outlook，`@gmail.com` → Google。
 
-## Project Structure
+## 执行流程
+
+```
+账户列表 (选中/全部)
+  │
+  ├── Step 1: 登录
+  │     浏览器模式: Chrome → chatgpt.com → Google/Outlook 登录
+  │     协议模式:   Python curl_cffi → 协议注册/登录 → OTP(IMAP)
+  │
+  ├── Plan Check: 检测是否已是 Plus
+  │     ├── 已是 Plus → 跳过支付，直接生成凭证
+  │     └── Free → 继续 Step 2
+  │
+  ├── Step 2: Discord Bot → $0 支付链接
+  │     连接 Discord Gateway → 点击 hub:chatgpt
+  │     → 选择 "US Plus (Free Trial)" → 提交 accessToken
+  │     → 获取 Stripe $0 支付链接
+  │
+  ├── Step 3: 自动支付
+  │     Chrome 打开支付链接 → 选择 PayPal → 填写美国地址
+  │     → PayPal 登录 → 填写卡信息 → SMS 验证（自动）
+  │     → 等待 redirect_status=succeeded 确认支付成功
+  │
+  ├── Step 4: 凭证生成 (enableOAuth 开启时)
+  │     PKCE OAuth 流程 → 获取 refresh_token
+  │     → 生成 CPA + Sub2API 格式 JSON
+  │
+  └── 关闭浏览器 → 下一个账户
+```
+
+## 账户状态
+
+| 状态 | 标签 | 含义 |
+|------|------|------|
+| `plus` | Plus(有RT) | Plus 激活成功，PKCE 获取到 refresh_token |
+| `plus_no_rt` | Plus(无RT) | Plus 激活成功，但无 refresh_token（未开 OAuth / PKCE 失败） |
+| `no_link` | 无链接 | Discord 未返回支付链接 |
+| `error` | 错误 | 登录/支付/其他环节失败 |
+| `idle` | 空闲 | 未执行 |
+| `running` | 运行中 | 正在执行 |
+
+## 输出文件
+
+凭证文件保存在 `cpa-auth/` 目录：
+
+| 文件 | 格式 | 说明 |
+|------|------|------|
+| `codex-{email}.json` | CPA | Codex 格式凭证（access_token + refresh_token） |
+| `sub2api-{email}.json` | Sub2API | Sub2API 导入格式凭证 |
+
+可通过 Web 仪表盘的「下载选中」按钮选择格式批量下载。
+
+## 项目结构
 
 ```
 chatgpt-auto-login/
-├── index.js              # Main entry - orchestrates full pipeline
-├── login.js              # ChatGPT login (Gmail OAuth + Outlook OTP)
-├── payment.js            # PayPal auto-payment + SMS verification
-├── discord-bot.js        # Discord bot integration (standalone)
-├── cpa.js                # CPA OAuth credential registration
-├── open-links.js         # Manual payment link opener
-├── utils.js              # Utilities (CSV, TOTP, delays, logging)
-├── config.json           # Runtime config (gitignored)
-├── config.example.json   # Config template
-├── accounts.csv          # Account list (gitignored)
-├── accounts.example.csv  # Account format template
-├── package.json          # Dependencies
-└── .gitignore            # Excludes sensitive files
+├── start.bat               # Windows 一键启动
+├── server/
+│   ├── index.js            # Express 服务入口
+│   ├── engine.js           # 浏览器模式执行引擎
+│   ├── db.js               # SQLite 数据持久化
+│   └── routes/             # API 路由
+├── protocol-engine.js      # 协议模式执行引擎
+├── protocol_register.py    # Python 协议登录（curl_cffi）
+├── payment.js              # PayPal 自动支付 + SMS 验证
+├── utils.js                # PKCE、auth 文件生成、TOTP、工具函数
+├── index.js                # CLI 入口（独立于 Web）
+├── web/
+│   ├── src/views/
+│   │   ├── Execute.vue     # 执行控制页
+│   │   ├── Accounts.vue    # 账户管理页
+│   │   ├── Config.vue      # 配置设置页
+│   │   ├── Dashboard.vue   # 仪表盘
+│   │   └── Results.vue     # 执行结果页
+│   └── dist/               # 构建产物
+├── config.json             # 运行配置（gitignored）
+├── data.db                 # SQLite 数据库（gitignored）
+├── cpa-auth/               # 生成的凭证文件（gitignored）
+├── sessions/               # 会话数据（gitignored）
+└── package.json
 ```
 
-## Dependencies
+## 主要依赖
 
-| Package | Purpose |
-|---------|---------|
-| `playwright` | Browser automation |
-| `playwright-extra` | Stealth plugin support |
-| `puppeteer-extra-plugin-stealth` | Anti-detection |
-| `otplib` | TOTP verification code generation |
-| `csv-parse` | CSV file parsing |
+| 包 | 用途 |
+|----|------|
+| `playwright` | 浏览器自动化 |
+| `express` + `socket.io` | Web 服务 + 实时日志 |
+| `sql.js` | SQLite WASM 数据库 |
 | `ws` | Discord Gateway WebSocket |
-| `imapflow` | Outlook IMAP email reading |
+| `imapflow` | Outlook IMAP 邮件读取 |
+| `otplib` | TOTP 验证码生成 |
+| `curl_cffi` (Python) | TLS 指纹模拟协议请求 |
 
-## Security Notes
+## 安全提示
 
-- `config.json` and `accounts.csv` are **gitignored** - never commit them
-- Discord tokens, CPA keys, card numbers are all in config.json only
-- Sessions and screenshots are gitignored
-- Use `config.example.json` and `accounts.example.csv` as templates
-
-## Troubleshooting
-
-| Issue | Solution |
-|-------|----------|
-| `max_check_attempts` | OpenAI IP rate limit - switch VPN/IP or wait 15+ minutes |
-| Verification code not received | Check if Outlook email is rate-limited, switch to a fresh account |
-| Google "browser not secure" | Script uses CDP (real Chrome) to bypass this |
-| PayPal radio button not selected | Uses real mouse click coordinates |
-| CPA "打开链接" not clicking | JS scroll-into-view click as fallback |
-| Login dialog not appearing | Intermittent - script auto-retries |
+- `config.json`、`data.db`、`cpa-auth/`、`sessions/` 均已 gitignore
+- Discord Token、CPA Key 等敏感信息仅存在 config.json 中
+- Web 仪表盘通过密码保护，Token 存储在 localStorage
