@@ -9,6 +9,31 @@ from urllib.parse import urlparse, parse_qs, urlencode
 
 sys.path.insert(0, r"D:\workspace\projects\cliproxyaccountcleaner")
 
+# Chrome fingerprint profiles (local, no external dependency)
+_CHROME_PROFILES = [
+    {"major": 146, "impersonate": "chrome146", "build": 7876, "patch_range": (10, 100),
+     "sec_ch_ua": '"Chromium";v="146", "Google Chrome";v="146", "Not/A)Brand";v="24"'},
+    {"major": 145, "impersonate": "chrome145", "build": 7823, "patch_range": (10, 100),
+     "sec_ch_ua": '"Chromium";v="145", "Google Chrome";v="145", "Not/A)Brand";v="24"'},
+    {"major": 142, "impersonate": "chrome142", "build": 7600, "patch_range": (10, 100),
+     "sec_ch_ua": '"Chromium";v="142", "Google Chrome";v="142", "Not:A-Brand";v="99"'},
+    {"major": 136, "impersonate": "chrome136", "build": 7103, "patch_range": (48, 175),
+     "sec_ch_ua": '"Chromium";v="136", "Google Chrome";v="136", "Not.A/Brand";v="99"'},
+    {"major": 133, "impersonate": "chrome133a", "build": 6943, "patch_range": (33, 153),
+     "sec_ch_ua": '"Not(A:Brand";v="99", "Google Chrome";v="133", "Chromium";v="133"'},
+    {"major": 131, "impersonate": "chrome131", "build": 6778, "patch_range": (69, 205),
+     "sec_ch_ua": '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"'},
+    {"major": 124, "impersonate": "chrome124", "build": 6367, "patch_range": (60, 207),
+     "sec_ch_ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"'},
+]
+
+def _random_chrome_version():
+    p = random.choice(_CHROME_PROFILES)
+    patch = random.randint(*p["patch_range"])
+    full = f"{p['major']}.0.{p['build']}.{patch}"
+    ua = f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{full} Safari/537.36"
+    return p["impersonate"], p["major"], full, ua, p["sec_ch_ua"]
+
 def _log(msg):
     print(json.dumps({"log": f"  [Proto] {msg}"}), flush=True)
 
@@ -113,7 +138,7 @@ def main():
 
     try:
         from curl_cffi import requests as curl_requests
-        from chatgpt_register.chatgpt_register import _random_chrome_version, build_sentinel_token
+        from chatgpt_register.chatgpt_register import build_sentinel_token
 
         impersonate, chrome_major, chrome_full, ua, sec_ch_ua = _random_chrome_version()
         device_id = str(uuid.uuid4())
