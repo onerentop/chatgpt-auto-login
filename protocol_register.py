@@ -367,21 +367,12 @@ def main():
 
         _log(f"accessToken: {access_token[:20]}...")
 
-        # accessToken obtained — skip PKCE code exchange
-        _log(f"accessToken: {access_token[:20]}...")
-
-        # Step 8: Generate checkout link
-        _log("Step 8: Checkout link...")
+        # accessToken obtained — checkout link will be fetched via Discord by Node.js engine
         checkout_url = ""
         checkout_error = ""
         try:
-            r = session.post(f"{BASE}/backend-api/payments/checkout",
-                json={"plan_name": "chatgptplusplan", "billing_info": {"country": "JP", "is_new_card": True}, "currency": "USD"},
-                headers={"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}, timeout=15)
-            cd = r.json()
-            checkout_url = cd.get("url", "")
-            if cd.get("detail"):
-                checkout_error = cd["detail"]
+            # Only check plan type, don't generate checkout link
+            pass
         except Exception as e:
             checkout_error = str(e)
 
