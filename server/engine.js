@@ -543,12 +543,12 @@ class PipelineEngine extends EventEmitter {
               await randomDelay(2000, 3000);
 
               console.log(`${p} Phase 3: Auto-filling payment...`);
-              let paymentOk = true;
+              let paymentOk = false;
               try {
-                await autoPayment(page);
+                const payResult = await autoPayment(page) || {};
+                paymentOk = !!payResult.success;
               } catch (e) {
                 console.log(`${p} Auto-fill error: ${e.message}`);
-                paymentOk = false;
               }
 
               if (paymentOk) {

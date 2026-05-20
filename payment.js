@@ -380,7 +380,7 @@ async function handleSmsVerification(page, smsOverride) {
   const dialogVisible = await codeDialog.isVisible({ timeout: 8000 }).catch(() => false);
   if (!dialogVisible) {
     console.log('    [Pay] No SMS verification dialog detected');
-    return;
+    return false;
   }
 
   console.log('    [Pay] SMS verification dialog detected, polling for code...');
@@ -435,6 +435,7 @@ async function handleSmsVerification(page, smsOverride) {
   // Code might auto-submit, or we need to click a button
   await clickSubmit(page);
   console.log('    [Pay] SMS verification submitted');
+  return true;
 }
 
 // ========== Main Auto-Pay ==========
@@ -477,12 +478,17 @@ async function autoPayment(page, phoneConfig) {
       continue;
     }
   }
-  if (!paypalHandled) console.log('    [Pay] PayPal flow not detected, continuing...');
+  if (!paypalHandled) {
+    console.log('    [Pay] PayPal flow not detected, continuing...');
+    console.log('    [Pay] Auto-payment flow completed');
+    return { success: false, reason: 'PayPal not reached' };
+  }
 
   // Wait for PayPal to finish processing before returning
   console.log('    [Pay] Waiting 20s for payment to process...');
   await new Promise(r => setTimeout(r, 20000));
   console.log('    [Pay] Auto-payment flow completed');
+  return { success: true };
 }
 
 module.exports = { autoPayment, CONFIG };

@@ -406,21 +406,22 @@ class ProtocolEngine extends EventEmitter {
           await randomDelay(2000, 3000);
 
           console.log(`[${progress}] Auto-filling payment...`);
-          let paymentOk = true;
+          let paymentResult = { success: false };
           try {
             const cfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf-8'));
             const slot = cfg.phoneSlots?.[0] || { phone: cfg.phone, smsApiUrl: cfg.smsApiUrl };
-            await autoPayment(page, { phone: slot.phone, smsApiUrl: slot.smsApiUrl });
-          } catch (e) { console.log(`[${progress}] Payment error: ${e.message?.slice(0, 60)}`); paymentOk = false; }
+            paymentResult = await autoPayment(page, { phone: slot.phone, smsApiUrl: slot.smsApiUrl }) || { success: false };
+          } catch (e) { console.log(`[${progress}] Payment error: ${e.message?.slice(0, 60)}`); }
 
-          // Generate auth files
-          saveAuthFiles(account.email, result.accessToken, result.session);
-
-          if (paymentOk) {
+          if (paymentResult.success) {
+            // Payment completed (SMS verified) — generate auth files
+            saveAuthFiles(account.email, result.accessToken, result.session);
             this.emitStatus({ email: account.email, status: 'success', phase: 'done', progress });
             summary.success++;
           } else {
-            this.emitStatus({ email: account.email, status: 'error', phase: 'payment', progress, reason: 'Payment failed' });
+            const reason = paymentResult.reason || 'Payment not completed';
+            console.log(`[${progress}] Payment incomplete: ${reason}`);
+            this.emitStatus({ email: account.email, status: 'error', phase: 'payment', progress, reason });
             summary.error++;
           }
         } catch (e) {
