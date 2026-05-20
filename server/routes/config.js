@@ -7,7 +7,7 @@ const router = express.Router();
 const CONFIG_PATH = path.join(__dirname, '..', '..', 'config.json');
 
 // Fields whose values should be partially masked in GET /
-const SENSITIVE_FIELDS = ['cardNumber', 'cardCvv', 'discordToken', 'cpaKey', 'smsApiUrl'];
+const SENSITIVE_FIELDS = ['discordToken', 'cpaKey', 'smsApiUrl'];
 
 // ---------------------------------------------------------------------------
 // Helpers

@@ -70,9 +70,6 @@ if not exist "config.json" (
     echo { > config.json
     echo   "threads": 1, >> config.json
     echo   "phoneSlots": [{"phone": "", "smsApiUrl": ""}], >> config.json
-    echo   "cardNumber": "", >> config.json
-    echo   "cardExpiry": "", >> config.json
-    echo   "cardCvv": "", >> config.json
     echo   "enableCPA": false, >> config.json
     echo   "cpaUrl": "", >> config.json
     echo   "cpaKey": "", >> config.json

@@ -20,16 +20,6 @@
       <el-form-item label="短信 API URL">
         <el-input v-model="form.smsApiUrl" placeholder="请输入短信接口地址" />
       </el-form-item>
-      <el-form-item label="卡号">
-        <el-input v-model="form.cardNumber" placeholder="请输入卡号" />
-      </el-form-item>
-      <el-form-item label="有效期">
-        <el-input v-model="form.cardExpiry" placeholder="MM/YY" />
-      </el-form-item>
-      <el-form-item label="CVV">
-        <el-input v-model="form.cardCvv" placeholder="CVV" />
-      </el-form-item>
-
       <el-divider content-position="left">Discord 配置</el-divider>
       <el-form-item label="Discord Token">
         <el-input v-model="form.discordToken" type="password" show-password />
@@ -75,9 +65,6 @@ const saving = ref(false)
 const form = reactive({
   phone: '',
   smsApiUrl: '',
-  cardNumber: '',
-  cardExpiry: '',
-  cardCvv: '',
   discordToken: '',
   channelId: '',
   messageId: '',

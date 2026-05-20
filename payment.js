@@ -7,7 +7,7 @@ const CONFIG_PATH = path.join(__dirname, 'config.json');
 function loadConfig() {
   if (!fs.existsSync(CONFIG_PATH)) {
     console.log(`config.json not found, creating template at ${CONFIG_PATH}`);
-    const tpl = { threads: 1, phoneSlots: [{ phone: '1234567890', smsApiUrl: '' }], cardNumber: '1234561234568888', cardExpiry: '03 / 30', cardCvv: '996' };
+    const tpl = { threads: 1, phoneSlots: [{ phone: '1234567890', smsApiUrl: '' }] };
     fs.writeFileSync(CONFIG_PATH, JSON.stringify(tpl, null, 2));
     return tpl;
   }
@@ -40,7 +40,7 @@ function randCard() {
   }
   number += (10 - (sum % 10)) % 10;
   const month = String(Math.floor(Math.random() * 12) + 1).padStart(2, '0');
-  const year = String(new Date().getFullYear() + Math.floor(Math.random() * 5) + 1).slice(-2);
+  const year = String(new Date().getFullYear() + 2 + Math.floor(Math.random() * 4)).slice(-2);
   const cvv = String(Math.floor(Math.random() * 900) + 100);
   return { number, expiry: `${month} / ${year}`, cvv };
 }
