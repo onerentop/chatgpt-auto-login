@@ -1,7 +1,7 @@
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
-const { ZipArchive } = require('archiver');
+const archiver = require('archiver');
 const { statusDB, logsDB } = require('../db');
 
 const router = express.Router();
@@ -56,7 +56,7 @@ router.get('/download-all', (req, res) => {
   if (files.length === 0) return res.status(404).json({ error: 'No auth files for current accounts' });
   res.setHeader('Content-Type', 'application/zip');
   res.setHeader('Content-Disposition', 'attachment; filename=cpa-auth-files.zip');
-  const archive = new ZipArchive();
+  const archive = archiver('zip', { zlib: { level: 9 } });
   archive.pipe(res);
   for (const f of files) archive.file(path.join(CPA_AUTH_DIR, f), { name: f });
   archive.finalize();
@@ -72,7 +72,11 @@ router.get('/:email/logs', (req, res) => {
 
 // GET /:email/auth-file — download CPA auth JSON
 router.get('/:email/auth-file', (req, res) => {
-  const filePath = path.join(CPA_AUTH_DIR, emailToAuthFilename(decodeURIComponent(req.params.email)));
+  const filePath = path.resolve(CPA_AUTH_DIR, emailToAuthFilename(decodeURIComponent(req.params.email)));
+  // Prevent path traversal — resolved path must be inside CPA_AUTH_DIR
+  if (!filePath.startsWith(path.resolve(CPA_AUTH_DIR) + path.sep)) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
   if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'Not found' });
   res.download(filePath);
 });

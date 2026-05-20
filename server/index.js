@@ -3,17 +3,35 @@ const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
 const path = require('path');
+const jwt = require('jsonwebtoken');
 const { initDB } = require('./db');
 
 const authRoutes = require('./routes/auth');
 const { authMiddleware } = require('./routes/auth');
 const configRoutes = require('./routes/config');
 
+const JWT_SECRET = 'chatgpt-auto-login-web';
+
 const app = express();
 const server = http.createServer(app);
 
 const io = new Server(server, {
   cors: { origin: '*', methods: ['GET', 'POST'] },
+});
+
+// Socket.IO authentication middleware
+io.use((socket, next) => {
+  const token = socket.handshake.auth.token;
+  if (!token) {
+    return next(new Error('Authentication error: no token provided'));
+  }
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    socket.user = decoded;
+    next();
+  } catch (err) {
+    return next(new Error('Authentication error: invalid or expired token'));
+  }
 });
 
 app.use(cors());

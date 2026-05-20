@@ -92,7 +92,7 @@ onMounted(loadResults)
 
 function handleDownload(email) {
   const token = localStorage.getItem('token')
-  window.open(`/api/results/${encodeURIComponent(email)}/auth?token=${token}`)
+  window.open(`/api/results/${encodeURIComponent(email)}/auth-file?token=${token}`)
 }
 
 function handleDownloadAll() {

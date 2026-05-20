@@ -61,7 +61,7 @@ function detectLoginType(email) {
 
 const accountsDB = {
   list() { return db.exec("SELECT * FROM accounts ORDER BY rowid")[0]?.values.map(rowToAccount) || []; },
-  get(email) { const r = db.exec("SELECT * FROM accounts WHERE email = ?", [email]); return r[0]?.values[0] ? rowToAccount(r[0].values[0]) : null; },
+  get(email) { const stmt = db.prepare("SELECT * FROM accounts WHERE email = ?"); stmt.bind([email]); const row = stmt.step() ? stmt.get() : null; stmt.free(); return row ? rowToAccount(row) : null; },
   add(a) { db.run("INSERT OR IGNORE INTO accounts (email, password, totp_secret, client_id, refresh_token, login_type) VALUES (?,?,?,?,?,?)", [a.email, a.password, a.totp_secret||'', a.client_id||'', a.refresh_token||'', detectLoginType(a.email)]); save(); },
   update(email, a) { db.run("UPDATE accounts SET password=?, totp_secret=?, client_id=?, refresh_token=?, login_type=? WHERE email=?", [a.password||'', a.totp_secret||'', a.client_id||'', a.refresh_token||'', detectLoginType(a.email||email), email]); save(); },
   delete(email) { db.run("DELETE FROM accounts WHERE email=?", [email]); save(); },
@@ -74,7 +74,7 @@ const accountsDB = {
 };
 
 const statusDB = {
-  get(email) { const r = db.exec("SELECT * FROM account_status WHERE email=?", [email]); return r[0]?.values[0] ? rowToStatus(r[0].values[0]) : null; },
+  get(email) { const stmt = db.prepare("SELECT * FROM account_status WHERE email=?"); stmt.bind([email]); const row = stmt.step() ? stmt.get() : null; stmt.free(); return row ? rowToStatus(row) : null; },
   list() { return db.exec("SELECT * FROM account_status")[0]?.values.map(rowToStatus) || []; },
   set(email, data) {
     const { status, phase, progress, reason, has_auth_file } = { status:'idle', phase:'', progress:'', reason:'', has_auth_file:0, ...data };
@@ -93,8 +93,12 @@ const logsDB = {
     if (Math.random() < 0.1) save();
   },
   getByEmail(email) {
-    const r = db.exec("SELECT * FROM execution_logs WHERE email=? ORDER BY id DESC LIMIT 200", [email]);
-    return (r[0]?.values || []).map(rowToLog).reverse();
+    const results = [];
+    const stmt = db.prepare("SELECT * FROM execution_logs WHERE email=? ORDER BY id DESC LIMIT 200");
+    stmt.bind([email]);
+    while (stmt.step()) results.push(rowToLog(stmt.get()));
+    stmt.free();
+    return results.reverse();
   },
   flush() { save(); },
   cleanup() { db.run("DELETE FROM execution_logs WHERE id NOT IN (SELECT id FROM execution_logs ORDER BY id DESC LIMIT 5000)"); save(); },

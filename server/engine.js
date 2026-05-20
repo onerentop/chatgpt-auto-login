@@ -605,7 +605,7 @@ class PipelineEngine extends EventEmitter {
         });
 
         // Random delay between accounts
-        if (i < accounts.length - 1 && !this.stopFlag) {
+        if (i < filtered.length - 1 && !this.stopFlag) {
           const wait = 5 + Math.floor(Math.random() * 3);
           console.log(`  Waiting ${wait}s...`);
           await randomDelay(wait * 1000, wait * 1000 + 500);
