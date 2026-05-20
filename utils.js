@@ -252,10 +252,25 @@ async function fetchTokensViaPKCE(browser, account, lastOtp) {
           otp = await _fetchPkceOtp(page, account);
         }
         if (otp) {
-            await page.evaluate((code) => {
-              const inp = document.querySelector('input[name="code"], input[type="text"]');
-              if (inp) { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(inp, code); inp.dispatchEvent(new Event('input', { bubbles: true })); inp.dispatchEvent(new Event('change', { bubbles: true })); }
-            }, otp);
+            // Try multiple selectors to find the OTP input
+            let filled = false;
+            const selectors = ['input[name="code"]', 'input[autocomplete="one-time-code"]', 'input[inputmode="numeric"]', 'input[type="text"]'];
+            for (const sel of selectors) {
+              const inp = page.locator(sel).first();
+              if (await inp.isVisible({ timeout: 1000 }).catch(() => false)) {
+                await inp.click();
+                await inp.fill('');
+                await inp.fill(otp);
+                console.log(`  [PKCE] OTP filled via ${sel}`);
+                filled = true;
+                break;
+              }
+            }
+            if (!filled) {
+              // Fallback: try typing into focused element
+              await page.keyboard.type(otp, { delay: 50 });
+              console.log('  [PKCE] OTP typed via keyboard fallback');
+            }
             await new Promise(r => setTimeout(r, 800));
             await page.evaluate(() => { for (const b of document.querySelectorAll('button')) if (['继续','Continue'].includes(b.textContent.trim())) { b.click(); return; } });
             console.log('  [PKCE] OTP submitted');
@@ -269,18 +284,22 @@ async function fetchTokensViaPKCE(browser, account, lastOtp) {
               const freshOtp = await _fetchPkceOtp(page, account);
               if (freshOtp) {
                 console.log(`  [PKCE] Fresh OTP: ${freshOtp}`);
-                // Clear old code and fill new one
-                await page.evaluate((code) => {
-                  const inp = document.querySelector('input[name="code"], input[type="text"]');
-                  if (inp) {
-                    inp.focus();
-                    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(inp, '');
-                    inp.dispatchEvent(new Event('input', { bubbles: true }));
-                    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(inp, code);
-                    inp.dispatchEvent(new Event('input', { bubbles: true }));
-                    inp.dispatchEvent(new Event('change', { bubbles: true }));
+                let retryFilled = false;
+                for (const sel of ['input[name="code"]', 'input[autocomplete="one-time-code"]', 'input[inputmode="numeric"]', 'input[type="text"]']) {
+                  const rinp = page.locator(sel).first();
+                  if (await rinp.isVisible({ timeout: 1000 }).catch(() => false)) {
+                    await rinp.click();
+                    await rinp.fill('');
+                    await rinp.fill(freshOtp);
+                    console.log(`  [PKCE] Fresh OTP filled via ${sel}`);
+                    retryFilled = true;
+                    break;
                   }
-                }, freshOtp);
+                }
+                if (!retryFilled) {
+                  await page.keyboard.type(freshOtp, { delay: 50 });
+                  console.log('  [PKCE] Fresh OTP typed via keyboard fallback');
+                }
                 await new Promise(r => setTimeout(r, 800));
                 await page.evaluate(() => { for (const b of document.querySelectorAll('button')) if (['继续','Continue'].includes(b.textContent.trim())) { b.click(); return; } });
                 console.log('  [PKCE] Fresh OTP submitted');
