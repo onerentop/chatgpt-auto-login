@@ -13,8 +13,6 @@ sys.path.insert(0, r"D:\workspace\projects\cliproxyaccountcleaner")
 _CHROME_PROFILES = [
     {"major": 146, "impersonate": "chrome146", "build": 7876, "patch_range": (10, 100),
      "sec_ch_ua": '"Chromium";v="146", "Google Chrome";v="146", "Not/A)Brand";v="24"'},
-    {"major": 145, "impersonate": "chrome145", "build": 7823, "patch_range": (10, 100),
-     "sec_ch_ua": '"Chromium";v="145", "Google Chrome";v="145", "Not/A)Brand";v="24"'},
     {"major": 142, "impersonate": "chrome142", "build": 7600, "patch_range": (10, 100),
      "sec_ch_ua": '"Chromium";v="142", "Google Chrome";v="142", "Not:A-Brand";v="99"'},
     {"major": 136, "impersonate": "chrome136", "build": 7103, "patch_range": (48, 175),
@@ -140,11 +138,22 @@ def main():
         from curl_cffi import requests as curl_requests
         from chatgpt_register.chatgpt_register import build_sentinel_token
 
-        impersonate, chrome_major, chrome_full, ua, sec_ch_ua = _random_chrome_version()
+        # Pick a supported profile (retry if impersonate fails)
+        session = None
+        for _try in range(5):
+            impersonate, chrome_major, chrome_full, ua, sec_ch_ua = _random_chrome_version()
+            try:
+                session = curl_requests.Session(impersonate=impersonate)
+                break
+            except Exception as e:
+                _log(f"{impersonate} not supported, retrying... ({e})")
+                session = None
+        if not session:
+            session = curl_requests.Session()  # fallback: no impersonate
+            _log("Using default session (no impersonate)")
         device_id = str(uuid.uuid4())
         _log(f"Profile: {impersonate}, Device: {device_id[:8]}...")
 
-        session = curl_requests.Session(impersonate=impersonate)
         session.headers.update({"User-Agent": ua, "Accept-Language": "en-US,en;q=0.9",
             "sec-ch-ua": sec_ch_ua, "sec-ch-ua-mobile": "?0", "sec-ch-ua-platform": '"Windows"'})
         session.cookies.set("oai-did", device_id, domain="chatgpt.com")
@@ -168,7 +177,8 @@ def main():
                 _log(f"Homepage 403, retry ({attempt+1}/4)")
                 impersonate, chrome_major, chrome_full, ua, sec_ch_ua = _random_chrome_version()
                 device_id = str(uuid.uuid4())
-                session = curl_requests.Session(impersonate=impersonate)
+                try: session = curl_requests.Session(impersonate=impersonate)
+                except: session = curl_requests.Session()
                 session.headers.update({"User-Agent": ua, "sec-ch-ua": sec_ch_ua, "sec-ch-ua-mobile": "?0", "sec-ch-ua-platform": '"Windows"', "Accept-Language": "en-US,en;q=0.9"})
                 session.cookies.set("oai-did", device_id, domain="chatgpt.com")
                 session.cookies.set("oai-did", device_id, domain="auth.openai.com")

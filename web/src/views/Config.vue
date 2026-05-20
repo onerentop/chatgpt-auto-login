@@ -25,18 +25,6 @@
         <el-switch v-model="form.protocolMode" />
         <span style="color:#909399;margin-left:8px;font-size:12px">开启后使用协议注册（仅支付时开浏览器）</span>
       </el-form-item>
-      <el-form-item label="协议并发数" v-if="form.protocolMode">
-        <el-select v-model="form.protocolConcurrency" style="width:120px">
-          <el-option :value="1" label="1 并发" />
-          <el-option :value="2" label="2 并发" />
-          <el-option :value="3" label="3 并发" />
-          <el-option :value="4" label="4 并发" />
-          <el-option :value="5" label="5 并发" />
-          <el-option :value="8" label="8 并发" />
-          <el-option :value="10" label="10 并发" />
-        </el-select>
-        <span style="color:#909399;margin-left:8px;font-size:12px">同时执行协议登录的账号数</span>
-      </el-form-item>
 
       <el-divider content-position="left">Discord 配置</el-divider>
       <el-form-item label="Discord Token">

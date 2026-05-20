@@ -1,7 +1,7 @@
 <template>
   <div>
-    <!-- Toolbar -->
-    <el-row style="margin-bottom: 12px" :gutter="12" align="middle">
+    <!-- Toolbar (sticky) -->
+    <el-row style="margin-bottom: 12px; position: sticky; top: 0; z-index: 10; background: #fff; padding: 8px 0; border-bottom: 1px solid #eee;" :gutter="12" align="middle">
       <el-col :span="24">
         <el-button type="success" :disabled="running" @click="execSelected">执行选中 ({{ selectedEmails.length }})</el-button>
         <el-button type="primary" :disabled="running" @click="execAll">执行全部</el-button>

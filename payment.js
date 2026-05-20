@@ -479,6 +479,9 @@ async function autoPayment(page, phoneConfig) {
   }
   if (!paypalHandled) console.log('    [Pay] PayPal flow not detected, continuing...');
 
+  // Wait for PayPal to finish processing before returning
+  console.log('    [Pay] Waiting 20s for payment to process...');
+  await new Promise(r => setTimeout(r, 20000));
   console.log('    [Pay] Auto-payment flow completed');
 }
 
