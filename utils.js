@@ -252,18 +252,26 @@ async function fetchTokensViaPKCE(browser, account, lastOtp) {
           otp = await _fetchPkceOtp(page, account).catch(e => { console.log(`  [PKCE] OTP fetch error: ${e.message?.slice(0, 60)}`); return null; });
         }
         if (otp) {
-            // Click any input on the page, then type OTP via keyboard
-            try {
-              await page.locator('input').first().click({ timeout: 5000 });
-              console.log('  [PKCE] Clicked input');
-            } catch (e) {
-              console.log(`  [PKCE] Input click failed: ${e.message?.slice(0, 60)}, trying evaluate`);
-              await page.evaluate(() => { const i = document.querySelector('input'); if (i) { i.focus(); i.click(); } });
+            // Fill OTP via React setter (same approach as login.js)
+            const filled = await page.evaluate((code) => {
+              var inputs = document.querySelectorAll('input');
+              for (var i = 0; i < inputs.length; i++) {
+                var inp = inputs[i];
+                if (inp.offsetHeight > 0 && inp.type !== 'hidden') {
+                  var ns = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+                  ns.call(inp, code);
+                  inp.dispatchEvent(new Event('input', { bubbles: true }));
+                  inp.dispatchEvent(new Event('change', { bubbles: true }));
+                  return 'filled:' + (inp.name || inp.type || inp.id || 'unknown');
+                }
+              }
+              return null;
+            }, otp);
+            console.log(`  [PKCE] OTP fill result: ${filled}`);
+            if (!filled) {
+              await page.keyboard.type(otp, { delay: 80 });
+              console.log('  [PKCE] OTP typed via keyboard fallback');
             }
-            await new Promise(r => setTimeout(r, 500));
-            await page.keyboard.press('Control+a');
-            await page.keyboard.type(otp, { delay: 100 });
-            console.log(`  [PKCE] OTP typed: ${otp}`);
             await new Promise(r => setTimeout(r, 800));
             await page.evaluate(() => { for (const b of document.querySelectorAll('button')) if (['继续','Continue'].includes(b.textContent.trim())) { b.click(); return; } });
             console.log('  [PKCE] OTP submitted');
@@ -277,11 +285,23 @@ async function fetchTokensViaPKCE(browser, account, lastOtp) {
               const freshOtp = await _fetchPkceOtp(page, account).catch(e => { console.log(`  [PKCE] Fresh OTP fetch error: ${e.message?.slice(0, 60)}`); return null; });
               if (freshOtp) {
                 console.log(`  [PKCE] Fresh OTP: ${freshOtp}`);
-                try { await page.locator('input').first().click({ timeout: 3000 }); } catch { await page.evaluate(() => { const i = document.querySelector('input'); if (i) { i.focus(); i.click(); } }); }
-                await new Promise(r => setTimeout(r, 500));
-                await page.keyboard.press('Control+a');
-                await page.keyboard.type(freshOtp, { delay: 100 });
-                console.log(`  [PKCE] Fresh OTP typed: ${freshOtp}`);
+                const retryFilled = await page.evaluate((code) => {
+                  var inputs = document.querySelectorAll('input');
+                  for (var i = 0; i < inputs.length; i++) {
+                    var inp = inputs[i];
+                    if (inp.offsetHeight > 0 && inp.type !== 'hidden') {
+                      var ns = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+                      ns.call(inp, '');
+                      inp.dispatchEvent(new Event('input', { bubbles: true }));
+                      ns.call(inp, code);
+                      inp.dispatchEvent(new Event('input', { bubbles: true }));
+                      inp.dispatchEvent(new Event('change', { bubbles: true }));
+                      return true;
+                    }
+                  }
+                  return false;
+                }, freshOtp);
+                console.log(`  [PKCE] Fresh OTP filled: ${retryFilled}`);
                 await new Promise(r => setTimeout(r, 800));
                 await page.evaluate(() => { for (const b of document.querySelectorAll('button')) if (['继续','Continue'].includes(b.textContent.trim())) { b.click(); return; } });
                 console.log('  [PKCE] Fresh OTP submitted');
