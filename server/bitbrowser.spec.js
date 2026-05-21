@@ -34,3 +34,25 @@ describe('parseProxy', () => {
     assert.deepEqual(out, { proxyType: 'socks5', host: '127.0.0.1', port: '1080' });
   });
 });
+
+describe('healthCheck()', () => {
+  test('returns true on 200', async () => {
+    bb._deps.fetch = async () => ({ ok: true, status: 200, json: async () => ({ success: true }) });
+    assert.equal(await bb.healthCheck(), true);
+  });
+
+  test('returns false on network error', async () => {
+    bb._deps.fetch = async () => { const e = new Error('connect ECONNREFUSED'); e.code = 'ECONNREFUSED'; throw e; };
+    assert.equal(await bb.healthCheck(), false);
+  });
+
+  test('returns true on any HTTP response (even 500)', async () => {
+    bb._deps.fetch = async () => ({ ok: false, status: 500, json: async () => ({}) });
+    assert.equal(await bb.healthCheck(), true);
+  });
+
+  test('never throws', async () => {
+    bb._deps.fetch = async () => { throw new Error('boom'); };
+    await assert.doesNotReject(bb.healthCheck());
+  });
+});
