@@ -27,7 +27,18 @@ module.exports = function (io) {
       return res.status(409).json({ error: 'Pipeline is already running' });
     }
 
-    const { emails } = req.body;
+    const { emails } = req.body || {};
+    // Validate emails: must be undefined/null (run all), or an array of non-empty strings
+    if (emails !== undefined && emails !== null) {
+      if (!Array.isArray(emails)) {
+        return res.status(400).json({ error: 'emails must be an array or omitted' });
+      }
+      for (const e of emails) {
+        if (typeof e !== 'string' || !e.trim()) {
+          return res.status(400).json({ error: 'emails must contain non-empty strings' });
+        }
+      }
+    }
     // Release listeners on previous engine instance (prevent leak)
     if (engine) try { engine.removeAllListeners(); } catch {}
     engine = readProtocolMode() ? new ProtocolEngine() : new PipelineEngine();

@@ -34,9 +34,11 @@ router.post('/import', (req, res) => {
     const text = req.body.text || '';
     if (!text.trim()) return res.status(400).json({ error: 'No data' });
 
+    const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     const existing = new Set(accountsDB.list().map(a => a.email.toLowerCase()));
     const toAdd = [];
     let skipped = 0;
+    let invalid = 0;
 
     for (const line of text.trim().split('\n').filter(l => l.trim())) {
       const parts = line.split('----').map(p => p.trim());
@@ -44,7 +46,8 @@ router.post('/import', (req, res) => {
       const password = (parts[1] || '').trim();
       const thirdField = (parts[2] || '').replace(/\s+/g, '');
       const fourthField = (parts[3] || '').replace(/\s+/g, '');
-      if (!email || !password) continue;
+      if (!email || !password) { invalid++; continue; }
+      if (!EMAIL_REGEX.test(email)) { invalid++; continue; }
       if (existing.has(email.toLowerCase())) { skipped++; continue; }
       existing.add(email.toLowerCase());
       const domain = (email.split('@')[1] || '').toLowerCase();
@@ -57,7 +60,7 @@ router.post('/import', (req, res) => {
       });
     }
     if (toAdd.length > 0) accountsDB.bulkAdd(toAdd);
-    res.json({ added: toAdd.length, skipped, total: accountsDB.list().length });
+    res.json({ added: toAdd.length, skipped, invalid, total: accountsDB.list().length });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
