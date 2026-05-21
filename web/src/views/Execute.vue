@@ -265,8 +265,11 @@ async function startExec(emails) {
   try {
     socketState.logs.splice(0)
     socketState.accountStatuses = {}
+    // Preset selected accounts to 'running' so they stay visible under
+    // any status filter (e.g. picked from "error" filter, now in queue).
+    // Engine will overwrite with real status as each one progresses.
     for (const a of accounts.value) {
-      if (!emails || emails.includes(a.email)) { a._status = 'idle'; a._phase = '' }
+      if (!emails || emails.includes(a.email)) { a._status = 'running'; a._phase = 'queued' }
     }
     await api.post('/execute', { emails: emails || undefined })
     running.value = true
