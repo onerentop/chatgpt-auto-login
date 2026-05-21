@@ -142,11 +142,12 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted, shallowRef } from 'vue'
+import { ref, computed, watch, onMounted, shallowRef, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
 import api from '../api'
 import { socketState } from '../socket'
 import { statusType, statusLabel, PLUS_STATUSES } from '../status'
+import { getSelectionSet, setSelectionFromRows } from '../selection'
 
 const tableRef = ref(null)
 const running = ref(false)
@@ -237,7 +238,8 @@ async function loadAccounts() {
   try {
     const { data } = await api.get('/accounts')
     accounts.value = data.map(a => ({ ...a, _status: 'idle', _phase: '', _hasAuth: false, _showHistory: false, _plan: '' }))
-    loadResults()
+    await loadResults()
+    restoreSelection()
   } catch {}
 }
 
@@ -263,7 +265,21 @@ async function checkStatus() {
 
 onMounted(() => { loadAccounts(); checkStatus() })
 
-function onSelectionChange(rows) { selected.value = rows }
+function onSelectionChange(rows) {
+  selected.value = rows
+  setSelectionFromRows('execute', rows)
+}
+
+// Restore selection after data is loaded (Element Plus needs toggleRowSelection on actual row refs)
+function restoreSelection() {
+  const saved = getSelectionSet('execute')
+  if (saved.size === 0 || !tableRef.value) return
+  nextTick(() => {
+    for (const row of accounts.value) {
+      if (saved.has(row.email)) tableRef.value.toggleRowSelection(row, true)
+    }
+  })
+}
 
 function onRowClick(row, column, event) {
   if (column?.type === 'selection' || column?.type === 'expand') return

@@ -33,7 +33,7 @@
     </el-row>
 
     <el-table ref="tableRef" :data="filteredAccounts" stripe border size="small" row-key="email" @selection-change="onSelectionChange" @row-click="onRowClick">
-      <el-table-column type="selection" width="45" />
+      <el-table-column type="selection" width="45" :reserve-selection="true" />
       <el-table-column type="index" label="#" width="50" />
       <el-table-column prop="email" label="邮箱" min-width="220" />
       <el-table-column prop="loginType" label="类型" width="90">
@@ -101,10 +101,11 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
 import api from '../api'
 import { PLUS_STATUSES, ERROR_STATUSES } from '../status'
+import { getSelectionSet, setSelectionFromRows } from '../selection'
 
 const tableRef = ref(null)
 const accounts = ref([])
@@ -149,6 +150,7 @@ async function load() {
       const plan = PLUS_STATUSES.includes(st) ? 'plus' : (ERROR_STATUSES.includes(st) ? 'free' : '')
       return { ...a, _showPw: false, _status: st || 'idle', _plan: plan, _hasAuth: !!r.hasAuthFile }
     })
+    restoreSelection()
   } catch {}
 }
 onMounted(load)
@@ -195,7 +197,20 @@ async function del(email) {
   catch { ElMessage.error('删除失败') }
 }
 
-function onSelectionChange(rows) { selected.value = rows }
+function onSelectionChange(rows) {
+  selected.value = rows
+  setSelectionFromRows('accounts', rows)
+}
+
+function restoreSelection() {
+  const saved = getSelectionSet('accounts')
+  if (saved.size === 0 || !tableRef.value) return
+  nextTick(() => {
+    for (const row of accounts.value) {
+      if (saved.has(row.email)) tableRef.value.toggleRowSelection(row, true)
+    }
+  })
+}
 
 function onRowClick(row, column, event) {
   if (column?.type === 'selection') return
