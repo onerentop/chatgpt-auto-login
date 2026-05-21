@@ -8,7 +8,7 @@
     "web": "node server/index.js",
     "web:dev": "cd web && npm run dev",
     "web:build": "cd web && npm run build",
-    "test": "node --test server/bitbrowser.spec.js"
+    "test": "node --test server/ixbrowser.spec.js"
   },
   "dependencies": {
     "archiver": "^8.0.0",
