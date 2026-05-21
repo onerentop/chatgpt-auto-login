@@ -79,3 +79,65 @@ describe('getApiBase()', () => {
     assert.equal(bb.__internal.getApiBase('http://127.0.0.1:54345/v1/'), 'http://127.0.0.1:54345/v1');
   });
 });
+
+// ---- Helpers shared by open() tests ----
+function makeFetchMock(scriptedResponses) {
+  // scriptedResponses: array of { matchPath, body }
+  // Each call consumes the next item; if matchPath is set, asserts the URL contains it.
+  let i = 0;
+  return async (url, init) => {
+    const step = scriptedResponses[i++];
+    if (!step) throw new Error(`fetch called too many times (call ${i}, url=${url})`);
+    if (step.matchPath && !String(url).includes(step.matchPath)) {
+      throw new Error(`expected path containing "${step.matchPath}", got ${url}`);
+    }
+    if (step.throw) throw step.throw;
+    return {
+      ok: step.ok !== false,
+      status: step.status || 200,
+      json: async () => step.body,
+    };
+  };
+}
+
+describe('open() — happy path', () => {
+  test('opens, returns session with browser+close, cleans up fully', async () => {
+    const calls = [];
+    bb._deps.fetch = async (url, init) => {
+      const body = init && init.body ? JSON.parse(init.body) : null;
+      calls.push({ url: String(url), body });
+      if (String(url).endsWith('/browser/update'))
+        return { ok: true, json: async () => ({ success: true, data: { id: 'abc-123' } }) };
+      if (String(url).endsWith('/browser/open'))
+        return { ok: true, json: async () => ({ success: true, data: { http: '127.0.0.1:54678' } }) };
+      if (String(url).endsWith('/browser/close'))
+        return { ok: true, json: async () => ({ success: true }) };
+      if (String(url).endsWith('/browser/delete'))
+        return { ok: true, json: async () => ({ success: true }) };
+      throw new Error(`unexpected url ${url}`);
+    };
+    let cdpClosed = false;
+    bb._deps.connectOverCDP = async (url) => {
+      assert.equal(url, 'http://127.0.0.1:54678');
+      return { close: async () => { cdpClosed = true; } };
+    };
+
+    const session = await bb.open({ proxyServer: 'http://127.0.0.1:7890' });
+    assert.ok(session.browser, 'session.browser is set');
+    assert.equal(typeof session.close, 'function');
+
+    await session.close();
+
+    assert.equal(cdpClosed, true, 'browser.close was awaited');
+    const paths = calls.map(c => c.url.split('/').slice(-2).join('/'));
+    assert.deepEqual(paths, ['browser/update', 'browser/open', 'browser/close', 'browser/delete']);
+
+    // Verify proxy fields on the update call
+    const update = calls.find(c => c.url.endsWith('/browser/update')).body;
+    assert.equal(update.proxyMethod, 2);
+    assert.equal(update.proxyType, 'http');
+    assert.equal(update.host, '127.0.0.1');
+    assert.equal(update.port, '7890');
+    assert.match(update.name, /^pay-/);
+  });
+});

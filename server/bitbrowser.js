@@ -26,6 +26,40 @@ function getApiBase(override) {
   return raw.trim().replace(/\/+$/, '');
 }
 
+class BitBrowserError extends Error {
+  constructor(kind, msg) { super(msg); this.kind = kind; }
+}
+
+async function request(pathname, body, timeoutMs = 5000) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  let res;
+  try {
+    res = await deps.fetch(`${getApiBase()}${pathname}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body || {}),
+      signal: ctrl.signal,
+    });
+  } catch (e) {
+    const code = e.code || e.cause?.code || '';
+    if (code === 'ECONNREFUSED' || e.name === 'AbortError' || /fetch failed/i.test(e.message)) {
+      throw new BitBrowserError('BitBrowserUnavailable', `BitBrowser unavailable: ${getApiBase()}`);
+    }
+    throw new BitBrowserError('BitBrowserApiError', `BitBrowser request error: ${e.message}`);
+  } finally {
+    clearTimeout(timer);
+  }
+  if (!res.ok) {
+    throw new BitBrowserError('BitBrowserApiError', `BitBrowser HTTP ${res.status} on ${pathname}`);
+  }
+  const json = await res.json().catch(() => ({}));
+  if (json && json.success === false) {
+    throw new BitBrowserError('BitBrowserApiError', `BitBrowser API: ${String(json.msg || 'unknown').slice(0, 80)}`);
+  }
+  return json.data || {};
+}
+
 function parseProxy(url) {
   if (!url || typeof url !== 'string') {
     throw new Error('BitBrowser: proxyServer is required (got empty/undefined)');
@@ -64,8 +98,69 @@ async function healthCheck() {
   }
 }
 
+async function open({ proxyServer } = {}) {
+  const proxy = parseProxy(proxyServer); // throws on empty/malformed
+  const cfg = readCfg();
+  const openTimeoutMs = Number(cfg.openTimeoutMs) || 30000;
+
+  let id = null;
+  let windowOpen = false;
+  let browser = null;
+
+  const close = async () => {
+    if (browser)    { try { await browser.close(); } catch {} }
+    if (windowOpen) { try { await request('/browser/close', { id }); } catch {} }
+    if (id) {
+      try { await request('/browser/delete', { ids: [id] }); }
+      catch (e) { console.log(`[BitBrowser] delete failed: ${e.message?.slice(0, 80)}`); }
+    }
+  };
+
+  try {
+    // 1. Create a one-shot profile
+    const updateBody = {
+      name: `pay-${Date.now()}`,
+      remark: 'auto-pay',
+      proxyMethod: 2,
+      proxyType: proxy.proxyType,
+      host: proxy.host,
+      port: proxy.port,
+      browserFingerPrint: { ostype: 'PC', version: '136' },
+    };
+    const updateData = await request('/browser/update', updateBody);
+    id = updateData.id;
+    if (!id) throw new BitBrowserError('BitBrowserApiError', '/browser/update did not return data.id');
+
+    // 2. Launch and obtain CDP endpoint
+    const openData = await request('/browser/open', { id });
+    windowOpen = true;
+    const http = openData.http;
+    if (!http) throw new BitBrowserError('BitBrowserApiError', '/browser/open did not return data.http');
+    const cdpUrl = http.startsWith('http') ? http : `http://${http}`;
+
+    // 3. Connect Playwright with a hard timeout budget
+    browser = await Promise.race([
+      deps.connectOverCDP(cdpUrl),
+      new Promise((_, rej) => setTimeout(
+        () => rej(new BitBrowserError('CDPConnectFailed', `connectOverCDP timeout after ${openTimeoutMs}ms`)),
+        openTimeoutMs,
+      )),
+    ]).catch((e) => {
+      if (e instanceof BitBrowserError) throw e;
+      throw new BitBrowserError('CDPConnectFailed', `connectOverCDP failed: ${e.message?.slice(0, 80)}`);
+    });
+
+    return { browser, close };
+  } catch (e) {
+    await close();
+    throw e;
+  }
+}
+
 module.exports = {
+  open,
   healthCheck,
+  BitBrowserError,
   _deps: deps,
-  __internal: { parseProxy, readCfg, getApiBase },
+  __internal: { parseProxy, readCfg, getApiBase, request },
 };
