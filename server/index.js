@@ -27,11 +27,13 @@ initDB().then(() => {
   const accountsRoutes = require('./routes/accounts');
   const executeRoutes = require('./routes/execute');
   const resultsRoutes = require('./routes/results');
+  const proxyRoutes = require('./routes/proxy');
 
   app.use('/api/accounts', accountsRoutes);
   app.use('/api/config', configRoutes);
   app.use('/api/execute', executeRoutes(io));
   app.use('/api/results', resultsRoutes);
+  app.use('/api/proxy', proxyRoutes);
 
   const distPath = path.join(__dirname, '..', 'web', 'dist');
   app.use(express.static(distPath));
