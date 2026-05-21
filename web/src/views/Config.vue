@@ -88,16 +88,16 @@
           <div v-if="proxyStatus.lastError" style="color:#f56c6c">错误：{{ proxyStatus.lastError }}</div>
         </div>
       </el-form-item>
-      <el-divider content-position="left">指纹浏览器（BitBrowser）</el-divider>
-      <el-form-item label="启用 BitBrowser">
-        <el-switch v-model="form.bitbrowserEnabled" />
-        <span style="color:#909399;margin-left:8px;font-size:12px">开启后支付走 BitBrowser 指纹窗口（需要本地客户端运行）</span>
+      <el-divider content-position="left">指纹浏览器（ixbrowser）</el-divider>
+      <el-form-item label="启用 ixbrowser">
+        <el-switch v-model="form.ixbrowserEnabled" />
+        <span style="color:#909399;margin-left:8px;font-size:12px">开启后支付走 ixbrowser 指纹窗口（需要本地客户端运行）</span>
       </el-form-item>
       <el-form-item label="API 地址">
-        <el-input v-model="form.bitbrowserApiUrl" placeholder="http://127.0.0.1:54345" />
+        <el-input v-model="form.ixbrowserApiUrl" placeholder="http://127.0.0.1:53200" />
       </el-form-item>
       <el-form-item label="打开超时 (ms)">
-        <el-input-number v-model="form.bitbrowserOpenTimeoutMs" :min="5000" :step="1000" />
+        <el-input-number v-model="form.ixbrowserOpenTimeoutMs" :min="5000" :step="1000" />
         <span style="color:#909399;margin-left:8px;font-size:12px">connectOverCDP 总超时，冷启动建议 30000+</span>
       </el-form-item>
     </el-form>
@@ -131,9 +131,9 @@ const form = reactive({
   proxySubscriptionUrl: '',
   proxyRegionFilter: 'US',
   proxyRotationStrategy: 'sequential',
-  bitbrowserEnabled: false,
-  bitbrowserApiUrl: 'http://127.0.0.1:54345',
-  bitbrowserOpenTimeoutMs: 30000,
+  ixbrowserEnabled: false,
+  ixbrowserApiUrl: 'http://127.0.0.1:53200',
+  ixbrowserOpenTimeoutMs: 30000,
 })
 
 onMounted(async () => {
@@ -152,10 +152,10 @@ onMounted(async () => {
       if (cfg.proxy.regionFilter !== undefined) form.proxyRegionFilter = cfg.proxy.regionFilter
       if (cfg.proxy.rotationStrategy !== undefined) form.proxyRotationStrategy = cfg.proxy.rotationStrategy
     }
-    if (cfg.bitbrowser) {
-      if (cfg.bitbrowser.enabled !== undefined) form.bitbrowserEnabled = cfg.bitbrowser.enabled
-      if (cfg.bitbrowser.apiUrl !== undefined) form.bitbrowserApiUrl = cfg.bitbrowser.apiUrl
-      if (cfg.bitbrowser.openTimeoutMs !== undefined) form.bitbrowserOpenTimeoutMs = cfg.bitbrowser.openTimeoutMs
+    if (cfg.ixbrowser) {
+      if (cfg.ixbrowser.enabled !== undefined) form.ixbrowserEnabled = cfg.ixbrowser.enabled
+      if (cfg.ixbrowser.apiUrl !== undefined) form.ixbrowserApiUrl = cfg.ixbrowser.apiUrl
+      if (cfg.ixbrowser.openTimeoutMs !== undefined) form.ixbrowserOpenTimeoutMs = cfg.ixbrowser.openTimeoutMs
     }
   } catch (err) {
     console.error('Failed to load config:', err)
@@ -186,13 +186,13 @@ async function handleSave() {
       regionFilter: form.proxyRegionFilter,
       rotationStrategy: form.proxyRotationStrategy,
     }
-    delete payload.bitbrowserEnabled
-    delete payload.bitbrowserApiUrl
-    delete payload.bitbrowserOpenTimeoutMs
-    payload.bitbrowser = {
-      enabled: form.bitbrowserEnabled,
-      apiUrl: form.bitbrowserApiUrl,
-      openTimeoutMs: Number(form.bitbrowserOpenTimeoutMs) || 30000,
+    delete payload.ixbrowserEnabled
+    delete payload.ixbrowserApiUrl
+    delete payload.ixbrowserOpenTimeoutMs
+    payload.ixbrowser = {
+      enabled: form.ixbrowserEnabled,
+      apiUrl: form.ixbrowserApiUrl,
+      openTimeoutMs: Number(form.ixbrowserOpenTimeoutMs) || 30000,
     }
     await api.put('/config', payload)
     ElMessage.success('配置已保存')
