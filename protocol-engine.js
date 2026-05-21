@@ -11,7 +11,7 @@ const { autoPayment } = require('./payment');
 const { randomDelay, saveCPAAuthFile } = require('./utils');
 const { connectGateway, getPaymentLink } = require('./server/discord-gateway');
 const { launchChrome, waitForCDP } = require('./server/chrome');
-const bitbrowser = require('./server/bitbrowser');
+const ixbrowser = require('./server/ixbrowser');
 const proxyMgr = require('./server/proxy');
 
 const ROOT = __dirname;
@@ -200,12 +200,12 @@ class ProtocolEngine extends EventEmitter {
       // Connect Discord once (shared across all accounts)
       this._gw = await connectGateway();
       console.log('[Proto-Engine] Discord connected!');
-      const useBitBrowser = !!(runtimeCfg.bitbrowser && runtimeCfg.bitbrowser.enabled);
-      if (useBitBrowser) {
-        const ok = await bitbrowser.healthCheck();
+      const useIxBrowser = !!(runtimeCfg.ixbrowser && runtimeCfg.ixbrowser.enabled);
+      if (useIxBrowser) {
+        const ok = await ixbrowser.healthCheck();
         console.log(ok
-          ? '[BitBrowser] ready'
-          : '[BitBrowser] unavailable; payment will fail per account');
+          ? '[ixbrowser] ready'
+          : '[ixbrowser] unavailable; payment will fail per account');
       }
 
       for (let i = 0; i < accounts.length; i++) {
@@ -312,13 +312,13 @@ class ProtocolEngine extends EventEmitter {
         try {
           this.emitStatus({ email: account.email, status: 'running', phase: 'payment', progress });
           console.log(`[${progress}] Opening payment: ${link.slice(0, 60)}...`);
-          if (useBitBrowser) {
+          if (useIxBrowser) {
             // Let open() throw on failure — the existing outer catch will record
             // summary.error++, emit status, and log uniformly. Letting the error
             // propagate also lets the consecutive-error cooldown counter see it
             // (see spec §5.1: "the existing per-batch cooldown counter ... will
             // halt the batch automatically").
-            session = await bitbrowser.open({ proxyServer: proxyMgr.getProxyUrl() || '' });
+            session = await ixbrowser.open({ proxyServer: proxyMgr.getProxyUrl() || '' });
             browser = session.browser;
             this._session = session;
           } else {
