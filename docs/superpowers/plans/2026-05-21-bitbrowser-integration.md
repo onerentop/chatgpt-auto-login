@@ -26,10 +26,12 @@
 
 ---
 
-## Task 1: Add `bitbrowser` block to `config.json`
+## Task 1: Add `bitbrowser` block to local `config.json`
+
+**Important:** `config.json` is in `.gitignore` (contains Discord token + SMS API key). **Do not commit it.** The downstream code in Task 7 step 4 reads `runtimeCfg.bitbrowser && runtimeCfg.bitbrowser.enabled` — if the block is absent, `useBitBrowser` is `false` and the original Chrome path runs unchanged. So this task is a **local-only edit** required for the user to enable the feature in Task 9; it never lands in git.
 
 **Files:**
-- Modify: `config.json` (add new top-level `bitbrowser` object after `proxy`)
+- Modify locally only: `config.json` (add new top-level `bitbrowser` object after `proxy`)
 
 - [ ] **Step 1: Edit `config.json`**
 
@@ -60,12 +62,9 @@ node -e "JSON.parse(require('fs').readFileSync('config.json','utf-8')); console.
 
 Expected output: `ok`
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 3: Do NOT commit**
 
-```
-git add config.json
-git commit -m "config: add bitbrowser block (disabled by default)"
-```
+`config.json` is gitignored. Leave the file as a working-tree modification only.
 
 ---
 
