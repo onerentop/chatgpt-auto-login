@@ -14,13 +14,16 @@ const deps = {
   },
 };
 
+// Read fresh on every call: the UI writes config.json at runtime, and a new
+// value must take effect without a server restart. Do not cache.
 function readCfg() {
   try { return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8')).bitbrowser || {}; }
   catch { return {}; }
 }
 
-function getApiBase() {
-  return (readCfg().apiUrl || 'http://127.0.0.1:54345').replace(/\/$/, '');
+function getApiBase(override) {
+  const raw = override || readCfg().apiUrl || 'http://127.0.0.1:54345';
+  return raw.trim().replace(/\/+$/, '');
 }
 
 function parseProxy(url) {
@@ -43,15 +46,21 @@ function parseProxy(url) {
 async function healthCheck() {
   // /browser/list is a primary documented endpoint; any HTTP response (not ECONNREFUSED)
   // means the daemon is alive. We don't care about pagination success, only reachability.
+  // 3s timeout prevents a hung daemon from blocking batch start for ~21s (OS TCP timeout).
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 3000);
   try {
     const res = await deps.fetch(`${getApiBase()}/browser/list`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ page: 0, pageSize: 1 }),
+      signal: ctrl.signal,
     });
-    return !!(res && typeof res.status === 'number');
+    return !!res;
   } catch {
     return false;
+  } finally {
+    clearTimeout(timer);
   }
 }
 

@@ -1,6 +1,11 @@
-const { test, describe } = require('node:test');
+const { test, describe, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
 const bb = require('./bitbrowser');
+
+// Snapshot real deps once and restore before every test so _deps stays clean
+// across describe blocks and any future spec files.
+const realDeps = { ...bb._deps };
+beforeEach(() => { Object.assign(bb._deps, realDeps); });
 
 describe('parseProxy', () => {
   test('parses http://host:port', () => {
@@ -54,5 +59,23 @@ describe('healthCheck()', () => {
   test('never throws', async () => {
     bb._deps.fetch = async () => { throw new Error('boom'); };
     await assert.doesNotReject(bb.healthCheck());
+  });
+});
+
+describe('getApiBase()', () => {
+  test('returns default when no apiUrl provided', () => {
+    assert.equal(bb.__internal.getApiBase('http://127.0.0.1:54345'), 'http://127.0.0.1:54345');
+  });
+  test('strips a single trailing slash', () => {
+    assert.equal(bb.__internal.getApiBase('http://127.0.0.1:54345/'), 'http://127.0.0.1:54345');
+  });
+  test('strips multiple trailing slashes', () => {
+    assert.equal(bb.__internal.getApiBase('http://127.0.0.1:54345//'), 'http://127.0.0.1:54345');
+  });
+  test('trims leading and trailing whitespace', () => {
+    assert.equal(bb.__internal.getApiBase('  http://127.0.0.1:54345  '), 'http://127.0.0.1:54345');
+  });
+  test('preserves a subpath', () => {
+    assert.equal(bb.__internal.getApiBase('http://127.0.0.1:54345/v1/'), 'http://127.0.0.1:54345/v1');
   });
 });
