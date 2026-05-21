@@ -151,6 +151,31 @@ describe('open() — happy path', () => {
       '/api/v2/profile-delete',
     ]);
   });
+
+  test('accepts /profile-create returning data as bare integer (empirical real-daemon shape)', async () => {
+    // The ixbrowser daemon returns { error: { code: 0 }, data: 373 } for /profile-create —
+    // a bare integer, not an object. Verified live on 2026-05-21 against a real daemon.
+    const calls = [];
+    bb._deps.fetch = async (url) => {
+      calls.push(String(url));
+      if (String(url).endsWith('/api/v2/profile-create'))
+        return { ok: true, json: async () => ({ error: { code: 0 }, data: 999 }) };
+      if (String(url).endsWith('/api/v2/profile-open'))
+        return { ok: true, json: async () => ({ error: { code: 0 }, data: { debugging_address: '127.0.0.1:54678' } }) };
+      return { ok: true, json: async () => ({ error: { code: 0 }, data: [] }) };
+    };
+    bb._deps.connectOverCDP = async () => ({ close: async () => {} });
+
+    const session = await bb.open({ proxyServer: 'http://127.0.0.1:7890' });
+    await session.close();
+    const paths = calls.map(u => new URL(u).pathname);
+    assert.deepEqual(paths, [
+      '/api/v2/profile-create',
+      '/api/v2/profile-open',
+      '/api/v2/profile-close',
+      '/api/v2/profile-delete',
+    ]);
+  });
 });
 
 describe('open() — error paths', () => {

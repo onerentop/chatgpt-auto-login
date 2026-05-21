@@ -84,7 +84,11 @@ async function request(pathname, body, timeoutMs = 15000) {
     const msg = json.error?.message || `error.code=${json.error?.code}`;
     throw new IxBrowserError('IxBrowserApiError', `ixbrowser API: ${String(msg).slice(0, 80)}`);
   }
-  return json.data || {};
+  // Return data as-is. Empirically ixbrowser returns scalars (e.g. /profile-create
+  // returns data: 373 — the new profile_id as a bare integer), arrays (/profile-delete
+  // returns data: []), and objects (/profile-open returns data: {debugging_address,...}).
+  // Callers must handle the per-endpoint shape.
+  return json.data;
 }
 
 async function healthCheck() {
@@ -141,10 +145,14 @@ async function open({ proxyServer } = {}) {
       },
     };
     const createData = await request('/api/v2/profile-create', createBody);
-    // The Python SDK's create_profile returns the raw 'data' field, but the spec
-    // notes the exact id field name is empirically unconfirmed. Accept either.
-    profile_id = createData.profile_id || createData.id;
-    if (!profile_id) throw new IxBrowserError('IxBrowserApiError', '/profile-create did not return profile_id');
+    // Empirically, ixbrowser's /profile-create returns the new id as a bare integer
+    // in the `data` field (i.e. data: 373, NOT data: {profile_id: 373}). The Python SDK
+    // documentation suggested an object shape; live testing on 2026-05-21 with daemon
+    // confirmed the scalar form. Tolerate the object form too as a forward-compat fallback.
+    profile_id = (typeof createData === 'number')
+      ? createData
+      : (createData?.profile_id || createData?.id);
+    if (!profile_id) throw new IxBrowserError('IxBrowserApiError', `/profile-create did not return a profile_id (got ${JSON.stringify(createData)?.slice(0, 80)})`);
 
     // 2. Launch and obtain CDP endpoint.
     // /profile-open cold-starts a Chrome subprocess on the ixbrowser side, which
