@@ -33,7 +33,25 @@
     </el-row>
     <el-row style="margin-bottom: 12px">
       <el-col :span="24">
-        <el-input v-model="search" placeholder="搜索邮箱..." clearable style="width:220px" />
+        <el-input v-model="search" placeholder="搜索邮箱..." clearable style="width:200px" />
+        <el-select v-model="statusFilter" placeholder="状态" clearable style="width:130px;margin-left:8px">
+          <el-option label="Plus(有RT)" value="plus" />
+          <el-option label="Plus(无RT)" value="plus_no_rt" />
+          <el-option label="错误" value="error" />
+          <el-option label="已删除" value="deactivated" />
+          <el-option label="无链接" value="no_link" />
+          <el-option label="空闲" value="idle" />
+          <el-option label="运行中" value="running" />
+        </el-select>
+        <el-select v-model="planFilter" placeholder="Plan" clearable style="width:110px;margin-left:8px">
+          <el-option label="Plus" value="plus" />
+          <el-option label="Free" value="free" />
+          <el-option label="未知" value="unknown" />
+        </el-select>
+        <el-select v-model="authFilter" placeholder="Auth" clearable style="width:110px;margin-left:8px">
+          <el-option label="已生成" value="yes" />
+          <el-option label="未生成" value="no" />
+        </el-select>
         <el-tag style="margin-left: 12px">{{ filteredRows.length }} / {{ accounts.length }}</el-tag>
       </el-col>
     </el-row>
@@ -136,12 +154,24 @@ const accounts = ref([])
 const selected = ref([])
 
 const search = ref('')
+const statusFilter = ref('')
+const planFilter = ref('')
+const authFilter = ref('')
 const selectedEmails = computed(() => selected.value.map(r => r.email))
 const failedEmails = computed(() => accounts.value.filter(a => a._status === 'error').map(a => a.email))
 const filteredRows = computed(() => {
-  if (!search.value) return accounts.value
   const q = search.value.toLowerCase()
-  return accounts.value.filter(a => a.email.toLowerCase().includes(q))
+  return accounts.value.filter(a => {
+    if (q && !a.email.toLowerCase().includes(q)) return false
+    if (statusFilter.value && a._status !== statusFilter.value) return false
+    if (planFilter.value) {
+      if (planFilter.value === 'unknown' && a._plan) return false
+      if (planFilter.value !== 'unknown' && a._plan !== planFilter.value) return false
+    }
+    if (authFilter.value === 'yes' && !a._hasAuth) return false
+    if (authFilter.value === 'no' && a._hasAuth) return false
+    return true
+  })
 })
 
 const historyLogs = ref({})

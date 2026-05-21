@@ -9,7 +9,25 @@
         <el-popconfirm :title="`确定删除选中的 ${selected.length} 个账号？`" @confirm="delSelected" v-if="selected.length > 0">
           <template #reference><el-button type="danger" size="small">删除选中 ({{ selected.length }})</el-button></template>
         </el-popconfirm>
-        <el-input v-model="search" placeholder="搜索邮箱..." clearable style="width:220px;margin-left:12px" />
+        <el-input v-model="search" placeholder="搜索邮箱..." clearable style="width:200px;margin-left:12px" />
+        <el-select v-model="statusFilter" placeholder="状态" clearable style="width:130px;margin-left:8px">
+          <el-option label="Plus(有RT)" value="plus" />
+          <el-option label="Plus(无RT)" value="plus_no_rt" />
+          <el-option label="错误" value="error" />
+          <el-option label="已删除" value="deactivated" />
+          <el-option label="无链接" value="no_link" />
+          <el-option label="空闲" value="idle" />
+          <el-option label="运行中" value="running" />
+        </el-select>
+        <el-select v-model="planFilter" placeholder="Plan" clearable style="width:110px;margin-left:8px">
+          <el-option label="Plus" value="plus" />
+          <el-option label="Free" value="free" />
+          <el-option label="未知" value="unknown" />
+        </el-select>
+        <el-select v-model="authFilter" placeholder="Auth" clearable style="width:110px;margin-left:8px">
+          <el-option label="已生成" value="yes" />
+          <el-option label="未生成" value="no" />
+        </el-select>
         <el-tag style="margin-left: 12px">{{ filteredAccounts.length }} / {{ accounts.length }}</el-tag>
       </el-col>
     </el-row>
@@ -92,10 +110,22 @@ const tableRef = ref(null)
 const accounts = ref([])
 const selected = ref([])
 const search = ref('')
+const statusFilter = ref('')
+const planFilter = ref('')
+const authFilter = ref('')
 const filteredAccounts = computed(() => {
-  if (!search.value) return accounts.value
   const q = search.value.toLowerCase()
-  return accounts.value.filter(a => a.email.toLowerCase().includes(q))
+  return accounts.value.filter(a => {
+    if (q && !a.email.toLowerCase().includes(q)) return false
+    if (statusFilter.value && a._status !== statusFilter.value) return false
+    if (planFilter.value) {
+      if (planFilter.value === 'unknown' && a._plan) return false
+      if (planFilter.value !== 'unknown' && a._plan !== planFilter.value) return false
+    }
+    if (authFilter.value === 'yes' && !a._hasAuth) return false
+    if (authFilter.value === 'no' && a._hasAuth) return false
+    return true
+  })
 })
 const showImport = ref(false)
 const showEdit = ref(false)
@@ -107,14 +137,15 @@ const editOrigEmail = ref('')
 async function load() {
   try {
     const [acctRes, statusRes] = await Promise.all([api.get('/accounts/raw'), api.get('/results').catch(() => ({ data: [] }))])
-    const statusMap = {}
+    const resultMap = {}
     for (const s of (statusRes.data || [])) {
-      statusMap[s.email] = s.status
+      resultMap[s.email] = s
     }
     accounts.value = acctRes.data.map(a => {
-      const st = (statusMap[a.email] || '').toLowerCase()
+      const r = resultMap[a.email] || {}
+      const st = (r.status || '').toLowerCase()
       const plan = PLUS_STATUSES.includes(st) ? 'plus' : (ERROR_STATUSES.includes(st) ? 'free' : '')
-      return { ...a, _showPw: false, _plan: plan }
+      return { ...a, _showPw: false, _status: st || 'idle', _plan: plan, _hasAuth: !!r.hasAuthFile }
     })
   } catch {}
 }
