@@ -318,19 +318,39 @@ async function handlePayPalCheckout(page, phoneOverride, smsOverride) {
   console.log('    [Pay] PayPal checkout page detected');
   await randomDelay(2000, 3000);
 
-  // Set country to US
-  const changed = await page.evaluate(() => {
+  // Set country to US — PayPal's <select> is a React-controlled component, so a
+  // bare `el.value = 'US'` is overwritten on the next render. We have to use the
+  // native setter so React's onChange picks it up, then poll until the value
+  // actually sticks before continuing (dependent fields like state list, zip
+  // validation, etc. only update once React commits the new country).
+  const initial = await page.evaluate(() => {
     const c = document.getElementById('country');
-    if (c && c.value !== 'US') {
-      c.value = 'US';
-      c.dispatchEvent(new Event('change', { bubbles: true }));
-      return true;
-    }
-    return false;
+    return c ? c.value : null;
   });
-  if (changed) {
-    console.log('    [Pay] Country → US');
-    await randomDelay(2000, 3000);
+  if (initial !== null && initial !== 'US') {
+    await page.evaluate(() => {
+      const c = document.getElementById('country');
+      if (!c) return;
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set;
+      setter.call(c, 'US');
+      c.dispatchEvent(new Event('input', { bubbles: true }));
+      c.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    // Wait until React commits the new value (poll up to ~10s).
+    const ok = await page.waitForFunction(
+      () => document.getElementById('country')?.value === 'US',
+      { timeout: 10000 },
+    ).then(() => true).catch(() => false);
+    if (ok) {
+      console.log(`    [Pay] Country: ${initial} → US`);
+    } else {
+      console.log(`    [Pay] WARNING: country still "${await page.evaluate(() => document.getElementById('country')?.value)}" after switch attempt; aborting fill`);
+      throw new Error(`Failed to switch country to US (stuck at "${initial}")`);
+    }
+    // Give the dependent fields (state options, address schema) a beat to repaint.
+    await randomDelay(1500, 2500);
+  } else if (initial === 'US') {
+    console.log('    [Pay] Country already US');
   }
 
   const addr = await fetchAddress();
