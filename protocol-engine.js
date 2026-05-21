@@ -305,7 +305,7 @@ class ProtocolEngine extends EventEmitter {
         }
         if (!link) continue;
 
-        // Step 3: Payment (fresh browser for each account — Chrome or BitBrowser)
+        // Step 3: Payment (fresh browser for each account — Chrome or ixbrowser)
         const port = 9222 + i;
         const tempDir = path.join(os.tmpdir(), `proto-pay-${Date.now()}-${i}`);
         let chromeProc = null, browser = null, session = null;
