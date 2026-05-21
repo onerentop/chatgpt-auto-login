@@ -111,7 +111,7 @@ async function open({ proxyServer } = {}) {
     if (browser)    { try { await browser.close(); } catch {} browser = null; }
     if (windowOpen) { try { await request('/browser/close', { id }); } catch {} windowOpen = false; }
     if (id) {
-      try { await request('/browser/delete', { ids: [id] }); }
+      try { await request('/browser/delete', { id }); }
       catch (e) { console.log(`[BitBrowser] delete failed: ${e.message?.slice(0, 80)}`); }
       id = null;
     }
