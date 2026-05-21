@@ -574,6 +574,13 @@ def main():
         final_path = urlparse(final_url).path
         _log(f"Authorize -> {final_path}")
 
+        # Check if landing page is an error page (account deleted/deactivated)
+        page_html = r.text or ""
+        if "account_deactivated" in page_html or "account_disabled" in page_html:
+            _log("Account deactivated/deleted detected on authorize page")
+            print(json.dumps({"status": "deactivated", "error": "account_deactivated"}))
+            return
+
         need_otp = False
         need_register = False
 
@@ -595,9 +602,18 @@ def main():
                 headers={"Accept": "application/json", "Content-Type": "application/json",
                     "Origin": AUTH, "Referer": final_url, "oai-device-id": device_id,
                     "openai-sentinel-token": sentinel, "ext-passkey-client-capabilities": "conditional-create,conditional-get"}, timeout=30)
-            page_data = r.json()
+            try:
+                page_data = r.json()
+            except Exception:
+                page_data = {}
             page_type = (page_data.get("page") or {}).get("type", "")
             _log(f"Email response: page={page_type}")
+            # Check for deactivated/deleted account
+            body_text = r.text or ""
+            if "account_deactivated" in body_text or "account_disabled" in body_text:
+                _log("Account deactivated detected in authorize/continue response")
+                print(json.dumps({"status": "deactivated", "error": "account_deactivated"}))
+                return
             if "email_otp" in page_type or "email-verification" in (page_data.get("continue_url") or ""):
                 need_otp = True
             elif "create-account" in page_type or "password" in page_type:
@@ -662,6 +678,11 @@ def main():
             if r.status_code != 200:
                 body_preview = (r.text or "")[:200]
                 _log(f"OTP error body: {body_preview}")
+                # Detect account deletion/deactivation
+                if "account_deactivated" in body_preview or "account_disabled" in body_preview or "deleted" in body_preview.lower():
+                    _log("Account deactivated/deleted by OpenAI")
+                    print(json.dumps({"status": "deactivated", "error": "account_deactivated"}))
+                    return
                 raise Exception(f"OTP validation failed: {r.status_code} {body_preview[:80]}")
 
         # Step 6: About-you (handle both new and existing accounts)

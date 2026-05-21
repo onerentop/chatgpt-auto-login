@@ -207,14 +207,17 @@ class PipelineEngine extends EventEmitter {
           const loginResult = await loginAccount(browser, account);
 
           if (loginResult.status !== 'success' || !loginResult.accessToken) {
-            console.log(`${p} Login failed: ${loginResult.reason || loginResult.status}`);
-            finalResult.reason = `Login: ${loginResult.reason || loginResult.status}`;
+            const isDeactivated = loginResult.status === 'deactivated';
+            const statusOut = isDeactivated ? 'deactivated' : 'error';
+            console.log(`${p} Login ${isDeactivated ? 'account_deactivated' : 'failed'}: ${loginResult.reason || loginResult.status}`);
+            finalResult.status = statusOut;
+            finalResult.reason = isDeactivated ? 'account_deactivated' : `Login: ${loginResult.reason || loginResult.status}`;
             allResults.push(finalResult);
 
-            this.emitStatus( {
+            this.emitStatus({
               email: account.email,
-              status: 'error',
-              phase: 'login',
+              status: statusOut,
+              phase: isDeactivated ? 'done' : 'login',
               progress,
               reason: finalResult.reason,
             });
@@ -414,7 +417,7 @@ class PipelineEngine extends EventEmitter {
         total: allResults.length,
         success: allResults.filter((r) => r.status === 'plus' || r.status === 'plus_no_rt').length,
         noLink: allResults.filter((r) => r.status === 'no_link').length,
-        error: allResults.filter((r) => r.status === 'error').length,
+        error: allResults.filter((r) => r.status === 'error' || r.status === 'deactivated').length,
       };
 
       console.log('========================================');

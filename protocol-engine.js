@@ -40,6 +40,7 @@ function runProtocolRegister(account, engine) {
       try {
         const result = JSON.parse(stdout);
         if (result.status === 'success') resolve(result);
+        else if (result.status === 'deactivated') resolve(result);  // surface to caller
         else reject(new Error(result.error || 'Protocol register failed'));
       } catch { reject(new Error(stderr.slice(-200) || `Python exit ${code}`)); }
     });
@@ -208,6 +209,12 @@ class ProtocolEngine extends EventEmitter {
         let result;
         try {
           result = await runProtocolRegister(account, this);
+          if (result.status === 'deactivated') {
+            console.log(`[${progress}] Account deactivated/deleted by OpenAI`);
+            this.emitStatus({ email: account.email, status: 'deactivated', phase: 'done', progress, reason: 'account_deactivated' });
+            summary.error++;
+            continue;
+          }
           console.log(`[${progress}] Protocol login OK: ${result.accessToken?.slice(0, 20)}...`);
         } catch (e) {
           console.log(`[${progress}] Protocol login failed: ${e.message?.slice(0, 80)}`);

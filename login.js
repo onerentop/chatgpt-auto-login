@@ -307,6 +307,15 @@ async function loginAccount(browser, account) {
     const currentUrl = page.url();
     await page.screenshot({ path: screenshotPath(account.email), fullPage: false });
 
+    // Detect deactivated/deleted account error page
+    try {
+      const pageContent = await page.content();
+      if (pageContent.includes('account_deactivated') || pageContent.includes('account_disabled')) {
+        const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+        return { email: account.email, status: 'deactivated', duration, reason: 'account_deactivated' };
+      }
+    } catch {}
+
     // If on chatgpt.com, consider logged in; otherwise check elements
     const isLoggedIn = currentUrl.includes('chatgpt.com') || currentUrl.includes('chat.openai.com') || await checkLoginSuccess(page, currentUrl);
     if (!isLoggedIn) {

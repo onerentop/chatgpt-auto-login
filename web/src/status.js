@@ -7,6 +7,7 @@ const TYPE_MAP = {
   plus_no_rt: 'warning',
   no_link: 'warning',
   error: 'danger',
+  deactivated: 'danger',
 }
 
 const LABEL_MAP = {
@@ -16,6 +17,7 @@ const LABEL_MAP = {
   plus_no_rt: 'Plus(无RT)',
   no_link: '无链接',
   error: '错误',
+  deactivated: '已删除',
 }
 
 export function statusType(s) {
@@ -27,7 +29,7 @@ export function statusLabel(s) {
 }
 
 export const PLUS_STATUSES = ['plus', 'plus_no_rt']
-export const ERROR_STATUSES = ['error', 'no_link']
+export const ERROR_STATUSES = ['error', 'no_link', 'deactivated']
 
 export function isPlus(status) {
   return PLUS_STATUSES.includes((status || '').toLowerCase())
