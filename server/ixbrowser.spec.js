@@ -109,8 +109,13 @@ describe('open() — happy path', () => {
     await session.close();
 
     assert.equal(cdpClosed, true, 'browser.close was awaited');
-    const paths = calls.map(c => c.url.split('/').slice(-1)[0]);
-    assert.deepEqual(paths, ['profile-create', 'profile-open', 'profile-close', 'profile-delete']);
+    const paths = calls.map(c => new URL(c.url).pathname);
+    assert.deepEqual(paths, [
+      '/api/v2/profile-create',
+      '/api/v2/profile-open',
+      '/api/v2/profile-close',
+      '/api/v2/profile-delete',
+    ]);
 
     // Verify proxy fields on the create call (nested under proxy_config)
     const create = calls.find(c => c.url.endsWith('/api/v2/profile-create')).body;
@@ -138,8 +143,13 @@ describe('open() — happy path', () => {
     await session.close();
     await session.close();
     assert.equal(closeCount, 1, 'browser.close called only once');
-    const paths = calls.map(u => u.split('/').slice(-1)[0]);
-    assert.deepEqual(paths, ['profile-create', 'profile-open', 'profile-close', 'profile-delete']);
+    const paths = calls.map(u => new URL(u).pathname);
+    assert.deepEqual(paths, [
+      '/api/v2/profile-create',
+      '/api/v2/profile-open',
+      '/api/v2/profile-close',
+      '/api/v2/profile-delete',
+    ]);
   });
 });
 
@@ -158,7 +168,7 @@ describe('open() — error paths', () => {
       (e) => e instanceof bb.IxBrowserError && e.kind === 'IxBrowserUnavailable',
     );
     // Only the create call was attempted; no close/delete because no profile_id was issued
-    assert.deepEqual(calls.map(u => u.split('/').slice(-1)[0]), ['profile-create']);
+    assert.deepEqual(calls.map(u => new URL(u).pathname), ['/api/v2/profile-create']);
   });
 
   test('create returns error.code != 0 → IxBrowserApiError, no close/delete', async () => {
@@ -173,7 +183,7 @@ describe('open() — error paths', () => {
       () => bb.open({ proxyServer: 'http://127.0.0.1:7890' }),
       (e) => e instanceof bb.IxBrowserError && e.kind === 'IxBrowserApiError' && /已超过/.test(e.message),
     );
-    assert.deepEqual(calls.map(u => u.split('/').slice(-1)[0]), ['profile-create']);
+    assert.deepEqual(calls.map(u => new URL(u).pathname), ['/api/v2/profile-create']);
   });
 
   test('open ok but connectOverCDP rejects → CDPConnectFailed, close+delete invoked', async () => {
@@ -192,8 +202,13 @@ describe('open() — error paths', () => {
       () => bb.open({ proxyServer: 'http://127.0.0.1:7890' }),
       (e) => e instanceof bb.IxBrowserError && e.kind === 'CDPConnectFailed',
     );
-    const paths = calls.map(u => u.split('/').slice(-1)[0]);
-    assert.deepEqual(paths, ['profile-create', 'profile-open', 'profile-close', 'profile-delete']);
+    const paths = calls.map(u => new URL(u).pathname);
+    assert.deepEqual(paths, [
+      '/api/v2/profile-create',
+      '/api/v2/profile-open',
+      '/api/v2/profile-close',
+      '/api/v2/profile-delete',
+    ]);
   });
 
   test('cleanup tolerance: browser.close throws → delete still attempted', async () => {
@@ -210,14 +225,39 @@ describe('open() — error paths', () => {
 
     const session = await bb.open({ proxyServer: 'http://127.0.0.1:7890' });
     await session.close();
-    const paths = calls.map(u => u.split('/').slice(-1)[0]);
-    assert.deepEqual(paths, ['profile-create', 'profile-open', 'profile-close', 'profile-delete']);
+    const paths = calls.map(u => new URL(u).pathname);
+    assert.deepEqual(paths, [
+      '/api/v2/profile-create',
+      '/api/v2/profile-open',
+      '/api/v2/profile-close',
+      '/api/v2/profile-delete',
+    ]);
   });
 
   test('open() throws if proxyServer empty', async () => {
     await assert.rejects(
       () => bb.open({ proxyServer: '' }),
       /required/i,
+    );
+  });
+
+  test('200 OK but error envelope absent → IxBrowserApiError with error.code=undefined', async () => {
+    bb._deps.fetch = async () => ({ ok: true, json: async () => ({ data: { profile_id: 1 } }) });
+    bb._deps.connectOverCDP = async () => assert.fail('should not be called');
+
+    await assert.rejects(
+      () => bb.open({ proxyServer: 'http://127.0.0.1:7890' }),
+      (e) => e instanceof bb.IxBrowserError && e.kind === 'IxBrowserApiError' && /error\.code=undefined/.test(e.message),
+    );
+  });
+
+  test('200 OK with non-JSON body → IxBrowserApiError with "response not JSON"', async () => {
+    bb._deps.fetch = async () => ({ ok: true, json: async () => { throw new Error('Unexpected token <'); } });
+    bb._deps.connectOverCDP = async () => assert.fail('should not be called');
+
+    await assert.rejects(
+      () => bb.open({ proxyServer: 'http://127.0.0.1:7890' }),
+      (e) => e instanceof bb.IxBrowserError && e.kind === 'IxBrowserApiError' && /response not JSON/.test(e.message),
     );
   });
 });

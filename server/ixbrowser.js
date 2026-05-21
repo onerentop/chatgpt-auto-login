@@ -76,7 +76,10 @@ async function request(pathname, body, timeoutMs = 15000) {
   if (!res.ok) {
     throw new IxBrowserError('IxBrowserApiError', `ixbrowser HTTP ${res.status} on ${pathname}`);
   }
-  const json = await res.json().catch(() => ({}));
+  const json = await res.json().catch(() => null);
+  if (json === null) {
+    throw new IxBrowserError('IxBrowserApiError', `ixbrowser ${pathname}: response not JSON`);
+  }
   if (!json.error || json.error.code !== 0) {
     const msg = json.error?.message || `error.code=${json.error?.code}`;
     throw new IxBrowserError('IxBrowserApiError', `ixbrowser API: ${String(msg).slice(0, 80)}`);
