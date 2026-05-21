@@ -652,12 +652,17 @@ def main():
                     "Origin": AUTH, "Referer": f"{AUTH}/email-verification",
                     "oai-device-id": device_id, "openai-sentinel-token": sentinel,
                     "ext-passkey-client-capabilities": "conditional-create,conditional-get"}, timeout=30)
-            otp_data = r.json()
+            try:
+                otp_data = r.json()
+            except Exception:
+                otp_data = {}
             otp_page = (otp_data.get("page") or {}).get("type", "")
             otp_continue = otp_data.get("continue_url", "")
             _log(f"OTP response: {r.status_code} page={otp_page} continue={otp_continue[:60]}")
             if r.status_code != 200:
-                raise Exception(f"OTP validation failed: {r.status_code}")
+                body_preview = (r.text or "")[:200]
+                _log(f"OTP error body: {body_preview}")
+                raise Exception(f"OTP validation failed: {r.status_code} {body_preview[:80]}")
 
         # Step 6: About-you (handle both new and existing accounts)
         continue_url = otp_continue if need_otp else ""

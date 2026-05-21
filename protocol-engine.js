@@ -179,6 +179,14 @@ class ProtocolEngine extends EventEmitter {
     const runtimeCfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf-8'));
     const summary = { total: accounts.length, success: 0, noLink: 0, error: 0 };
 
+    // Rate-limit / anti-bot cooldown configuration
+    const COOLDOWN_THRESHOLD = 3;          // N consecutive failures triggers cooldown
+    const COOLDOWN_MS_MIN = 300000;        // 5 min
+    const COOLDOWN_MS_MAX = 600000;        // 10 min
+    const ACCOUNT_DELAY_MIN = 15000;       // 15s between accounts
+    const ACCOUNT_DELAY_MAX = 45000;       // 45s between accounts
+    let consecutiveErrors = 0;
+
     try {
       // === Sequential: each account runs login → Discord → payment → done before next ===
       console.log(`[Proto-Engine] Starting ${accounts.length} accounts sequentially...`);
@@ -192,6 +200,7 @@ class ProtocolEngine extends EventEmitter {
         const account = accounts[i];
         const progress = `${i + 1}/${accounts.length}`;
         currentEmail = account.email;
+        const errorsBefore = summary.error;
 
         // Step 1: Protocol login
         this.emitStatus({ email: account.email, status: 'running', phase: 'protocol-login', progress });
@@ -319,7 +328,28 @@ class ProtocolEngine extends EventEmitter {
           this._browser = null; this._chromeProc = null; this._tempDir = null;
         }
 
-        if (i < accounts.length - 1) await randomDelay(3000, 5000);
+        // Track consecutive failures for rate-limit cooldown
+        if (summary.error > errorsBefore) {
+          consecutiveErrors++;
+          console.log(`[${progress}] consecutive errors: ${consecutiveErrors}/${COOLDOWN_THRESHOLD}`);
+        } else {
+          consecutiveErrors = 0;
+        }
+
+        if (i < accounts.length - 1) {
+          if (consecutiveErrors >= COOLDOWN_THRESHOLD) {
+            const cd = COOLDOWN_MS_MIN + Math.floor(Math.random() * (COOLDOWN_MS_MAX - COOLDOWN_MS_MIN));
+            console.log(`[Proto-Engine] ${consecutiveErrors} consecutive failures — cooldown ${Math.round(cd/1000)}s before next account`);
+            // Sleep in 1s chunks so stop() can interrupt
+            for (let elapsed = 0; elapsed < cd; elapsed += 1000) {
+              if (this.stopFlag) break;
+              await new Promise(r => setTimeout(r, 1000));
+            }
+            consecutiveErrors = 0;
+          } else {
+            await randomDelay(ACCOUNT_DELAY_MIN, ACCOUNT_DELAY_MAX);
+          }
+        }
       }
 
     } catch (e) {
