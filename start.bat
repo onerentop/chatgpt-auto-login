@@ -5,7 +5,7 @@ cd /d "%~dp0"
 
 echo ==========================================
 echo   ChatGPT Auto Login ^& Plus Activation
-echo   Web Dashboard v2.4
+echo   Web Dashboard
 echo ==========================================
 echo.
 
@@ -75,30 +75,30 @@ if not exist "web\dist\index.html" (
     )
 )
 
-:: Create directories
-if not exist "sessions" mkdir sessions
+:: Create output directory
 if not exist "cpa-auth" mkdir cpa-auth
 
-:: Check config
+:: Create default config if missing
 if not exist "config.json" (
     echo.
     echo [INFO] Creating default config.json...
-    echo { > config.json
-    echo   "threads": 1, >> config.json
-    echo   "phoneSlots": [{"phone": "", "smsApiUrl": ""}], >> config.json
-    echo   "protocolMode": false, >> config.json
-    echo   "enableOAuth": false, >> config.json
-    echo   "enableCPA": false, >> config.json
-    echo   "cpaUrl": "", >> config.json
-    echo   "cpaKey": "", >> config.json
-    echo   "discordToken": "", >> config.json
-    echo   "discordChannelId": "", >> config.json
-    echo   "discordMessageId": "", >> config.json
-    echo   "discordGuildId": "", >> config.json
-    echo   "discordAppId": "", >> config.json
-    echo   "webPassword": "admin" >> config.json
-    echo } >> config.json
-    echo [INFO] Default password: admin
+    (
+        echo {
+        echo   "protocolMode": true,
+        echo   "phoneSlots": [{"phone": "", "smsApiUrl": ""}],
+        echo   "phone": "",
+        echo   "smsApiUrl": "",
+        echo   "enableOAuth": false,
+        echo   "enableCPA": false,
+        echo   "cpaUrl": "",
+        echo   "cpaKey": "",
+        echo   "discordToken": "",
+        echo   "discordChannelId": "",
+        echo   "discordMessageId": "",
+        echo   "discordGuildId": "",
+        echo   "discordAppId": ""
+        echo }
+    ) > config.json
     echo [INFO] Please configure via web dashboard after startup.
 )
 
@@ -106,7 +106,6 @@ echo.
 echo ==========================================
 echo   Starting server...
 echo   Dashboard: http://localhost:3000
-echo   Default password: admin
 echo ==========================================
 echo.
 
