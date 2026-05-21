@@ -114,29 +114,46 @@ async function switchTo(nodeTag) {
   return nodeTag;
 }
 
-/** Detect current exit IP through the proxy. */
+/** Detect current exit IP through the proxy. Uses HTTP CONNECT tunnel to HTTPS endpoint. */
 async function detectExit() {
   if (!_state.enabled) return '';
   try {
-    const http = require('http');
-    const { request } = http;
-    const result = await new Promise((resolve, reject) => {
-      const req = request('http://api.ipify.org', {
-        agent: new (require('http').Agent)(),
-        hostname: '127.0.0.1', port: HTTP_PORT, path: 'http://api.ipify.org', method: 'GET', timeout: 10000,
-      }, (res) => {
-        let buf = '';
-        res.on('data', (c) => buf += c);
-        res.on('end', () => resolve(buf.trim()));
+    const net = require('net');
+    const tls = require('tls');
+    const host = 'api.ipify.org';
+    const exitIp = await new Promise((resolve, reject) => {
+      const sock = net.connect(HTTP_PORT, '127.0.0.1', () => {
+        sock.write(`CONNECT ${host}:443 HTTP/1.1\r\nHost: ${host}:443\r\n\r\n`);
       });
-      req.on('error', reject);
-      req.on('timeout', () => req.destroy(new Error('timeout')));
-      req.end();
+      let preamble = '';
+      sock.once('error', reject);
+      sock.setTimeout(15000, () => { sock.destroy(new Error('timeout')); });
+      sock.on('data', function onData(chunk) {
+        preamble += chunk.toString('binary');
+        const headerEnd = preamble.indexOf('\r\n\r\n');
+        if (headerEnd === -1) return;
+        sock.removeListener('data', onData);
+        if (!/^HTTP\/1\.[01] 200/.test(preamble)) {
+          return reject(new Error(`CONNECT failed: ${preamble.split('\r\n')[0]}`));
+        }
+        const tlsSock = tls.connect({ socket: sock, servername: host, rejectUnauthorized: false }, () => {
+          tlsSock.write(`GET / HTTP/1.1\r\nHost: ${host}\r\nUser-Agent: curl/8\r\nConnection: close\r\n\r\n`);
+        });
+        let resp = '';
+        tlsSock.on('data', c => resp += c.toString('utf-8'));
+        tlsSock.on('end', () => {
+          const bodyIdx = resp.indexOf('\r\n\r\n');
+          const body = bodyIdx > -1 ? resp.slice(bodyIdx + 4).trim() : resp.trim();
+          const m = body.match(/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})/);
+          resolve(m ? m[1] : body.slice(0, 60));
+        });
+        tlsSock.on('error', reject);
+      });
     });
-    _state.exitIp = result || '';
-    return _state.exitIp;
+    _state.exitIp = exitIp;
+    return exitIp;
   } catch (e) {
-    _state.exitIp = `error: ${e.message?.slice(0, 40)}`;
+    _state.exitIp = `error: ${(e.message || '').slice(0, 60)}`;
     return _state.exitIp;
   }
 }

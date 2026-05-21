@@ -7,7 +7,7 @@ function fetchUrl(url) {
   return new Promise((resolve, reject) => {
     const client = url.startsWith('https') ? https : http;
     const req = client.get(url, {
-      headers: { 'User-Agent': 'ClashforWindows/0.20.39' },
+      headers: { 'User-Agent': 'v2rayN/6.42' },
     }, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
         fetchUrl(res.headers.location).then(resolve, reject);
