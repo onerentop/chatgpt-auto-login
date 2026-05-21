@@ -117,6 +117,8 @@ const filteredAccounts = computed(() => {
   const q = search.value.toLowerCase()
   return accounts.value.filter(a => {
     if (q && !a.email.toLowerCase().includes(q)) return false
+    // Running accounts always shown (don't disappear during execution)
+    if (a._status === 'running') return true
     if (statusFilter.value && a._status !== statusFilter.value) return false
     if (planFilter.value) {
       if (planFilter.value === 'unknown' && a._plan) return false
