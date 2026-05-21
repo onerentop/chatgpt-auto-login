@@ -108,11 +108,12 @@ async function open({ proxyServer } = {}) {
   let browser = null;
 
   const close = async () => {
-    if (browser)    { try { await browser.close(); } catch {} }
-    if (windowOpen) { try { await request('/browser/close', { id }); } catch {} }
+    if (browser)    { try { await browser.close(); } catch {} browser = null; }
+    if (windowOpen) { try { await request('/browser/close', { id }); } catch {} windowOpen = false; }
     if (id) {
       try { await request('/browser/delete', { ids: [id] }); }
       catch (e) { console.log(`[BitBrowser] delete failed: ${e.message?.slice(0, 80)}`); }
+      id = null;
     }
   };
 
@@ -138,17 +139,24 @@ async function open({ proxyServer } = {}) {
     if (!http) throw new BitBrowserError('BitBrowserApiError', '/browser/open did not return data.http');
     const cdpUrl = http.startsWith('http') ? http : `http://${http}`;
 
-    // 3. Connect Playwright with a hard timeout budget
+    // 3. Connect Playwright with a hard timeout budget.
+    // Capture the timer so we can clear it if connectOverCDP wins the race —
+    // otherwise the setTimeout keeps the event loop alive for openTimeoutMs and
+    // its rejection becomes a deferred rejection on a Promise nobody is listening to.
+    let cdpTimer;
     browser = await Promise.race([
       deps.connectOverCDP(cdpUrl),
-      new Promise((_, rej) => setTimeout(
-        () => rej(new BitBrowserError('CDPConnectFailed', `connectOverCDP timeout after ${openTimeoutMs}ms`)),
-        openTimeoutMs,
-      )),
-    ]).catch((e) => {
-      if (e instanceof BitBrowserError) throw e;
-      throw new BitBrowserError('CDPConnectFailed', `connectOverCDP failed: ${e.message?.slice(0, 80)}`);
-    });
+      new Promise((_, rej) => {
+        cdpTimer = setTimeout(
+          () => rej(new BitBrowserError('CDPConnectFailed', `connectOverCDP timeout after ${openTimeoutMs}ms`)),
+          openTimeoutMs,
+        );
+      }),
+    ]).finally(() => clearTimeout(cdpTimer))
+      .catch((e) => {
+        if (e instanceof BitBrowserError) throw e;
+        throw new BitBrowserError('CDPConnectFailed', `connectOverCDP failed: ${e.message?.slice(0, 80)}`);
+      });
 
     return { browser, close };
   } catch (e) {

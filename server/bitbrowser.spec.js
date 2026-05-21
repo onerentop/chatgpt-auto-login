@@ -80,26 +80,6 @@ describe('getApiBase()', () => {
   });
 });
 
-// ---- Helpers shared by open() tests ----
-function makeFetchMock(scriptedResponses) {
-  // scriptedResponses: array of { matchPath, body }
-  // Each call consumes the next item; if matchPath is set, asserts the URL contains it.
-  let i = 0;
-  return async (url, init) => {
-    const step = scriptedResponses[i++];
-    if (!step) throw new Error(`fetch called too many times (call ${i}, url=${url})`);
-    if (step.matchPath && !String(url).includes(step.matchPath)) {
-      throw new Error(`expected path containing "${step.matchPath}", got ${url}`);
-    }
-    if (step.throw) throw step.throw;
-    return {
-      ok: step.ok !== false,
-      status: step.status || 200,
-      json: async () => step.body,
-    };
-  };
-}
-
 describe('open() — happy path', () => {
   test('opens, returns session with browser+close, cleans up fully', async () => {
     const calls = [];
@@ -139,5 +119,26 @@ describe('open() — happy path', () => {
     assert.equal(update.host, '127.0.0.1');
     assert.equal(update.port, '7890');
     assert.match(update.name, /^pay-/);
+  });
+
+  test('session.close() is idempotent — second call is a no-op', async () => {
+    const calls = [];
+    bb._deps.fetch = async (url) => {
+      calls.push(String(url));
+      if (String(url).endsWith('/browser/update'))
+        return { ok: true, json: async () => ({ success: true, data: { id: 'idem-1' } }) };
+      if (String(url).endsWith('/browser/open'))
+        return { ok: true, json: async () => ({ success: true, data: { http: '127.0.0.1:54678' } }) };
+      return { ok: true, json: async () => ({ success: true }) };
+    };
+    let closeCount = 0;
+    bb._deps.connectOverCDP = async () => ({ close: async () => { closeCount++; } });
+
+    const session = await bb.open({ proxyServer: 'http://127.0.0.1:7890' });
+    await session.close();
+    await session.close();   // second call must not retrigger any HTTP or browser.close
+    assert.equal(closeCount, 1, 'browser.close called only once');
+    const paths = calls.map(u => u.split('/').slice(-2).join('/'));
+    assert.deepEqual(paths, ['browser/update', 'browser/open', 'browser/close', 'browser/delete']);
   });
 });
