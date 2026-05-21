@@ -70,8 +70,14 @@ function detectLoginType(email) {
 }
 
 const accountsDB = {
-  list() { return db.exec("SELECT * FROM accounts ORDER BY rowid")[0]?.values.map(rowToAccount) || []; },
-  get(email) { const stmt = db.prepare("SELECT * FROM accounts WHERE email = ?"); stmt.bind([email]); const row = stmt.step() ? stmt.get() : null; stmt.free(); return row ? rowToAccount(row) : null; },
+  list() { return mapRows(db.exec("SELECT * FROM accounts ORDER BY rowid")); },
+  get(email) {
+    const stmt = db.prepare("SELECT * FROM accounts WHERE email = ?");
+    stmt.bind([email]);
+    const row = stmt.step() ? stmt.getAsObject() : null;
+    stmt.free();
+    return row;
+  },
   add(a) { db.run("INSERT OR IGNORE INTO accounts (email, password, totp_secret, client_id, refresh_token, login_type) VALUES (?,?,?,?,?,?)", [a.email, a.password, a.totp_secret||'', a.client_id||'', a.refresh_token||'', detectLoginType(a.email)]); save(); },
   update(email, a) { db.run("UPDATE accounts SET password=?, totp_secret=?, client_id=?, refresh_token=?, login_type=? WHERE email=?", [a.password||'', a.totp_secret||'', a.client_id||'', a.refresh_token||'', detectLoginType(a.email||email), email]); save(); },
   delete(email) { db.run("DELETE FROM accounts WHERE email=?", [email]); save(); },
@@ -84,8 +90,14 @@ const accountsDB = {
 };
 
 const statusDB = {
-  get(email) { const stmt = db.prepare("SELECT * FROM account_status WHERE email=?"); stmt.bind([email]); const row = stmt.step() ? stmt.get() : null; stmt.free(); return row ? rowToStatus(row) : null; },
-  list() { return db.exec("SELECT * FROM account_status")[0]?.values.map(rowToStatus) || []; },
+  get(email) {
+    const stmt = db.prepare("SELECT * FROM account_status WHERE email=?");
+    stmt.bind([email]);
+    const row = stmt.step() ? stmt.getAsObject() : null;
+    stmt.free();
+    return row;
+  },
+  list() { return mapRows(db.exec("SELECT * FROM account_status")); },
   set(email, data) {
     const { status, phase, progress, reason, has_auth_file } = { status:'idle', phase:'', progress:'', reason:'', has_auth_file:0, ...data };
     db.run("INSERT OR REPLACE INTO account_status (email, status, phase, progress, reason, has_auth_file, updated_at) VALUES (?,?,?,?,?,?,datetime('now'))",
@@ -107,7 +119,7 @@ const logsDB = {
     const results = [];
     const stmt = db.prepare("SELECT * FROM execution_logs WHERE email=? ORDER BY id DESC LIMIT 200");
     stmt.bind([email]);
-    while (stmt.step()) results.push(rowToLog(stmt.get()));
+    while (stmt.step()) results.push(stmt.getAsObject());
     stmt.free();
     return results.reverse();
   },
@@ -115,14 +127,16 @@ const logsDB = {
   cleanup() { db.run("DELETE FROM execution_logs WHERE id NOT IN (SELECT id FROM execution_logs ORDER BY id DESC LIMIT 5000)"); save(); },
 };
 
-function rowToAccount(v) {
-  return { email: v[0], password: v[1], totp_secret: v[2], client_id: v[3], refresh_token: v[4], login_type: v[5], created_at: v[6] };
-}
-function rowToStatus(v) {
-  return { email: v[0], status: v[1], phase: v[2], progress: v[3], reason: v[4], has_auth_file: v[5], updated_at: v[6] };
-}
-function rowToLog(v) {
-  return { id: v[0], email: v[1], phase: v[2], message: v[3], timestamp: v[4], run_id: v[5] };
+// Map a sql.js exec() result to an array of objects using column names.
+// Robust to schema changes (column reorder / new columns).
+function mapRows(result) {
+  if (!result || !result[0]) return [];
+  const cols = result[0].columns;
+  return result[0].values.map((row) => {
+    const out = {};
+    for (let i = 0; i < cols.length; i++) out[cols[i]] = row[i];
+    return out;
+  });
 }
 
 module.exports = { initDB, accountsDB, statusDB, logsDB, save };

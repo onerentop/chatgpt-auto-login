@@ -107,7 +107,7 @@ async function loginAccount(browser, account) {
       // Get baseline UID - scan last 10 messages for the TRUE highest UID
       let baselineUid = 0;
       try {
-        const pre = new ImapFlow({ host: 'outlook.office365.com', port: 993, secure: true, auth: { user: account.email, accessToken: tokenData.access_token }, logger: false });
+        const pre = new ImapFlow({ host: 'outlook.office365.com', port: 993, secure: true, auth: { user: account.email, accessToken: tokenData.access_token }, logger: false, connectionTimeout: 30000, greetingTimeout: 15000, socketTimeout: 60000 });
         pre.on('error', () => {});
         await pre.connect();
         const lock = await pre.getMailboxLock('INBOX');
@@ -147,7 +147,7 @@ async function loginAccount(browser, account) {
         // Check IMAP for new email
         let client;
         try {
-          client = new ImapFlow({ host: 'outlook.office365.com', port: 993, secure: true, auth: { user: account.email, accessToken: tokenData.access_token }, logger: false });
+          client = new ImapFlow({ host: 'outlook.office365.com', port: 993, secure: true, auth: { user: account.email, accessToken: tokenData.access_token }, logger: false, connectionTimeout: 30000, greetingTimeout: 15000, socketTimeout: 60000 });
           client.on('error', () => {});
           await client.connect();
           const lock = await client.getMailboxLock('INBOX');

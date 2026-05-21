@@ -64,7 +64,7 @@ async function _fetchPkceOtp(page, account) {
   // Get baseline UID FIRST (before triggering new email)
   let baseline = 0;
   try {
-    const pre = new ImapFlow({ host: 'outlook.office365.com', port: 993, secure: true, auth: { user: account.email, accessToken: tokenData.access_token }, logger: false });
+    const pre = new ImapFlow({ host: 'outlook.office365.com', port: 993, secure: true, auth: { user: account.email, accessToken: tokenData.access_token }, logger: false, connectionTimeout: 30000, greetingTimeout: 15000, socketTimeout: 60000 });
     pre.on('error', () => {});
     await pre.connect(); const lock = await pre.getMailboxLock('INBOX');
     console.log(`  [PKCE] INBOX total: ${pre.mailbox.exists}`);
@@ -89,7 +89,7 @@ async function _fetchPkceOtp(page, account) {
     }
     let client;
     try {
-      client = new ImapFlow({ host: 'outlook.office365.com', port: 993, secure: true, auth: { user: account.email, accessToken: tokenData.access_token }, logger: false });
+      client = new ImapFlow({ host: 'outlook.office365.com', port: 993, secure: true, auth: { user: account.email, accessToken: tokenData.access_token }, logger: false, connectionTimeout: 30000, greetingTimeout: 15000, socketTimeout: 60000 });
       client.on('error', () => {});
       await client.connect(); const lock = await client.getMailboxLock('INBOX');
       let newMsgCount = 0;

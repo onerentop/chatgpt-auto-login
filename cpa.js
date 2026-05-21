@@ -166,7 +166,7 @@ async function registerToCPA(browser, email, account) {
           if (tokenData.access_token) {
             let baseline = 0;
             try {
-              const pre = new ImapFlow({ host: 'outlook.office365.com', port: 993, secure: true, auth: { user: account.email, accessToken: tokenData.access_token }, logger: false });
+              const pre = new ImapFlow({ host: 'outlook.office365.com', port: 993, secure: true, auth: { user: account.email, accessToken: tokenData.access_token }, logger: false, connectionTimeout: 30000, greetingTimeout: 15000, socketTimeout: 60000 });
               await pre.connect();
               const lock = await pre.getMailboxLock('INBOX');
               const s = Math.max(1, pre.mailbox.exists - 9);
@@ -192,7 +192,7 @@ async function registerToCPA(browser, email, account) {
 
               let client;
               try {
-                client = new ImapFlow({ host: 'outlook.office365.com', port: 993, secure: true, auth: { user: account.email, accessToken: tokenData.access_token }, logger: false });
+                client = new ImapFlow({ host: 'outlook.office365.com', port: 993, secure: true, auth: { user: account.email, accessToken: tokenData.access_token }, logger: false, connectionTimeout: 30000, greetingTimeout: 15000, socketTimeout: 60000 });
                 await client.connect();
                 const lock = await client.getMailboxLock('INBOX');
                 for await (const msg of client.fetch({ uid: `${baseline + 1}:*` }, { envelope: true, source: true, uid: true })) {
