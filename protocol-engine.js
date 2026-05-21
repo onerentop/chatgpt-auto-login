@@ -11,6 +11,7 @@ const { autoPayment } = require('./payment');
 const { randomDelay, saveCPAAuthFile } = require('./utils');
 const { connectGateway, getPaymentLink } = require('./server/discord-gateway');
 const { launchChrome, waitForCDP } = require('./server/chrome');
+const bitbrowser = require('./server/bitbrowser');
 const proxyMgr = require('./server/proxy');
 
 const ROOT = __dirname;
@@ -92,6 +93,7 @@ class ProtocolEngine extends EventEmitter {
     this._chromeProc = null;
     this._browser = null;
     this._tempDir = null;
+    this._session = null;
   }
 
   getStatus() { return this.status; }
@@ -133,9 +135,11 @@ class ProtocolEngine extends EventEmitter {
       if (this._pyProc) try { this._pyProc.kill(); } catch {}
       if (this._chromeProc) try { this._chromeProc.kill(); } catch {}
       if (this._browser) try { this._browser.close(); } catch {}
+      if (this._session) try { this._session.close(); } catch {}
       if (this._gw) try { this._gw.cleanup(); } catch {}
       if (this._tempDir) try { fs.rmSync(this._tempDir, { recursive: true, force: true }); } catch {}
-      this._pyProc = null; this._chromeProc = null; this._browser = null; this._gw = null; this._tempDir = null;
+      this._pyProc = null; this._chromeProc = null; this._browser = null;
+      this._gw = null; this._tempDir = null; this._session = null;
 
       // Reset any "running" accounts in DB to idle
       try {
@@ -196,6 +200,13 @@ class ProtocolEngine extends EventEmitter {
       // Connect Discord once (shared across all accounts)
       this._gw = await connectGateway();
       console.log('[Proto-Engine] Discord connected!');
+      const useBitBrowser = !!(runtimeCfg.bitbrowser && runtimeCfg.bitbrowser.enabled);
+      if (useBitBrowser) {
+        const ok = await bitbrowser.healthCheck();
+        console.log(ok
+          ? '[BitBrowser] ready'
+          : '[BitBrowser] unavailable; payment will fail per account');
+      }
 
       for (let i = 0; i < accounts.length; i++) {
         if (this.stopFlag) break;
@@ -294,18 +305,34 @@ class ProtocolEngine extends EventEmitter {
         }
         if (!link) continue;
 
-        // Step 3: Payment (fresh Chrome for each account)
+        // Step 3: Payment (fresh browser for each account — Chrome or BitBrowser)
         const port = 9222 + i;
         const tempDir = path.join(os.tmpdir(), `proto-pay-${Date.now()}-${i}`);
-        let chromeProc = null, browser = null;
+        let chromeProc = null, browser = null, session = null;
         try {
           this.emitStatus({ email: account.email, status: 'running', phase: 'payment', progress });
           console.log(`[${progress}] Opening payment: ${link.slice(0, 60)}...`);
-          chromeProc = launchChrome(port, tempDir, { proxyServer: proxyMgr.getProxyUrl() || undefined });
-          browser = await waitForCDP(port);
-          this._chromeProc = chromeProc;
-          this._browser = browser;
-          this._tempDir = tempDir;
+          if (useBitBrowser) {
+            session = await bitbrowser.open({ proxyServer: proxyMgr.getProxyUrl() || '' })
+              .catch((e) => {
+                const reason = `BitBrowser: ${e.message?.slice(0, 80) || 'open failed'}`;
+                console.log(`[${progress}] ${reason}`);
+                this.emitStatus({ email: account.email, status: 'error', phase: 'payment', progress, reason });
+                return null;
+              });
+            if (!session) {
+              summary.error++;
+              continue;   // finally still runs (no-op: nothing was created)
+            }
+            browser = session.browser;
+            this._session = session;
+          } else {
+            chromeProc = launchChrome(port, tempDir, { proxyServer: proxyMgr.getProxyUrl() || undefined });
+            browser = await waitForCDP(port);
+            this._chromeProc = chromeProc;
+            this._browser = browser;
+            this._tempDir = tempDir;
+          }
 
           const ctx = browser.contexts()[0];
           const page = ctx.pages()[0] || await ctx.newPage();
@@ -340,10 +367,14 @@ class ProtocolEngine extends EventEmitter {
           this.emitStatus({ email: account.email, status: 'error', phase: 'payment', progress, reason: e.message });
           summary.error++;
         } finally {
-          if (browser) try { await browser.close(); } catch {}
-          if (chromeProc) try { chromeProc.kill(); } catch {}
-          try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {}
-          this._browser = null; this._chromeProc = null; this._tempDir = null;
+          if (session) {
+            try { await session.close(); } catch {}
+          } else {
+            if (browser) try { await browser.close(); } catch {}
+            if (chromeProc) try { chromeProc.kill(); } catch {}
+            try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {}
+          }
+          this._browser = null; this._chromeProc = null; this._tempDir = null; this._session = null;
         }
 
         // Track consecutive failures for rate-limit cooldown
@@ -375,9 +406,10 @@ class ProtocolEngine extends EventEmitter {
     } finally {
       if (this._browser) try { await this._browser.close(); } catch {}
       if (this._chromeProc) try { this._chromeProc.kill(); } catch {}
+      if (this._session) try { await this._session.close(); } catch {}
       if (this._gw) try { this._gw.cleanup(); } catch {}
       if (this._tempDir) try { fs.rmSync(this._tempDir, { recursive: true, force: true }); } catch {}
-      this._browser = null; this._chromeProc = null; this._gw = null; this._tempDir = null;
+      this._browser = null; this._chromeProc = null; this._gw = null; this._tempDir = null; this._session = null;
       if (this._logCapture) { this._logCapture.offLog(logHandler); this._logCapture.stop(); }
       console.log(`[Proto-Engine] Complete: ${JSON.stringify(summary)}`);
       this.emit('complete', { summary });
