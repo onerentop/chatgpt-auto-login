@@ -150,7 +150,6 @@ class PipelineEngine extends EventEmitter {
       }));
       if (accounts.length === 0) throw new Error('No accounts in database');
       if (!findChrome()) throw new Error('Chrome not found!');
-      if (!fs.existsSync(SESSIONS_DIR)) fs.mkdirSync(SESSIONS_DIR, { recursive: true });
 
       // Filter by selected emails if provided
       let filtered = accounts;
