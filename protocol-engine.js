@@ -313,17 +313,12 @@ class ProtocolEngine extends EventEmitter {
           this.emitStatus({ email: account.email, status: 'running', phase: 'payment', progress });
           console.log(`[${progress}] Opening payment: ${link.slice(0, 60)}...`);
           if (useBitBrowser) {
-            session = await bitbrowser.open({ proxyServer: proxyMgr.getProxyUrl() || '' })
-              .catch((e) => {
-                const reason = `BitBrowser: ${e.message?.slice(0, 80) || 'open failed'}`;
-                console.log(`[${progress}] ${reason}`);
-                this.emitStatus({ email: account.email, status: 'error', phase: 'payment', progress, reason });
-                return null;
-              });
-            if (!session) {
-              summary.error++;
-              continue;   // finally still runs (no-op: nothing was created)
-            }
+            // Let open() throw on failure — the existing outer catch will record
+            // summary.error++, emit status, and log uniformly. Letting the error
+            // propagate also lets the consecutive-error cooldown counter see it
+            // (see spec §5.1: "the existing per-batch cooldown counter ... will
+            // halt the batch automatically").
+            session = await bitbrowser.open({ proxyServer: proxyMgr.getProxyUrl() || '' });
             browser = session.browser;
             this._session = session;
           } else {
