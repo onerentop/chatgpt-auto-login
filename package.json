@@ -7,7 +7,8 @@
     "start": "node index.js",
     "web": "node server/index.js",
     "web:dev": "cd web && npm run dev",
-    "web:build": "cd web && npm run build"
+    "web:build": "cd web && npm run build",
+    "test": "node --test server/bitbrowser.spec.js"
   },
   "dependencies": {
     "archiver": "^8.0.0",
