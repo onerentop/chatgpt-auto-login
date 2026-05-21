@@ -16,7 +16,7 @@ const os = require('os');
 
 const { LogCapture } = require('./logger');
 const { connectGateway, getPaymentLink } = require('./discord-gateway');
-const { launchChrome, waitForCDP } = require('./chrome');
+const { launchChrome, waitForCDP, findChrome } = require('./chrome');
 
 const {
   saveCPAAuthFile,
@@ -397,6 +397,11 @@ class PipelineEngine extends EventEmitter {
           await randomDelay(wait * 1000, wait * 1000 + 500);
         }
       }
+    } catch (err) {
+      // Emit directly to avoid console.log loops if logger is misbehaving
+      const msg = `[Engine] FATAL: ${err.message}`;
+      this.emit('log', { email: '', phase: 'error', message: msg, timestamp: new Date().toISOString() });
+      this.emit('log', { email: '', phase: 'error', message: `[Engine] Stack: ${err.stack?.split('\n').slice(0, 3).join(' | ')}`, timestamp: new Date().toISOString() });
     } finally {
       if (gw) gw.cleanup();
 
