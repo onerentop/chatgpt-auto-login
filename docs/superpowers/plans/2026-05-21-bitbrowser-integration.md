@@ -22,7 +22,7 @@
 | `config.json` | **Modify** | Add `bitbrowser` block with `enabled: false`, `apiUrl`, `openTimeoutMs`. |
 | `protocol-engine.js` | **Modify** (lines 92–94, 130–138, 297–347, 376–380) | Branch payment phase on flag; integrate session lifecycle into `stop()` and final cleanup. |
 | `web/src/views/Config.vue` | **Modify** | Add 指纹浏览器 section mirroring 代理 section. |
-| `web/dist/` | **Rebuild** | Bundled assets reflecting the new section. |
+| `web/dist/` | **Rebuild (local only)** | Bundled assets are gitignored — each environment runs `npm run build` from `web/` after pulling. |
 
 ---
 
@@ -958,12 +958,14 @@ node -e "const fs=require('fs'),p=require('path'); const dir='web/dist/assets'; 
 
 Expected output: `found: Config-XXXXXXXX.js contains bitbrowser: true`
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 7: Commit (source only — dist is gitignored)**
 
 ```
-git add web/src/views/Config.vue web/dist
+git add web/src/views/Config.vue
 git commit -m "feat(bitbrowser): UI section in Config.vue"
 ```
+
+`web/dist/` is in `.gitignore`. The freshly-built bundle stays on the local machine only; every environment that pulls this branch must run `cd web && npm run build` to produce its own dist before serving.
 
 ---
 
