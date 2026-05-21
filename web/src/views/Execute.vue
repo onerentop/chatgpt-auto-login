@@ -142,7 +142,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, shallowRef } from 'vue'
 import { ElMessage } from 'element-plus'
 import api from '../api'
 import { socketState } from '../socket'
@@ -157,14 +157,19 @@ const search = ref('')
 const statusFilter = ref('')
 const planFilter = ref('')
 const authFilter = ref('')
+// Locked email set: snapshot taken on execute, applied to the table
+// until user changes any filter (or refreshes).
+const lockedEmails = shallowRef(null)
 const selectedEmails = computed(() => selected.value.map(r => r.email))
 const failedEmails = computed(() => accounts.value.filter(a => a._status === 'error').map(a => a.email))
 const filteredRows = computed(() => {
+  if (lockedEmails.value) {
+    // Frozen view — show only the snapshot, ignore filters
+    return accounts.value.filter(a => lockedEmails.value.has(a.email))
+  }
   const q = search.value.toLowerCase()
   return accounts.value.filter(a => {
     if (q && !a.email.toLowerCase().includes(q)) return false
-    // Running accounts always shown (don't disappear when starting from a filtered batch)
-    if (a._status === 'running') return true
     if (statusFilter.value && a._status !== statusFilter.value) return false
     if (planFilter.value) {
       if (planFilter.value === 'unknown' && a._plan) return false
@@ -174,6 +179,11 @@ const filteredRows = computed(() => {
     if (authFilter.value === 'no' && a._hasAuth) return false
     return true
   })
+})
+
+// Any filter change unlocks the view
+watch([search, statusFilter, planFilter, authFilter], () => {
+  lockedEmails.value = null
 })
 
 const historyLogs = ref({})
@@ -263,10 +273,11 @@ function onRowClick(row, column, event) {
 
 async function startExec(emails) {
   try {
+    // Snapshot current filtered list → freeze view until user changes a filter
+    lockedEmails.value = new Set(filteredRows.value.map(r => r.email))
     socketState.logs.splice(0)
     socketState.accountStatuses = {}
-    // Preset selected accounts to 'running' so they stay visible under
-    // any status filter (e.g. picked from "error" filter, now in queue).
+    // Preset selected accounts to 'running'/'queued' for immediate visual feedback.
     // Engine will overwrite with real status as each one progresses.
     for (const a of accounts.value) {
       if (!emails || emails.includes(a.email)) { a._status = 'running'; a._phase = 'queued' }
