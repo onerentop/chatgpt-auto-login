@@ -30,7 +30,7 @@ class BitBrowserError extends Error {
   constructor(kind, msg) { super(msg); this.kind = kind; }
 }
 
-async function request(pathname, body, timeoutMs = 5000) {
+async function request(pathname, body, timeoutMs = 15000) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   let res;
