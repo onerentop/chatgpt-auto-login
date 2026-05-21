@@ -518,25 +518,38 @@ def main():
         imap_baseline = _get_imap_baseline(email, client_id, refresh_token) if client_id and refresh_token else 0
         _log(f"IMAP baseline: {imap_baseline}")
 
-        # Step 0: Visit homepage
+        # Step 0: Visit homepage (retry on TLS errors and 403)
         _log("Step 0: Homepage...")
-        for attempt in range(4):
-            r = session.get(f"{BASE}/", headers={"Accept": "text/html", "Upgrade-Insecure-Requests": "1"}, allow_redirects=True, timeout=20)
-            if r.status_code == 200:
-                break
-            if r.status_code == 403 and attempt < 3:
-                _log(f"Homepage 403, retry ({attempt+1}/4)")
-                impersonate, chrome_major, chrome_full, ua, sec_ch_ua = _random_chrome_version()
-                device_id = str(uuid.uuid4())
-                try: session = curl_requests.Session(impersonate=impersonate)
-                except: session = curl_requests.Session()
-                session.headers.update({"User-Agent": ua, "sec-ch-ua": sec_ch_ua, "sec-ch-ua-mobile": "?0", "sec-ch-ua-platform": '"Windows"', "Accept-Language": "en-US,en;q=0.9"})
-                session.cookies.set("oai-did", device_id, domain="chatgpt.com")
-                session.cookies.set("oai-did", device_id, domain="auth.openai.com")
-                session.cookies.set("oai-did", device_id, domain=".auth.openai.com")
-                time.sleep(2 * (attempt + 1))
-                continue
-            raise Exception(f"Homepage failed: {r.status_code}")
+        r = None
+        for attempt in range(5):
+            try:
+                r = session.get(f"{BASE}/", headers={"Accept": "text/html", "Upgrade-Insecure-Requests": "1"}, allow_redirects=True, timeout=20)
+                if r.status_code == 200:
+                    break
+                if r.status_code == 403 and attempt < 4:
+                    _log(f"Homepage 403, retry ({attempt+1}/5) with new fingerprint")
+                else:
+                    raise Exception(f"Homepage failed: {r.status_code}")
+            except Exception as e:
+                err = str(e)[:80]
+                # TLS/curl errors are transient — switch impersonate and retry
+                is_tls_err = "curl:" in err or "TLS" in err or "OPENSSL" in err or "SSL" in err or "invalid library" in err
+                if attempt < 4 and (is_tls_err or "403" in err):
+                    _log(f"Homepage error ({attempt+1}/5): {err} — switching fingerprint")
+                else:
+                    raise
+            # Rebuild session with a different profile
+            impersonate, chrome_major, chrome_full, ua, sec_ch_ua = _random_chrome_version()
+            device_id = str(uuid.uuid4())
+            try: session = curl_requests.Session(impersonate=impersonate)
+            except: session = curl_requests.Session()
+            session.headers.update({"User-Agent": ua, "sec-ch-ua": sec_ch_ua, "sec-ch-ua-mobile": "?0", "sec-ch-ua-platform": '"Windows"', "Accept-Language": "en-US,en;q=0.9"})
+            session.cookies.set("oai-did", device_id, domain="chatgpt.com")
+            session.cookies.set("oai-did", device_id, domain="auth.openai.com")
+            session.cookies.set("oai-did", device_id, domain=".auth.openai.com")
+            time.sleep(2 * (attempt + 1))
+        if not r or r.status_code != 200:
+            raise Exception(f"Homepage failed after 5 attempts")
         time.sleep(random.uniform(0.5, 1.5))
 
         # Step 1: Signin (chatgpt.com flow — no add_phone requirement)
