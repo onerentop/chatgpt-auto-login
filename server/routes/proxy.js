@@ -38,7 +38,7 @@ router.post('/switch', async (req, res) => {
 });
 
 router.post('/detect-exit', async (req, res) => {
-  try { const ip = await proxy.detectExit(); res.json({ ok: true, ip }); }
+  try { const ip = await proxy.detectExit(); res.json({ ok: true, exitIp: ip }); }
   catch (e) { res.status(500).json({ error: e.message }); }
 });
 

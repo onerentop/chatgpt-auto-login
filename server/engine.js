@@ -17,6 +17,7 @@ const os = require('os');
 const { LogCapture } = require('./logger');
 const { connectGateway, getPaymentLink } = require('./discord-gateway');
 const { launchChrome, waitForCDP, findChrome } = require('./chrome');
+const proxyMgr = require('./proxy');
 
 const {
   saveCPAAuthFile,
@@ -196,12 +197,22 @@ class PipelineEngine extends EventEmitter {
         this._tempDir = tempDir;
         let finalResult = { email: account.email, status: 'error', paymentLink: '', reason: '' };
 
+        // Rotate proxy node before each account (if proxy enabled)
+        if (proxyMgr.getState().enabled) {
+          try {
+            const node = await proxyMgr.rotate();
+            console.log(`${p} Proxy rotated → ${node}`);
+          } catch (e) {
+            console.log(`${p} Proxy rotate failed: ${e.message?.slice(0, 60)}`);
+          }
+        }
+
         try {
           if (this.stopFlag) break;
           // Phase 1: Login & get accessToken
           currentPhase = 'login';
           console.log(`${p} Phase 1: Login...`);
-          this._chromeProc = launchChrome(port, tempDir);
+          this._chromeProc = launchChrome(port, tempDir, { proxyServer: proxyMgr.getProxyUrl() || undefined });
           this._browser = await waitForCDP(port);
           const browser = this._browser;
           const loginResult = await loginAccount(browser, account);

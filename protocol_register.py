@@ -484,10 +484,15 @@ def main():
     client_id = input_data.get("client_id", "")
     refresh_token = input_data.get("refresh_token", "")
     do_pkce = input_data.get("pkce", False)
+    proxy_url = input_data.get("proxy", "")  # e.g. http://127.0.0.1:7890
 
     try:
         from curl_cffi import requests as curl_requests
         from chatgpt_register.chatgpt_register import build_sentinel_token
+
+        proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
+        if proxy_url:
+            _log(f"Using proxy: {proxy_url}")
 
         # Pick a supported profile (retry if impersonate fails)
         session = None
@@ -495,12 +500,16 @@ def main():
             impersonate, chrome_major, chrome_full, ua, sec_ch_ua = _random_chrome_version()
             try:
                 session = curl_requests.Session(impersonate=impersonate)
+                if proxies:
+                    session.proxies = proxies
                 break
             except Exception as e:
                 _log(f"{impersonate} not supported, retrying... ({e})")
                 session = None
         if not session:
             session = curl_requests.Session()  # fallback: no impersonate
+            if proxies:
+                session.proxies = proxies
             _log("Using default session (no impersonate)")
         device_id = str(uuid.uuid4())
         _log(f"Profile: {impersonate}, Device: {device_id[:8]}...")
@@ -543,6 +552,7 @@ def main():
             device_id = str(uuid.uuid4())
             try: session = curl_requests.Session(impersonate=impersonate)
             except: session = curl_requests.Session()
+            if proxies: session.proxies = proxies
             session.headers.update({"User-Agent": ua, "sec-ch-ua": sec_ch_ua, "sec-ch-ua-mobile": "?0", "sec-ch-ua-platform": '"Windows"', "Accept-Language": "en-US,en;q=0.9"})
             session.cookies.set("oai-did", device_id, domain="chatgpt.com")
             session.cookies.set("oai-did", device_id, domain="auth.openai.com")

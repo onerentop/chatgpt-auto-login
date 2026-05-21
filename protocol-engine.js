@@ -11,6 +11,7 @@ const { autoPayment } = require('./payment');
 const { randomDelay, saveCPAAuthFile } = require('./utils');
 const { connectGateway, getPaymentLink } = require('./server/discord-gateway');
 const { launchChrome, waitForCDP } = require('./server/chrome');
+const proxyMgr = require('./server/proxy');
 
 const ROOT = __dirname;
 const PYTHON_SCRIPT = path.join(ROOT, 'protocol_register.py');
@@ -22,7 +23,7 @@ function runProtocolRegister(account, engine) {
     if (engine) engine._pyProc = py;
     let settled = false;
     const timeout = setTimeout(() => { if (!settled) { settled = true; py.kill(); reject(new Error('Python timeout (120s)')); } }, 120000);
-    const input = JSON.stringify({ email: account.email, password: account.password, client_id: account.client_id || '', refresh_token: account.refresh_token || '' });
+    const input = JSON.stringify({ email: account.email, password: account.password, client_id: account.client_id || '', refresh_token: account.refresh_token || '', proxy: proxyMgr.getProxyUrl() });
     let stdout = '', stderr = '';
     py.stdout.on('data', (data) => {
       for (const line of data.toString().split('\n').filter(l => l.trim())) {
@@ -55,7 +56,7 @@ function runProtocolPKCE(account, engine) {
     if (engine) engine._pyProc = py;
     let settled = false;
     const timeout = setTimeout(() => { if (!settled) { settled = true; py.kill(); reject(new Error('PKCE Python timeout (180s)')); } }, 180000);
-    const input = JSON.stringify({ email: account.email, password: account.password, client_id: account.client_id || '', refresh_token: account.refresh_token || '', pkce: true });
+    const input = JSON.stringify({ email: account.email, password: account.password, client_id: account.client_id || '', refresh_token: account.refresh_token || '', pkce: true, proxy: proxyMgr.getProxyUrl() });
     let stdout = '', stderr = '';
     py.stdout.on('data', (data) => {
       for (const line of data.toString().split('\n').filter(l => l.trim())) {
@@ -206,6 +207,16 @@ class ProtocolEngine extends EventEmitter {
         // Step 1: Protocol login
         this.emitStatus({ email: account.email, status: 'running', phase: 'protocol-login', progress });
         console.log(`[${progress}] === ${account.email} (protocol) ===`);
+        // Rotate proxy node before each account (if proxy enabled)
+        if (proxyMgr.getState().enabled) {
+          try {
+            const node = await proxyMgr.rotate();
+            console.log(`[${progress}] Proxy rotated → ${node}`);
+          } catch (e) {
+            console.log(`[${progress}] Proxy rotate failed: ${e.message?.slice(0, 60)}`);
+          }
+        }
+
         let result;
         try {
           result = await runProtocolRegister(account, this);
@@ -290,7 +301,7 @@ class ProtocolEngine extends EventEmitter {
         try {
           this.emitStatus({ email: account.email, status: 'running', phase: 'payment', progress });
           console.log(`[${progress}] Opening payment: ${link.slice(0, 60)}...`);
-          chromeProc = launchChrome(port, tempDir);
+          chromeProc = launchChrome(port, tempDir, { proxyServer: proxyMgr.getProxyUrl() || undefined });
           browser = await waitForCDP(port);
           this._chromeProc = chromeProc;
           this._browser = browser;

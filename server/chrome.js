@@ -27,11 +27,11 @@ function getScreenQuarter() {
   return _screenSize;
 }
 
-function launchChrome(port, tempDir) {
+function launchChrome(port, tempDir, options = {}) {
   const chromePath = findChrome();
   if (!chromePath) throw new Error('Chrome not found');
   const q = getScreenQuarter();
-  return spawn(chromePath, [
+  const args = [
     `--remote-debugging-port=${port}`,
     '--incognito',
     `--user-data-dir=${tempDir}`,
@@ -41,8 +41,13 @@ function launchChrome(port, tempDir) {
     '--disable-popup-blocking',
     `--window-size=${q.w},${q.h}`,
     '--window-position=0,0',
-    'about:blank',
-  ], { stdio: 'ignore', detached: false });
+  ];
+  if (options.proxyServer) {
+    args.push(`--proxy-server=${options.proxyServer}`);
+    args.push('--proxy-bypass-list=<-loopback>');  // route everything (incl. localhost upstreams) through proxy
+  }
+  args.push('about:blank');
+  return spawn(chromePath, args, { stdio: 'ignore', detached: false });
 }
 
 async function waitForCDP(port, timeoutMs = 15000) {
