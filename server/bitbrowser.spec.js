@@ -142,3 +142,82 @@ describe('open() — happy path', () => {
     assert.deepEqual(paths, ['browser/update', 'browser/open', 'browser/close', 'browser/delete']);
   });
 });
+
+describe('open() — error paths', () => {
+  test('ECONNREFUSED on /browser/update → BitBrowserUnavailable, no cleanup calls', async () => {
+    const calls = [];
+    bb._deps.fetch = async (url) => {
+      calls.push(String(url));
+      const e = new Error('fetch failed'); e.cause = { code: 'ECONNREFUSED' };
+      throw e;
+    };
+    bb._deps.connectOverCDP = async () => assert.fail('should not be called');
+
+    await assert.rejects(
+      () => bb.open({ proxyServer: 'http://127.0.0.1:7890' }),
+      (e) => e instanceof bb.BitBrowserError && e.kind === 'BitBrowserUnavailable',
+    );
+    // Only the update call was attempted; no close/delete because no id was issued
+    assert.deepEqual(calls.map(u => u.split('/').slice(-2).join('/')), ['browser/update']);
+  });
+
+  test('update returns success:false → BitBrowserApiError, no close/delete (no id)', async () => {
+    const calls = [];
+    bb._deps.fetch = async (url) => {
+      calls.push(String(url));
+      return { ok: true, json: async () => ({ success: false, msg: 'quota exceeded' }) };
+    };
+    bb._deps.connectOverCDP = async () => assert.fail('should not be called');
+
+    await assert.rejects(
+      () => bb.open({ proxyServer: 'http://127.0.0.1:7890' }),
+      (e) => e instanceof bb.BitBrowserError && e.kind === 'BitBrowserApiError' && /quota/.test(e.message),
+    );
+    assert.deepEqual(calls.map(u => u.split('/').slice(-2).join('/')), ['browser/update']);
+  });
+
+  test('open ok but connectOverCDP rejects → CDPConnectFailed, close+delete invoked', async () => {
+    const calls = [];
+    bb._deps.fetch = async (url) => {
+      calls.push(String(url));
+      if (String(url).endsWith('/browser/update'))
+        return { ok: true, json: async () => ({ success: true, data: { id: 'xyz' } }) };
+      if (String(url).endsWith('/browser/open'))
+        return { ok: true, json: async () => ({ success: true, data: { http: '127.0.0.1:54678' } }) };
+      return { ok: true, json: async () => ({ success: true }) };
+    };
+    bb._deps.connectOverCDP = async () => { throw new Error('connect refused'); };
+
+    await assert.rejects(
+      () => bb.open({ proxyServer: 'http://127.0.0.1:7890' }),
+      (e) => e instanceof bb.BitBrowserError && e.kind === 'CDPConnectFailed',
+    );
+    const paths = calls.map(u => u.split('/').slice(-2).join('/'));
+    assert.deepEqual(paths, ['browser/update', 'browser/open', 'browser/close', 'browser/delete']);
+  });
+
+  test('cleanup tolerance: browser.close throws → delete still attempted', async () => {
+    const calls = [];
+    bb._deps.fetch = async (url) => {
+      calls.push(String(url));
+      if (String(url).endsWith('/browser/update'))
+        return { ok: true, json: async () => ({ success: true, data: { id: 'q1' } }) };
+      if (String(url).endsWith('/browser/open'))
+        return { ok: true, json: async () => ({ success: true, data: { http: '127.0.0.1:54678' } }) };
+      return { ok: true, json: async () => ({ success: true }) };
+    };
+    bb._deps.connectOverCDP = async () => ({ close: async () => { throw new Error('already dead'); } });
+
+    const session = await bb.open({ proxyServer: 'http://127.0.0.1:7890' });
+    await session.close(); // must not throw
+    const paths = calls.map(u => u.split('/').slice(-2).join('/'));
+    assert.deepEqual(paths, ['browser/update', 'browser/open', 'browser/close', 'browser/delete']);
+  });
+
+  test('open() throws if proxyServer empty', async () => {
+    await assert.rejects(
+      () => bb.open({ proxyServer: '' }),
+      /proxy/i,
+    );
+  });
+});
