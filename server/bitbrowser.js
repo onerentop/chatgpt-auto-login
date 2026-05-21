@@ -132,9 +132,15 @@ async function open({ proxyServer } = {}) {
     id = updateData.id;
     if (!id) throw new BitBrowserError('BitBrowserApiError', '/browser/update did not return data.id');
 
-    // 2. Launch and obtain CDP endpoint
-    const openData = await request('/browser/open', { id });
+    // 2. Launch and obtain CDP endpoint.
+    // /browser/open is the slow step — BitBrowser cold-starts a Chrome subprocess
+    // here, which can take 10-15s on first launch. Pass openTimeoutMs (default 30s)
+    // so we don't trip the request() default of 5s and misclassify a slow launch as
+    // BitBrowserUnavailable. Also mark windowOpen=true BEFORE awaiting: if the request
+    // succeeds but later the launcher is mid-flight when we error out, close() needs
+    // to call /browser/close to terminate the partially-launched window.
     windowOpen = true;
+    const openData = await request('/browser/open', { id }, openTimeoutMs);
     const http = openData.http;
     if (!http) throw new BitBrowserError('BitBrowserApiError', '/browser/open did not return data.http');
     const cdpUrl = http.startsWith('http') ? http : `http://${http}`;
