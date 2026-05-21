@@ -14,14 +14,23 @@ describe('parseProxy', () => {
   });
 
   test('throws on empty string', () => {
-    assert.throws(() => bb.__internal.parseProxy(''), /proxy/i);
+    assert.throws(() => bb.__internal.parseProxy(''), /required/i);
   });
 
   test('throws on undefined', () => {
-    assert.throws(() => bb.__internal.parseProxy(undefined), /proxy/i);
+    assert.throws(() => bb.__internal.parseProxy(undefined), /required/i);
   });
 
   test('throws on malformed url', () => {
-    assert.throws(() => bb.__internal.parseProxy('not a url'), /proxy/i);
+    assert.throws(() => bb.__internal.parseProxy('not a url'), /malformed/i);
+  });
+
+  test('throws on missing port', () => {
+    assert.throws(() => bb.__internal.parseProxy('http://127.0.0.1'), /missing host or port/i);
+  });
+
+  test('parses socks5 scheme', () => {
+    const out = bb.__internal.parseProxy('socks5://127.0.0.1:1080');
+    assert.deepEqual(out, { proxyType: 'socks5', host: '127.0.0.1', port: '1080' });
   });
 });
