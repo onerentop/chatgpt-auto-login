@@ -25,15 +25,16 @@ async function fetchCheckoutLink(accessToken, opts = {}) {
     },
   };
 
-  // undici is bundled with Node 22. ProxyAgent routes HTTPS via the sing-box
-  // mixed inbound on 127.0.0.1:7890 (or whatever proxyMgr.getProxyUrl() returns).
-  const { ProxyAgent } = require('undici');
+  // Import both fetch and ProxyAgent from the same undici copy. Node's global
+  // fetch uses a DIFFERENT (internal) undici, and its ProxyAgent/fetch interfaces
+  // don't match the npm package's — leading to UND_ERR_INVALID_ARG at runtime.
+  const { fetch: undiciFetch, ProxyAgent } = require('undici');
   const proxyUrl = proxyMgr.getProxyUrl();
   const dispatcher = proxyUrl ? new ProxyAgent(proxyUrl) : undefined;
 
   let res, text = '';
   try {
-    res = await fetch(ENDPOINT, {
+    res = await undiciFetch(ENDPOINT, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${accessToken}`,
