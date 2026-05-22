@@ -93,14 +93,41 @@
         <span style="color:#909399;margin-left:8px;font-size:12px">checkout API 走日本住宅 IP（7891）</span>
       </el-form-item>
       <el-form-item label="JP 节点关键字">
-        <el-input v-model="form.proxyJpKeyword" placeholder="KDDI" style="width:220px" />
+        <el-input v-model="form.proxyJpKeyword" placeholder="KDDI" style="width:220px"
+                  :disabled="form.proxyJpWhitelist?.length > 0" />
+        <span v-if="form.proxyJpWhitelist?.length > 0"
+              style="color:#909399;margin-left:8px;font-size:12px">已被白名单覆盖</span>
+      </el-form-item>
+      <el-form-item label="JP 节点白名单">
+        <el-select v-model="form.proxyJpWhitelist" multiple filterable clearable
+                   collapse-tags collapse-tags-tooltip
+                   placeholder="留空 = 按关键字过滤；选中 = 精确指定节点"
+                   style="width: 480px">
+          <el-option v-for="tag in allNodeTags" :key="tag" :label="tag" :value="tag">
+            <span :style="jpKddiTagSet.has(tag) ? 'font-weight:600;color:#67c23a' : ''">
+              {{ tag }}
+            </span>
+            <span v-if="jpKddiTagSet.has(tag)" style="float:right;color:#67c23a;font-size:11px">KDDI</span>
+          </el-option>
+        </el-select>
+        <div style="font-size:12px;color:#909399;margin-top:4px">
+          含 KDDI 的节点已绿色高亮。空 = 关键字过滤模式（默认）。
+        </div>
       </el-form-item>
       <el-form-item label="JP 通道状态" v-if="proxyStatus?.jp">
         <div style="font-size:12px;color:#606266">
-          <div>状态：{{ proxyStatus.jp.enabled ? '运行中' : '未启用' }} ({{ proxyStatus.jp.available || 0 }} KDDI 节点)</div>
+          <div>状态：{{ proxyStatus.jp.enabled ? '运行中' : '未启用' }}
+               ({{ proxyStatus.jp.available || 0 }} 节点<span
+                  v-if="proxyStatus.jp.whitelist?.length"> / 白名单 {{ proxyStatus.jp.whitelist.length }} 个</span>)</div>
           <div v-if="proxyStatus.jp.currentNode">当前节点：{{ proxyStatus.jp.currentNode }}</div>
           <div v-if="proxyStatus.jp.exitIp">JP 出口 IP：{{ proxyStatus.jp.exitIp }}</div>
-          <div v-if="proxyStatus.jp.lastError" style="color:#e6a23c">{{ proxyStatus.jp.lastError }}</div>
+          <div v-if="proxyStatus.jp.whitelistMisses?.length"
+               style="color:#e6a23c;margin-top:4px">
+            ⚠ 白名单未命中：{{ proxyStatus.jp.whitelistMisses.slice(0,3).join(', ') }}{{
+              proxyStatus.jp.whitelistMisses.length > 3 ? `... 共 ${proxyStatus.jp.whitelistMisses.length} 个` : ''
+            }}
+          </div>
+          <div v-if="proxyStatus.jp.lastError" style="color:#f56c6c">{{ proxyStatus.jp.lastError }}</div>
           <div style="margin-top:6px">
             <el-button size="small" @click="detectJpExit">检测 JP 出口 IP</el-button>
             <el-button size="small" @click="rotateJp">切换 JP 节点</el-button>
