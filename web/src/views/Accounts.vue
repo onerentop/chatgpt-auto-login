@@ -29,6 +29,7 @@
           <el-option label="未生成" value="no" />
         </el-select>
         <el-tag style="margin-left: 12px">{{ filteredAccounts.length }} / {{ accounts.length }}</el-tag>
+        <el-button size="small" style="margin-left: 8px" @click="clearAllSelection">取消选中</el-button>
       </el-col>
     </el-row>
 
@@ -105,7 +106,7 @@ import { ref, computed, onMounted, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
 import api from '../api'
 import { PLUS_STATUSES, ERROR_STATUSES } from '../status'
-import { getSelectionSet, setSelectionFromRows } from '../selection'
+import { getSelectionSet, setSelectionFromRows, clearSelection } from '../selection'
 
 const tableRef = ref(null)
 const accounts = ref([])
@@ -200,6 +201,12 @@ async function del(email) {
 function onSelectionChange(rows) {
   selected.value = rows
   setSelectionFromRows('accounts', rows)
+}
+
+function clearAllSelection() {
+  tableRef.value?.clearSelection()
+  clearSelection('accounts')
+  selected.value = []
 }
 
 function restoreSelection() {

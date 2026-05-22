@@ -53,6 +53,7 @@
           <el-option label="未生成" value="no" />
         </el-select>
         <el-tag style="margin-left: 12px">{{ filteredRows.length }} / {{ accounts.length }}</el-tag>
+        <el-button size="small" style="margin-left: 8px" @click="clearAllSelection">取消选中</el-button>
       </el-col>
     </el-row>
 
@@ -147,7 +148,7 @@ import { ElMessage } from 'element-plus'
 import api from '../api'
 import { socketState } from '../socket'
 import { statusType, statusLabel, PLUS_STATUSES } from '../status'
-import { getSelectionSet, setSelectionFromRows } from '../selection'
+import { getSelectionSet, setSelectionFromRows, clearSelection } from '../selection'
 
 const tableRef = ref(null)
 const running = ref(false)
@@ -268,6 +269,12 @@ onMounted(() => { loadAccounts(); checkStatus() })
 function onSelectionChange(rows) {
   selected.value = rows
   setSelectionFromRows('execute', rows)
+}
+
+function clearAllSelection() {
+  tableRef.value?.clearSelection()
+  clearSelection('execute')
+  selected.value = []
 }
 
 // Restore selection after data is loaded (Element Plus needs toggleRowSelection on actual row refs)
