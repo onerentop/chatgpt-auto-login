@@ -345,9 +345,6 @@ class PipelineEngine extends EventEmitter {
                 console.log(`${p} Payment failed: ${finalResult.reason}, skipping auth file generation`);
               }
 
-              console.log(`${p} Payment flow completed. Waiting 10s...`);
-              await randomDelay(10000, 12000);
-
               // Phase 4: OAuth (PKCE) + CPA (only on payment success)
               if (paymentOk) {
                 currentPhase = 'oauth';
