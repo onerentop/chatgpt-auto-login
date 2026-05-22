@@ -87,6 +87,26 @@
         <el-button @click="stopProxy">停止代理</el-button>
         <el-button @click="detectExit">检测出口 IP</el-button>
       </el-form-item>
+      <el-divider content-position="left">JP-Checkout 通道</el-divider>
+      <el-form-item label="启用 JP 通道">
+        <el-switch v-model="form.proxyJpEnabled" />
+        <span style="color:#909399;margin-left:8px;font-size:12px">checkout API 走日本住宅 IP（7891）</span>
+      </el-form-item>
+      <el-form-item label="JP 节点关键字">
+        <el-input v-model="form.proxyJpKeyword" placeholder="KDDI" style="width:220px" />
+      </el-form-item>
+      <el-form-item label="JP 通道状态" v-if="proxyStatus?.jp">
+        <div style="font-size:12px;color:#606266">
+          <div>状态：{{ proxyStatus.jp.enabled ? '运行中' : '未启用' }} ({{ proxyStatus.jp.available || 0 }} KDDI 节点)</div>
+          <div v-if="proxyStatus.jp.currentNode">当前节点：{{ proxyStatus.jp.currentNode }}</div>
+          <div v-if="proxyStatus.jp.exitIp">JP 出口 IP：{{ proxyStatus.jp.exitIp }}</div>
+          <div v-if="proxyStatus.jp.lastError" style="color:#e6a23c">{{ proxyStatus.jp.lastError }}</div>
+          <div style="margin-top:6px">
+            <el-button size="small" @click="detectJpExit">检测 JP 出口 IP</el-button>
+            <el-button size="small" @click="rotateJp">切换 JP 节点</el-button>
+          </div>
+        </div>
+      </el-form-item>
       <el-form-item label="代理状态" v-if="proxyStatus">
         <div style="font-size:12px;color:#606266">
           <div>状态：{{ proxyStatus.enabled ? '运行中' : '未运行' }} ({{ proxyStatus.nodeTags?.length || 0 }} 节点)</div>
@@ -127,6 +147,8 @@ const form = reactive({
   proxySubscriptionUrl: '',
   proxyRegionFilter: 'US',
   proxyRotationStrategy: 'sequential',
+  proxyJpEnabled: true,
+  proxyJpKeyword: 'KDDI',
 })
 
 onMounted(async () => {
@@ -144,6 +166,10 @@ onMounted(async () => {
       if (cfg.proxy.subscriptionUrl !== undefined) form.proxySubscriptionUrl = cfg.proxy.subscriptionUrl
       if (cfg.proxy.regionFilter !== undefined) form.proxyRegionFilter = cfg.proxy.regionFilter
       if (cfg.proxy.rotationStrategy !== undefined) form.proxyRotationStrategy = cfg.proxy.rotationStrategy
+      if (cfg.proxy.jpCheckout) {
+        if (cfg.proxy.jpCheckout.enabled !== undefined) form.proxyJpEnabled = cfg.proxy.jpCheckout.enabled
+        if (cfg.proxy.jpCheckout.keyword !== undefined) form.proxyJpKeyword = cfg.proxy.jpCheckout.keyword
+      }
     }
   } catch (err) {
     console.error('Failed to load config:', err)
@@ -168,11 +194,17 @@ async function handleSave() {
     delete payload.proxySubscriptionUrl
     delete payload.proxyRegionFilter
     delete payload.proxyRotationStrategy
+    delete payload.proxyJpEnabled
+    delete payload.proxyJpKeyword
     payload.proxy = {
       enabled: form.proxyEnabled,
       subscriptionUrl: form.proxySubscriptionUrl,
       regionFilter: form.proxyRegionFilter,
       rotationStrategy: form.proxyRotationStrategy,
+      jpCheckout: {
+        enabled: form.proxyJpEnabled,
+        keyword: form.proxyJpKeyword,
+      },
     }
     await api.put('/config', payload)
     ElMessage.success('配置已保存')
@@ -214,6 +246,26 @@ async function detectExit() {
     await loadProxyStatus()
   } catch (err) {
     ElMessage.error(err.response?.data?.error || '检测失败')
+  }
+}
+
+async function detectJpExit() {
+  try {
+    const { data } = await api.post('/proxy/jp/detect-exit')
+    ElMessage.success(`JP 出口 IP: ${data.exitIp || '未知'}`)
+    await loadProxyStatus()
+  } catch (err) {
+    ElMessage.error(err.response?.data?.error || 'JP 检测失败')
+  }
+}
+
+async function rotateJp() {
+  try {
+    const { data } = await api.post('/proxy/jp/rotate')
+    ElMessage.success(`已切换到: ${data.currentNode}`)
+    await loadProxyStatus()
+  } catch (err) {
+    ElMessage.error(err.response?.data?.error || '切换失败')
   }
 }
 </script>
