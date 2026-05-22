@@ -509,7 +509,7 @@ async function handlePayPalCheckout(page, phoneOverride, smsOverride) {
     // 'redirect'  → success or near-success URL change; break out.
     // null        → all three signals timed out; break out and let downstream code decide.
     const outcome = await Promise.race([
-      page.locator('text=/weren.?t able to add this card|card was declined|card has been declined|try a different card|could not process|transaction cannot be completed/i')
+      page.locator('text=/unable to add this card|weren.?t able to add this card|card was declined|card has been declined|try a different card|could not process|transaction cannot be completed/i')
         .first().waitFor({ timeout: 8000 }).then(() => 'declined').catch(() => null),
       page.locator('text=/Enter your code|输入验证码|输入你的验证码/i')
         .first().waitFor({ timeout: 8000 }).then(() => 'sms').catch(() => null),
