@@ -412,10 +412,11 @@ async function handlePayPalCheckout(page, phoneOverride, smsOverride) {
       c.dispatchEvent(new Event('change', { bubbles: true }));
     }, countrySel);
     // Wait until React commits the new value (poll up to ~10s).
+    // Playwright API: waitForFunction(fn, arg, options) — NOT (fn, options, arg)
     const ok = await page.waitForFunction((sel) => {
       const c = document.querySelector(sel);
       return c && c.value === 'US';
-    }, { timeout: 10000 }, countrySel).then(() => true).catch(() => false);
+    }, countrySel, { timeout: 10000 }).then(() => true).catch(() => false);
     if (ok) {
       console.log(`    [Pay] Country: ${initial} → US (via ${countrySel})`);
     } else {
