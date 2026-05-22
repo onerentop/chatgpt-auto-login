@@ -170,7 +170,10 @@ async function handleOpenAIPage(page) {
   // Strategy: (1) look for a localized "Total due today" label and parse the amount
   // after it; (2) fallback — if no label matched but there ARE USD amounts on the
   // page AND none of them is $0, then there's no "free" anywhere → treat as paid.
-  await randomDelay(1500, 2500);  // let Stripe render the prices
+  // Event-driven wait: resolve as soon as a "due today" label or any $ amount renders.
+  // Falls through after 5s if no recognizable label is found (the scan logic itself handles that case).
+  await page.locator('text=/Total due|应付总额|應付總額|Today.s total/i').first()
+    .waitFor({ timeout: 5000 }).catch(() => {});
   const scan = await page.evaluate(() => {
     const raw = document.body.innerText || '';
     // Normalize: NBSP → space, collapse whitespace
@@ -236,8 +239,9 @@ async function handleOpenAIPage(page) {
   console.log('    [Pay] PayPal clicked:', ppClicked || 'FAILED');
   // Wait for accordion to expand (no double click — it would collapse it)
 
-  // Verify billing form appears
-  await randomDelay(2000, 3000);
+  // Verify billing form appears — event-driven instead of fixed delay.
+  // The polling loop below remains as a secondary check (handles slow renders).
+  await page.locator('#billingAddressLine1').waitFor({ timeout: 8000 }).catch(() => {});
   let formFound = false;
   for (let w = 0; w < 10; w++) {
     const hasForm = await page.locator('#billingAddressLine1').isVisible({ timeout: 1000 }).catch(() => false);
@@ -372,7 +376,9 @@ async function handlePayPalLogin(page) {
 
 async function handlePayPalCheckout(page, phoneOverride, smsOverride) {
   console.log('    [Pay] PayPal checkout page detected');
-  await randomDelay(2000, 3000);
+  // Event-driven: continue as soon as either the country select or the email input renders.
+  await page.locator('#country, #countryCode, #email').first()
+    .waitFor({ timeout: 8000 }).catch(() => {});
 
   // Set country to US. PayPal uses different element IDs across A/B tests and
   // locale variants (#country, #countryCode, select[name="country"], etc.). We
