@@ -10,6 +10,7 @@ const os = require('os');
 const { autoPayment } = require('./payment');
 const { randomDelay, saveCPAAuthFile } = require('./utils');
 const { connectGateway, getPaymentLink } = require('./server/discord-gateway');
+const { fetchCheckoutLink } = require('./server/chatgpt-checkout');
 const { launchChrome, waitForCDP } = require('./server/chrome');
 const proxyMgr = require('./server/proxy');
 
@@ -196,9 +197,15 @@ class ProtocolEngine extends EventEmitter {
       // === Sequential: each account runs login → Discord → payment → done before next ===
       console.log(`[Proto-Engine] Starting ${accounts.length} accounts sequentially...`);
 
-      // Connect Discord once (shared across all accounts)
-      this._gw = await connectGateway();
-      console.log('[Proto-Engine] Discord connected!');
+      // Determine payment-link source from runtime config. Default 'api'.
+      const linkSource = runtimeCfg.paymentLinkSource || 'api';
+      console.log(`[Proto-Engine] Payment link source: ${linkSource}`);
+
+      if (linkSource === 'discord') {
+        console.log('[Proto-Engine] Connecting to Discord Gateway...');
+        this._gw = await connectGateway();
+        console.log('[Proto-Engine] Discord connected!');
+      }
 
       for (let i = 0; i < accounts.length; i++) {
         if (this.stopFlag) break;
@@ -277,42 +284,51 @@ class ProtocolEngine extends EventEmitter {
           continue;
         }
 
-        // Step 2: Discord (retry up to 3 times on timeout)
-        this.emitStatus({ email: account.email, status: 'running', phase: 'discord', progress });
-        console.log(`[${progress}] Discord: ${account.email}...`);
+        // Step 2: Payment link (retry up to 3 times on transient errors)
+        const phaseTag = linkSource === 'discord' ? 'discord' : 'checkout';
+        this.emitStatus({ email: account.email, status: 'running', phase: phaseTag, progress });
+        console.log(`[${progress}] ${phaseTag === 'discord' ? 'Discord' : 'Checkout'}: ${account.email}...`);
         let link;
-        // Reconnect Gateway if disconnected
-        if (this._gw?.ws?.readyState !== 1) {
+
+        // Reconnect Gateway only when using Discord path
+        if (linkSource === 'discord' && this._gw?.ws?.readyState !== 1) {
           console.log(`[${progress}] Gateway disconnected, reconnecting...`);
           try { this._gw?.cleanup(); } catch {}
           this._gw = await connectGateway();
           console.log(`[${progress}] Gateway reconnected`);
         }
 
-        let discordOk = false;
+        let linkFetchOk = false;
         for (let dRetry = 0; dRetry < 3; dRetry++) {
           try {
-            if (dRetry > 0) console.log(`[${progress}] Discord retry ${dRetry + 1}/3...`);
-            const discord = await getPaymentLink(this._gw, result.accessToken);
-            link = discord.link;
-            if (link) console.log(`[${progress}] ${discord.title || 'Link obtained'}`);
+            if (dRetry > 0) console.log(`[${progress}] Link fetch retry ${dRetry + 1}/3...`);
+            let r;
+            if (linkSource === 'discord') {
+              r = await getPaymentLink(this._gw, result.accessToken);
+            } else {
+              r = await proxyMgr.withCheckoutNode(
+                () => fetchCheckoutLink(result.accessToken)
+              );
+            }
+            link = r.link;
+            if (link) console.log(`[${progress}] ${r.title || 'Link obtained'}`);
             console.log(`[${progress}] Link: ${link || 'none'}`);
             if (!link) {
-              console.log(`[${progress}] ${(discord.raw || 'No link').slice(0, 80)}`);
-              this.emitStatus({ email: account.email, status: 'no_link', phase: 'done', progress, reason: discord.raw });
+              console.log(`[${progress}] ${(r.raw || 'No link').slice(0, 80)}`);
+              this.emitStatus({ email: account.email, status: 'no_link', phase: 'done', progress, reason: r.raw });
               summary.noLink++;
             }
-            discordOk = true;
+            linkFetchOk = true;
             break;
           } catch (e) {
-            console.log(`[${progress}] Discord error: ${e.message?.slice(0, 60)}`);
-            if (dRetry < 2 && e.message?.includes('Timeout')) {
-              await new Promise(r => setTimeout(r, 2000));
+            console.log(`[${progress}] Link fetch error: ${e.message?.slice(0, 60)}`);
+            if (dRetry < 2 && (e.message?.includes('Timeout') || e.message?.includes('fetch'))) {
+              await new Promise(r2 => setTimeout(r2, 2000));
               continue;
             }
-            this.emitStatus({ email: account.email, status: 'error', phase: 'discord', progress, reason: e.message });
+            this.emitStatus({ email: account.email, status: 'error', phase: phaseTag, progress, reason: e.message });
             summary.error++;
-            discordOk = true;
+            linkFetchOk = true;
             break;
           }
         }
