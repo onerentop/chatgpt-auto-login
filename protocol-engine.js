@@ -336,6 +336,25 @@ class ProtocolEngine extends EventEmitter {
           const ctx = browser.contexts()[0];
           const page = ctx.pages()[0] || await ctx.newPage();
           await page.goto(link, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
+
+          // If the page landed on chrome-error (ERR_CONNECTION_CLOSED, etc.) the
+          // current proxy node can't reach pay.openai.com. Blacklist it, rotate,
+          // and retry once on a fresh route before giving up.
+          let pageUrl = page.url();
+          if (pageUrl.startsWith('chrome-error://') || pageUrl === 'about:blank') {
+            const badNode = proxyMgr.getState().currentNode;
+            console.log(`[${progress}] Payment page unreachable via ${badNode} (${pageUrl.slice(0, 40)}); rotating + retrying`);
+            if (proxyMgr.getState().enabled) {
+              try { proxyMgr.markBad(badNode); } catch {}
+              try { const n = await proxyMgr.rotate(); console.log(`[${progress}] Retrying payment on ${n}`); } catch {}
+            }
+            await page.goto(link, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
+            pageUrl = page.url();
+            if (pageUrl.startsWith('chrome-error://') || pageUrl === 'about:blank') {
+              throw new Error(`Payment page unreachable after node rotation (${pageUrl.slice(0, 40)})`);
+            }
+          }
+
           try { await page.locator('text=PayPal').first().waitFor({ state: 'visible', timeout: 15000 }); } catch {}
           await randomDelay(2000, 3000);
 
