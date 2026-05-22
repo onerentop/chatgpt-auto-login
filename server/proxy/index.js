@@ -236,6 +236,37 @@ async function rotate() {
   return nextTag;
 }
 
+async function rotateJp() {
+  if (!_state.jp.enabled || _state.jp.nodeTags.length === 0) throw new Error('JP 通道未启用');
+
+  let nextTag = null;
+  for (let i = 0; i < _state.jp.nodeTags.length; i++) {
+    let candidate;
+    if (_state.jp.rotationStrategy === 'random') {
+      candidate = _state.jp.nodeTags[Math.floor(Math.random() * _state.jp.nodeTags.length)];
+    } else {
+      _state.jp.rotationIndex = (_state.jp.rotationIndex + 1) % _state.jp.nodeTags.length;
+      candidate = _state.jp.nodeTags[_state.jp.rotationIndex];
+    }
+    if (!isJpBad(candidate)) { nextTag = candidate; break; }
+  }
+
+  if (!nextTag) {
+    console.log(`[Proxy:JP] All ${_state.jp.nodeTags.length} KDDI nodes are blacklisted; clearing and rotating fresh`);
+    _state.jp.badNodes.clear();
+    if (_state.jp.rotationStrategy === 'random') {
+      nextTag = _state.jp.nodeTags[Math.floor(Math.random() * _state.jp.nodeTags.length)];
+    } else {
+      _state.jp.rotationIndex = (_state.jp.rotationIndex + 1) % _state.jp.nodeTags.length;
+      nextTag = _state.jp.nodeTags[_state.jp.rotationIndex];
+    }
+  }
+
+  await clashApi.switchSelector(JP_SELECTOR_TAG, nextTag);
+  _state.jp.currentNode = nextTag;
+  return nextTag;
+}
+
 /** Switch to a specific node by name. */
 async function switchTo(nodeTag) {
   if (!_state.nodeTags.includes(nodeTag)) throw new Error(`节点不存在: ${nodeTag}`);
@@ -288,8 +319,68 @@ async function detectExit() {
   }
 }
 
+async function detectJpExit() {
+  if (!_state.jp.enabled) return '';
+  try {
+    const net = require('net');
+    const tls = require('tls');
+    const host = 'api.ipify.org';
+    const exitIp = await new Promise((resolve, reject) => {
+      const sock = net.connect(JP_HTTP_PORT, '127.0.0.1', () => {
+        sock.write(`CONNECT ${host}:443 HTTP/1.1\r\nHost: ${host}:443\r\n\r\n`);
+      });
+      let preamble = '';
+      sock.once('error', reject);
+      sock.setTimeout(15000, () => { sock.destroy(new Error('timeout')); });
+      sock.on('data', function onData(chunk) {
+        preamble += chunk.toString('binary');
+        const headerEnd = preamble.indexOf('\r\n\r\n');
+        if (headerEnd === -1) return;
+        sock.removeListener('data', onData);
+        if (!/^HTTP\/1\.[01] 200/.test(preamble)) {
+          return reject(new Error(`CONNECT failed: ${preamble.split('\r\n')[0]}`));
+        }
+        const tlsSock = tls.connect({ socket: sock, servername: host, rejectUnauthorized: false }, () => {
+          tlsSock.write(`GET / HTTP/1.1\r\nHost: ${host}\r\nUser-Agent: curl/8\r\nConnection: close\r\n\r\n`);
+        });
+        let resp = '';
+        tlsSock.on('data', c => resp += c.toString('utf-8'));
+        tlsSock.on('end', () => {
+          const bodyIdx = resp.indexOf('\r\n\r\n');
+          const body = bodyIdx > -1 ? resp.slice(bodyIdx + 4).trim() : resp.trim();
+          const m = body.match(/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})/);
+          resolve(m ? m[1] : body.slice(0, 60));
+        });
+        tlsSock.on('error', reject);
+      });
+    });
+    _state.jp.exitIp = exitIp;
+    return exitIp;
+  } catch (e) {
+    _state.jp.exitIp = `error: ${(e.message || '').slice(0, 60)}`;
+    return _state.jp.exitIp;
+  }
+}
+
 function getProxyUrl() {
   return _state.enabled ? `http://127.0.0.1:${HTTP_PORT}` : '';
+}
+
+function getJpProxyUrl() {
+  return _state.jp.enabled ? `http://127.0.0.1:${JP_HTTP_PORT}` : '';
+}
+
+function isJpBad(tag) {
+  const expiry = _state.jp.badNodes.get(tag);
+  if (!expiry) return false;
+  if (Date.now() > expiry) { _state.jp.badNodes.delete(tag); return false; }
+  return true;
+}
+
+function markJpBad(tag, ttlMs = BAD_NODE_TTL_MS) {
+  if (!tag) return;
+  _state.jp.badNodes.set(tag, Date.now() + ttlMs);
+  console.log(`[Proxy:JP] Marked bad: ${tag} (TTL ${Math.round(ttlMs / 60000)}min)`);
 }
 
 module.exports = {
@@ -303,7 +394,16 @@ module.exports = {
   detectExit,
   getProxyUrl,
   buildSingboxConfig,
+  // JP-Checkout channel
+  getJpProxyUrl,
+  rotateJp,
+  detectJpExit,
+  markJpBad,
+  isJpBad,
+  // constants
   SELECTOR_TAG,
+  JP_SELECTOR_TAG,
   HTTP_PORT,
+  JP_HTTP_PORT,
   CLASH_API_PORT,
 };
