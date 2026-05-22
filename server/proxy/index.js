@@ -18,14 +18,16 @@ let _state = {
   enabled: false,
   subscriptionUrl: '',
   outbounds: [],         // parsed nodes (filtered by region)
-  nodeTags: [],          // names of available nodes
+  nodeTags: [],          // names of available nodes (main rotation pool)
   currentNode: '',
   rotationStrategy: 'sequential',  // sequential | random
   rotationIndex: 0,
-  rotationKeyword: 'US', // region filter
+  rotationKeyword: 'US', // region filter (main pool)
   lastError: '',
   exitIp: '',
   badNodes: new Map(),   // tag → expiry timestamp (ms). Nodes that produced repeated TLS/network errors.
+  checkoutRegionKeyword: '日本', // region filter for the checkout-only pool (used by withCheckoutNode)
+  checkoutNodeTags: [],  // names of checkout-only nodes (e.g., JP nodes for the /payments/checkout API call)
 };
 
 function readCfg() {
@@ -86,21 +88,34 @@ async function refresh() {
   const cfg = readCfg().proxy || {};
   _state.subscriptionUrl = cfg.subscriptionUrl || '';
   _state.rotationKeyword = cfg.regionFilter || 'US';
+  _state.checkoutRegionKeyword = cfg.checkoutRegionFilter || '日本';
   _state.rotationStrategy = cfg.rotationStrategy || 'sequential';
   if (!_state.subscriptionUrl) throw new Error('未配置机场订阅 URL');
 
   console.log(`[Proxy] Fetching subscription...`);
   const all = await fetchAndParse(_state.subscriptionUrl);
   console.log(`[Proxy] Total nodes parsed: ${all.length}`);
+
   const filtered = filterByRegion(all, _state.rotationKeyword);
   console.log(`[Proxy] After region filter (${_state.rotationKeyword}): ${filtered.length}`);
   if (filtered.length === 0) throw new Error(`没有匹配地区 "${_state.rotationKeyword}" 的节点`);
 
-  _state.outbounds = filtered;
-  _state.nodeTags = filtered.map(o => o.tag);
+  const checkoutFiltered = filterByRegion(all, _state.checkoutRegionKeyword);
+  console.log(`[Proxy] Checkout region filter (${_state.checkoutRegionKeyword}): ${checkoutFiltered.length}`);
+
+  // Merge: main pool + any checkout-only nodes (de-duplicated by tag). This is
+  // what we feed to sing-box so its selector can switch to either set.
+  const merged = [...filtered];
+  for (const o of checkoutFiltered) {
+    if (!merged.some(m => m.tag === o.tag)) merged.push(o);
+  }
+
+  _state.outbounds = merged;
+  _state.nodeTags = filtered.map(o => o.tag);                  // rotation pool (main region only)
+  _state.checkoutNodeTags = checkoutFiltered.map(o => o.tag);  // checkout pool (may overlap with main)
   _state.rotationIndex = 0;
 
-  const sbConfig = buildSingboxConfig(filtered);
+  const sbConfig = buildSingboxConfig(merged);
   await singbox.start(sbConfig);
   _state.enabled = true;
   _state.currentNode = filtered[0].tag;
@@ -206,6 +221,37 @@ async function detectExit() {
   }
 }
 
+/** Run `fn` while the proxy selector is switched to a random checkout-region
+ * (JP by default) node. Restores the previous node afterward — even if `fn`
+ * throws. If no checkout nodes are loaded (or proxy disabled), runs `fn`
+ * on the current setup; the caller is responsible for the consequences
+ * (the /payments/checkout API will likely return a region-mismatch error). */
+async function withCheckoutNode(fn) {
+  if (!_state.enabled) return await fn();
+  if (_state.checkoutNodeTags.length === 0) {
+    console.log('[Proxy] No checkout-region nodes loaded; running on current node');
+    return await fn();
+  }
+  const prevNode = _state.currentNode;
+  const jpNode = _state.checkoutNodeTags[
+    Math.floor(Math.random() * _state.checkoutNodeTags.length)
+  ];
+  try {
+    await clashApi.switchSelector(SELECTOR_TAG, jpNode);
+    _state.currentNode = jpNode;
+    console.log(`[Proxy] Checkout switch → ${jpNode}`);
+    return await fn();
+  } finally {
+    try {
+      await clashApi.switchSelector(SELECTOR_TAG, prevNode);
+      _state.currentNode = prevNode;
+      console.log(`[Proxy] Checkout restore → ${prevNode}`);
+    } catch (e) {
+      console.log(`[Proxy] Checkout restore failed: ${e.message?.slice(0, 60)}`);
+    }
+  }
+}
+
 function getProxyUrl() {
   return _state.enabled ? `http://127.0.0.1:${HTTP_PORT}` : '';
 }
@@ -216,6 +262,7 @@ module.exports = {
   stop,
   rotate,
   switchTo,
+  withCheckoutNode,
   markBad,
   isBad,
   detectExit,
