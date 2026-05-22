@@ -617,54 +617,74 @@ async function autoPayment(page, phoneConfig) {
     await handleOpenAIPage(page);
   }
 
-  // Wait and handle PayPal pages as they come
-  // After OpenAI submit, PayPal redirect can take 5-15 seconds
+  // Wait for redirect to any PayPal flow (login or checkout). Event-driven —
+  // resolves on the navigation event rather than polling. 30s budget matches
+  // the previous worst-case (15 rounds × 2s) but exits immediately on arrival.
   let paypalHandled = false;
-  for (let round = 0; round < 15; round++) {
-    await randomDelay(2000, 3000);
-    let currentUrl;
-    try { currentUrl = page.url(); } catch (e) { console.log(`    [Pay] Page closed/crashed: ${e.message?.slice(0, 40)}`); break; }
+  try {
+    await page.waitForURL(
+      (url) => /paypal\.com\/(?:pay|checkoutweb|signup)/.test(String(url)),
+      { timeout: 30000 }
+    );
+  } catch {
+    console.log('    [Pay] PayPal redirect not detected in 30s');
+    return { success: false, reason: 'PayPal not reached' };
+  }
 
-    if (currentUrl.includes('paypal.com/pay')) {
-      await handlePayPalLogin(page);
-    } else if (currentUrl.includes('paypal.com') && (currentUrl.includes('checkoutweb') || currentUrl.includes('signup'))) {
-      await handlePayPalCheckout(page, PHONE, SMS_API);
-      paypalHandled = true;
-      break;
-    } else if (currentUrl.includes('pay.openai.com') || currentUrl.includes('checkout.stripe.com')) {
-      // Still on OpenAI/Stripe, waiting for redirect
-      if (round % 3 === 2) console.log('    [Pay] Waiting for PayPal redirect...');
-      continue;
-    } else {
-      // Unknown URL — might be mid-redirect, keep waiting
-      if (round % 3 === 2) console.log('    [Pay] Page: ' + currentUrl.slice(0, 60) + '...');
-      continue;
+  let currentUrl;
+  try { currentUrl = page.url(); } catch (e) {
+    console.log(`    [Pay] Page closed/crashed: ${e.message?.slice(0, 40)}`);
+    return { success: false, reason: 'Page closed before PayPal handler' };
+  }
+
+  if (currentUrl.includes('paypal.com/pay')) {
+    await handlePayPalLogin(page);
+    // After login submit, the next page is the checkout/signup form.
+    try {
+      await page.waitForURL(
+        (url) => /paypal\.com\/(?:checkoutweb|signup)/.test(String(url)),
+        { timeout: 15000 }
+      );
+      currentUrl = page.url();
+    } catch {
+      console.log('    [Pay] PayPal login did not advance to checkout in 15s');
     }
   }
+
+  if (/paypal\.com\/(?:checkoutweb|signup)/.test(currentUrl)) {
+    await handlePayPalCheckout(page, PHONE, SMS_API);
+    paypalHandled = true;
+  }
+
   if (!paypalHandled) {
     console.log('    [Pay] PayPal flow not detected, continuing...');
     console.log('    [Pay] Auto-payment flow completed');
     return { success: false, reason: 'PayPal not reached' };
   }
 
-  // Wait for PayPal to finish processing and redirect back to pay.openai.com
+  // Wait for PayPal to finish processing and redirect back. Resolves on whichever
+  // navigation event arrives first — pay.openai.com with succeeded status, or
+  // chatgpt.com (some success paths skip the explicit success URL).
   console.log('    [Pay] Waiting for payment redirect...');
   let paymentSuccess = false;
-  for (let w = 0; w < 15; w++) {
-    await new Promise(r => setTimeout(r, 2000));
-    let currentUrl;
-    try { currentUrl = page.url(); } catch { break; }
-    if (currentUrl.includes('pay.openai.com') && currentUrl.includes('redirect_status=succeeded')) {
+  try {
+    await page.waitForURL(
+      (url) => {
+        const s = String(url);
+        return (s.includes('pay.openai.com') && s.includes('redirect_status=succeeded'))
+            || s.includes('chatgpt.com');
+      },
+      { timeout: 30000 }
+    );
+    const finalUrl = page.url();
+    if (finalUrl.includes('redirect_status=succeeded')) {
       console.log('    [Pay] Payment succeeded! (redirect_status=succeeded)');
-      paymentSuccess = true;
-      break;
-    }
-    if (currentUrl.includes('chatgpt.com')) {
+    } else {
       console.log('    [Pay] Redirected to chatgpt.com — payment likely succeeded');
-      paymentSuccess = true;
-      break;
     }
-    if (w % 3 === 2) console.log(`    [Pay] Waiting... (${currentUrl.slice(0, 50)})`);
+    paymentSuccess = true;
+  } catch {
+    console.log('    [Pay] Payment redirect not detected in 30s');
   }
 
   console.log('    [Pay] Auto-payment flow completed');
