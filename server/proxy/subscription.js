@@ -189,4 +189,11 @@ function filterByJpKddi(outbounds, keyword = 'KDDI') {
   return outbounds.filter(o => re.test(o.tag || ''));
 }
 
-module.exports = { fetchAndParse, filterByRegion, filterByJpKddi, US_PATTERNS };
+function filterByWhitelist(outbounds, whitelist) {
+  if (!Array.isArray(outbounds) || outbounds.length === 0) return [];
+  if (!Array.isArray(whitelist) || whitelist.length === 0) return [];
+  const wantSet = new Set(whitelist.filter(t => typeof t === 'string' && t));
+  return outbounds.filter(o => wantSet.has(o.tag || ''));
+}
+
+module.exports = { fetchAndParse, filterByRegion, filterByJpKddi, filterByWhitelist, US_PATTERNS };
