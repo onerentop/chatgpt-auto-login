@@ -469,10 +469,44 @@ async function handlePayPalCheckout(page, phoneOverride, smsOverride) {
   console.log(`    [Pay] Filled: ${filled.join(', ') || 'none'}`);
   if (missed.length) console.log(`    [Pay] MISSED: ${missed.join(', ')}`);
 
-  await randomDelay(500, 1000);
-  const ppSubmitted = await clickSubmit(page);
-  if (!ppSubmitted) console.log('    [Pay] Submit button not found/clickable');
-  console.log('    [Pay] PayPal checkout submitted');
+  // Submit with card-decline retry (up to 3 different cards)
+  for (let cardAttempt = 0; cardAttempt < 3; cardAttempt++) {
+    if (cardAttempt > 0) {
+      const newCard = randCard();
+      console.log(`    [Pay] Retry card #${cardAttempt + 1}: ${newCard.number.slice(0, 4)}****${newCard.number.slice(-4)}`);
+      await fillInput(page, '#cardNumber', newCard.number);
+      await fillInput(page, '#cardExpiry', newCard.expiry);
+      await fillInput(page, '#cardCvv', newCard.cvv);
+      await randomDelay(500, 1000);
+    }
+    await randomDelay(500, 1000);
+    const ppSubmitted = await clickSubmit(page);
+    if (!ppSubmitted) console.log('    [Pay] Submit button not found/clickable');
+    console.log('    [Pay] PayPal checkout submitted');
+
+    // Wait for error banner or page transition
+    await randomDelay(3000, 5000);
+    const declined = await page.evaluate(() => {
+      const text = (document.body.innerText || '').toLowerCase();
+      const patterns = [
+        "weren't able to add this card",
+        'unable to add this card',
+        'card was declined',
+        'card has been declined',
+        'try a different card',
+        'could not process',
+        'transaction cannot be completed',
+      ];
+      return patterns.some(p => text.includes(p));
+    }).catch(() => false);
+
+    if (!declined) {
+      console.log('    [Pay] No card decline detected, proceeding');
+      break;
+    }
+    console.log(`    [Pay] Card declined (attempt ${cardAttempt + 1}/3)`);
+    if (cardAttempt === 2) console.log('    [Pay] All 3 cards declined, continuing anyway');
+  }
 
   // Handle SMS verification code dialog
   await handleSmsVerification(page, smsOverride);
