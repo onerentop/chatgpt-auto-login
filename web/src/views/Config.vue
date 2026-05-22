@@ -128,6 +128,8 @@ const formRef = ref(null)
 const saving = ref(false)
 const refreshingProxy = ref(false)
 const proxyStatus = ref(null)
+const allNodeTags = ref([])
+const jpKddiTagSet = ref(new Set())
 
 const form = reactive({
   protocolMode: false,
@@ -149,6 +151,7 @@ const form = reactive({
   proxyRotationStrategy: 'sequential',
   proxyJpEnabled: true,
   proxyJpKeyword: 'KDDI',
+  proxyJpWhitelist: [],
 })
 
 onMounted(async () => {
@@ -169,12 +172,14 @@ onMounted(async () => {
       if (cfg.proxy.jpCheckout) {
         if (cfg.proxy.jpCheckout.enabled !== undefined) form.proxyJpEnabled = cfg.proxy.jpCheckout.enabled
         if (cfg.proxy.jpCheckout.keyword !== undefined) form.proxyJpKeyword = cfg.proxy.jpCheckout.keyword
+        if (Array.isArray(cfg.proxy.jpCheckout.whitelist)) form.proxyJpWhitelist = cfg.proxy.jpCheckout.whitelist
       }
     }
   } catch (err) {
     console.error('Failed to load config:', err)
   }
-  loadProxyStatus()
+  await loadProxyStatus()
+  await loadAllNodes()
 })
 
 async function loadProxyStatus() {
@@ -183,6 +188,17 @@ async function loadProxyStatus() {
     proxyStatus.value = data
   } catch (err) {
     proxyStatus.value = null
+  }
+}
+
+async function loadAllNodes() {
+  try {
+    const { data } = await api.get('/proxy/nodes')
+    allNodeTags.value = data.nodeTags || []
+    jpKddiTagSet.value = new Set(data.jpKddiTags || [])
+  } catch {
+    allNodeTags.value = []
+    jpKddiTagSet.value = new Set()
   }
 }
 
@@ -196,6 +212,7 @@ async function handleSave() {
     delete payload.proxyRotationStrategy
     delete payload.proxyJpEnabled
     delete payload.proxyJpKeyword
+    delete payload.proxyJpWhitelist
     payload.proxy = {
       enabled: form.proxyEnabled,
       subscriptionUrl: form.proxySubscriptionUrl,
@@ -204,6 +221,7 @@ async function handleSave() {
       jpCheckout: {
         enabled: form.proxyJpEnabled,
         keyword: form.proxyJpKeyword,
+        whitelist: form.proxyJpWhitelist || [],
       },
     }
     await api.put('/config', payload)
@@ -222,6 +240,7 @@ async function refreshProxy() {
     await api.post('/proxy/refresh')
     ElMessage.success('代理已启动')
     await loadProxyStatus()
+    await loadAllNodes()
   } catch (err) {
     ElMessage.error(err.response?.data?.error || '启动失败')
   } finally {
