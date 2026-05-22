@@ -162,29 +162,53 @@ async function handleOpenAIPage(page) {
 
   // Step 0a: Detect if this is actually a $0 trial. Some Discord links lead to a
   // regular paid subscription page; we don't want to start filling cards on those.
-  // Find the localized "Total due today" label and grab the amount that follows.
+  // Strategy: (1) look for a localized "Total due today" label and parse the amount
+  // after it; (2) fallback — if no label matched but there ARE USD amounts on the
+  // page AND none of them is $0, then there's no "free" anywhere → treat as paid.
   await randomDelay(1500, 2500);  // let Stripe render the prices
-  const dueCheck = await page.evaluate(() => {
-    const text = document.body.innerText || '';
+  const scan = await page.evaluate(() => {
+    const raw = document.body.innerText || '';
+    // Normalize: NBSP → space, collapse whitespace
+    const text = raw.replace(/ /g, ' ').replace(/[ \t]+/g, ' ');
     const labels = [
       '今天應付總額', '今日應付總額', '今天应付总额', '今日应付总额',
-      'Total due today', "Today's total", 'Due today',
+      '應付總額', '应付总额', '今日付款',
+      'Total due today', "Today's total", 'Due today', 'Total due',
     ];
+    let labelHit = null;
     for (const label of labels) {
-      const idx = text.indexOf(label);
+      const idx = text.toLowerCase().indexOf(label.toLowerCase());
       if (idx === -1) continue;
       const after = text.slice(idx, idx + 200);
       const m = after.match(/(?:US\s*)?\$\s*([0-9]+(?:[.,][0-9]{2})?)/);
-      if (m) return { label, amount: parseFloat(m[1].replace(',', '.')) };
+      if (m) { labelHit = { label, amount: parseFloat(m[1].replace(',', '.')) }; break; }
     }
-    return null;
+    // Collect ALL USD amounts on the page (for fallback)
+    const amountRe = /(?:US\s*)?\$\s*([0-9]+(?:[.,][0-9]{2})?)/g;
+    const amounts = [];
+    let m2;
+    while ((m2 = amountRe.exec(text))) amounts.push(parseFloat(m2[1].replace(',', '.')));
+    const hasZero = amounts.some(a => a === 0);
+    return { labelHit, amounts, hasZero, textHead: text.slice(0, 300) };
   });
-  if (dueCheck && dueCheck.amount > 0) {
-    const e = new Error(`Not a free trial: "${dueCheck.label}" = $${dueCheck.amount}`);
+  if (scan.labelHit && scan.labelHit.amount > 0) {
+    const e = new Error(`Not a free trial: "${scan.labelHit.label}" = $${scan.labelHit.amount}`);
     e.code = 'NOT_FREE_TRIAL';
     throw e;
   }
-  if (dueCheck) console.log(`    [Pay] Free trial confirmed (${dueCheck.label}: $${dueCheck.amount.toFixed(2)})`);
+  if (scan.labelHit) {
+    console.log(`    [Pay] Free trial confirmed (${scan.labelHit.label}: $${scan.labelHit.amount.toFixed(2)})`);
+  } else if (scan.amounts.length > 0 && !scan.hasZero) {
+    // No label matched, but every USD amount on the page is > 0 → no "$0 due today" anywhere.
+    // A genuine free-trial page always renders a $0.00 line (either tax or total due today),
+    // so this combination strongly indicates a paid subscription.
+    const e = new Error(`Not a free trial (no $0 found; amounts: ${scan.amounts.join(', ')})`);
+    e.code = 'NOT_FREE_TRIAL';
+    throw e;
+  } else {
+    // Detector inconclusive — log what we saw so we can extend the label list / patterns next run.
+    console.log(`    [Pay] Due-today label not matched. amounts=${JSON.stringify(scan.amounts.slice(0, 8))} hasZero=${scan.hasZero} head="${scan.textHead.slice(0, 120).replace(/\n/g, ' / ')}"`);
+  }
 
   // Step 0b: Inject CSS to hide Google autocomplete (before any interaction)
   await page.addStyleTag({ content: '.AddressAutocomplete-results,.pac-container{display:none!important;height:0!important;overflow:hidden!important;pointer-events:none!important}' }).catch(() => {});
