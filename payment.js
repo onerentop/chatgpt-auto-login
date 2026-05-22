@@ -503,24 +503,23 @@ async function handlePayPalCheckout(page, phoneOverride, smsOverride) {
     if (!ppSubmitted) console.log('    [Pay] Submit button not found/clickable');
     console.log('    [Pay] PayPal checkout submitted');
 
-    // Wait for error banner or page transition
-    await randomDelay(3000, 5000);
-    const declined = await page.evaluate(() => {
-      const text = (document.body.innerText || '').toLowerCase();
-      const patterns = [
-        "weren't able to add this card",
-        'unable to add this card',
-        'card was declined',
-        'card has been declined',
-        'try a different card',
-        'could not process',
-        'transaction cannot be completed',
-      ];
-      return patterns.some(p => text.includes(p));
-    }).catch(() => false);
+    // Race three possible outcomes — return as soon as ANY is detected.
+    // 'declined'  → retry with a fresh card on the next loop iteration.
+    // 'sms'       → break out; handleSmsVerification (called after the loop) will handle it.
+    // 'redirect'  → success or near-success URL change; break out.
+    // null        → all three signals timed out; break out and let downstream code decide.
+    const outcome = await Promise.race([
+      page.locator('text=/weren.?t able to add this card|card was declined|card has been declined|try a different card|could not process|transaction cannot be completed/i')
+        .first().waitFor({ timeout: 8000 }).then(() => 'declined').catch(() => null),
+      page.locator('text=/Enter your code|输入验证码|输入你的验证码/i')
+        .first().waitFor({ timeout: 8000 }).then(() => 'sms').catch(() => null),
+      page.waitForURL(/pay\.openai\.com|chatgpt\.com/, { timeout: 8000 })
+        .then(() => 'redirect').catch(() => null),
+    ]);
 
-    if (!declined) {
-      console.log('    [Pay] No card decline detected, proceeding');
+    if (outcome !== 'declined') {
+      if (outcome === null) console.log('    [Pay] No outcome detected within 8s, proceeding');
+      else console.log(`    [Pay] Post-submit outcome: ${outcome}`);
       break;
     }
     console.log(`    [Pay] Card declined (attempt ${cardAttempt + 1}/3)`);
