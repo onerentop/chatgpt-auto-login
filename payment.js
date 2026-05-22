@@ -96,8 +96,7 @@ async function fillInput(page, selector, value) {
     const el = page.locator(selector).first();
     const visible = await el.isVisible({ timeout: 2000 }).catch(() => false);
     if (!visible) return false;
-    await el.click();
-    await el.fill(value);
+    await el.fill(value);  // fill() auto-focuses; explicit click() removed to prevent focus race when called in parallel
     await el.dispatchEvent('change');
     await el.dispatchEvent('blur');
     return true;
@@ -455,21 +454,29 @@ async function handlePayPalCheckout(page, phoneOverride, smsOverride) {
   console.log('    [Pay] Email:', email);
   console.log('    [Pay] Address:', JSON.stringify(addr));
 
-  const results = {};
-  results.email = await fillInput(page, '#email', email);
-  results.phone = await fillInput(page, '#phone', phoneOverride || CONFIG.phone);
   const card = randCard();
   console.log('    [Pay] Card:', card.number.slice(0, 4) + '****' + card.number.slice(-4));
-  results.cardNumber = await fillInput(page, '#cardNumber', card.number);
-  results.cardExpiry = await fillInput(page, '#cardExpiry', card.expiry);
-  results.cardCvv = await fillInput(page, '#cardCvv', card.cvv);
-  results.password = await fillInput(page, '#password', password);
-  results.firstName = await fillInput(page, '#firstName', 'James');
-  results.lastName = await fillInput(page, '#lastName', 'Smith');
-  results.billingLine1 = await fillInput(page, '#billingLine1', addr.street);
-  results.billingCity = await fillInput(page, '#billingCity', addr.city);
-  results.billingZip = await fillInput(page, '#billingPostalCode', addr.zip);
+
+  // Parallel fill — these 11 fields have no inter-dependencies on this page.
+  // billingState (a <select>) depends on country being US, so it runs after.
+  const fieldSpecs = [
+    ['email',        '#email',             email],
+    ['phone',        '#phone',             phoneOverride || CONFIG.phone],
+    ['cardNumber',   '#cardNumber',        card.number],
+    ['cardExpiry',   '#cardExpiry',        card.expiry],
+    ['cardCvv',      '#cardCvv',           card.cvv],
+    ['password',     '#password',          password],
+    ['firstName',    '#firstName',         'James'],
+    ['lastName',     '#lastName',          'Smith'],
+    ['billingLine1', '#billingLine1',      addr.street],
+    ['billingCity',  '#billingCity',       addr.city],
+    ['billingZip',   '#billingPostalCode', addr.zip],
+  ];
+  const fillResults = await Promise.all(fieldSpecs.map(([, sel, val]) => fillInput(page, sel, val)));
+  const results = {};
+  fieldSpecs.forEach(([name], i) => { results[name] = fillResults[i]; });
   results.billingState = await selectOption(page, '#billingState', addr.state);
+
   const filled = Object.entries(results).filter(([,v]) => v).map(([k]) => k);
   const missed = Object.entries(results).filter(([,v]) => !v).map(([k]) => k);
   console.log(`    [Pay] Filled: ${filled.join(', ') || 'none'}`);
