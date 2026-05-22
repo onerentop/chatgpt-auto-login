@@ -160,7 +160,33 @@ async function clickSubmit(page) {
 async function handleOpenAIPage(page) {
   console.log('    [Pay] OpenAI/Stripe page detected');
 
-  // Step 0: Inject CSS to hide Google autocomplete (before any interaction)
+  // Step 0a: Detect if this is actually a $0 trial. Some Discord links lead to a
+  // regular paid subscription page; we don't want to start filling cards on those.
+  // Find the localized "Total due today" label and grab the amount that follows.
+  await randomDelay(1500, 2500);  // let Stripe render the prices
+  const dueCheck = await page.evaluate(() => {
+    const text = document.body.innerText || '';
+    const labels = [
+      '今天應付總額', '今日應付總額', '今天应付总额', '今日应付总额',
+      'Total due today', "Today's total", 'Due today',
+    ];
+    for (const label of labels) {
+      const idx = text.indexOf(label);
+      if (idx === -1) continue;
+      const after = text.slice(idx, idx + 200);
+      const m = after.match(/(?:US\s*)?\$\s*([0-9]+(?:[.,][0-9]{2})?)/);
+      if (m) return { label, amount: parseFloat(m[1].replace(',', '.')) };
+    }
+    return null;
+  });
+  if (dueCheck && dueCheck.amount > 0) {
+    const e = new Error(`Not a free trial: "${dueCheck.label}" = $${dueCheck.amount}`);
+    e.code = 'NOT_FREE_TRIAL';
+    throw e;
+  }
+  if (dueCheck) console.log(`    [Pay] Free trial confirmed (${dueCheck.label}: $${dueCheck.amount.toFixed(2)})`);
+
+  // Step 0b: Inject CSS to hide Google autocomplete (before any interaction)
   await page.addStyleTag({ content: '.AddressAutocomplete-results,.pac-container{display:none!important;height:0!important;overflow:hidden!important;pointer-events:none!important}' }).catch(() => {});
 
   // Step 1: Select PayPal via JS .click() on data-testid (proven to expand accordion)

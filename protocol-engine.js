@@ -344,7 +344,16 @@ class ProtocolEngine extends EventEmitter {
           try {
             const slot = runtimeCfg.phoneSlots?.[0] || { phone: runtimeCfg.phone, smsApiUrl: runtimeCfg.smsApiUrl };
             paymentResult = await autoPayment(page, { phone: slot.phone, smsApiUrl: slot.smsApiUrl }) || { success: false };
-          } catch (e) { console.log(`[${progress}] Payment error: ${e.message?.slice(0, 60)}`); }
+          } catch (e) {
+            if (e.code === 'NOT_FREE_TRIAL') {
+              // Link is not a $0 trial — treat as no_link (same outcome as Discord
+              // failing to produce a link). Don't fill cards on a paid subscription page.
+              console.log(`[${progress}] ${e.message}`);
+              paymentResult = { success: false, notFreeTrial: true, reason: e.message };
+            } else {
+              console.log(`[${progress}] Payment error: ${e.message?.slice(0, 60)}`);
+            }
+          }
 
           if (paymentResult.success) {
             if (runtimeCfg.enableOAuth) {
@@ -355,6 +364,9 @@ class ProtocolEngine extends EventEmitter {
               this.emitStatus({ email: account.email, status: 'plus_no_rt', phase: 'done', progress });
             }
             summary.success++;
+          } else if (paymentResult.notFreeTrial) {
+            this.emitStatus({ email: account.email, status: 'no_link', phase: 'done', progress, reason: paymentResult.reason });
+            summary.noLink++;
           } else {
             const reason = paymentResult.reason || 'Payment not completed';
             console.log(`[${progress}] Payment incomplete: ${reason}`);
