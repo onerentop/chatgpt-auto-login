@@ -220,6 +220,7 @@ module.exports = {
   isBad,
   detectExit,
   getProxyUrl,
+  buildSingboxConfig,
   SELECTOR_TAG,
   HTTP_PORT,
   CLASH_API_PORT,
