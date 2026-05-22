@@ -42,6 +42,7 @@ function runProtocolRegister(account, engine) {
         const result = JSON.parse(stdout);
         if (result.status === 'success') resolve(result);
         else if (result.status === 'deactivated') resolve(result);  // surface to caller
+        else if (result.status === 'tls_failure') resolve(result);  // surface to caller — engine handles retry
         else reject(new Error(result.error || 'Protocol register failed'));
       } catch { reject(new Error(stderr.slice(-200) || `Python exit ${code}`)); }
     });
@@ -220,6 +221,31 @@ class ProtocolEngine extends EventEmitter {
         let result;
         try {
           result = await runProtocolRegister(account, this);
+          // tls_failure means the homepage step exhausted its 5 retries with TLS errors —
+          // a network-layer (node) problem, not an account problem. Blacklist the current
+          // node, rotate to a fresh one, and retry the same account once.
+          if (result.status === 'tls_failure') {
+            const badNode = proxyMgr.getState().currentNode;
+            console.log(`[${progress}] TLS errors persisted on ${badNode}; blacklisting + rotating + retrying once`);
+            if (proxyMgr.getState().enabled) {
+              try { proxyMgr.markBad(badNode); } catch {}
+              try {
+                const newNode = await proxyMgr.rotate();
+                console.log(`[${progress}] Retrying on ${newNode}`);
+              } catch (e) {
+                console.log(`[${progress}] Rotate failed: ${e.message?.slice(0, 60)}`);
+              }
+            }
+            // Single retry on a fresh route. If this also fails, surface the original
+            // tls_failure as a normal error so cooldown/summary handling stays consistent.
+            result = await runProtocolRegister(account, this);
+            if (result.status === 'tls_failure') {
+              console.log(`[${progress}] TLS still failing after rotation — giving up on this account`);
+              this.emitStatus({ email: account.email, status: 'error', phase: 'protocol-login', progress, reason: result.error });
+              summary.error++;
+              continue;
+            }
+          }
           if (result.status === 'deactivated') {
             console.log(`[${progress}] Account deactivated/deleted by OpenAI`);
             this.emitStatus({ email: account.email, status: 'deactivated', phase: 'done', progress, reason: 'account_deactivated' });

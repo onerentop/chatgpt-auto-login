@@ -580,7 +580,11 @@ def main():
             session.cookies.set("oai-did", device_id, domain=".auth.openai.com")
             time.sleep(2 * (attempt + 1))
         if not r or r.status_code != 200:
-            raise Exception(f"Homepage failed after 5 attempts")
+            # Treat exhausted homepage retries as a network-layer failure (node-level)
+            # rather than an account-level error. The engine can blacklist the current
+            # proxy node, rotate, and retry the same account with a fresh route.
+            print(json.dumps({"status": "tls_failure", "error": "Homepage failed after 5 attempts (likely node-level TLS issue)"}))
+            sys.exit(0)
         time.sleep(random.uniform(0.5, 1.5))
 
         # Step 1: Signin (chatgpt.com flow — no add_phone requirement)
