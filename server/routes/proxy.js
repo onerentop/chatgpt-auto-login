@@ -66,4 +66,11 @@ router.post('/jp/mark-bad', (req, res) => {
   res.json({ ok: true, node, jpBadNodes: proxy.getState().jp.badNodes });
 });
 
+router.get('/nodes', (req, res) => {
+  const state = proxy.getState();
+  const allTags = state.allTags || [];
+  const jpKddiTags = allTags.filter(t => /KDDI/i.test(t));
+  res.json({ nodeTags: allTags, total: allTags.length, jpKddiTags });
+});
+
 module.exports = router;
