@@ -179,4 +179,14 @@ function filterByRegion(outbounds, region = 'US') {
   return outbounds.filter(o => re.test(o.tag));
 }
 
-module.exports = { fetchAndParse, filterByRegion, US_PATTERNS };
+function escapeRegex(s) {
+  return String(s || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function filterByJpKddi(outbounds, keyword = 'KDDI') {
+  if (!Array.isArray(outbounds) || outbounds.length === 0) return [];
+  const re = new RegExp(escapeRegex(keyword), 'i');
+  return outbounds.filter(o => re.test(o.tag || ''));
+}
+
+module.exports = { fetchAndParse, filterByRegion, filterByJpKddi, US_PATTERNS };
