@@ -2,7 +2,7 @@
 const fs = require('fs');
 const path = require('path');
 const singbox = require('./singbox');
-const { fetchAndParse, filterByRegion } = require('./subscription');
+const { fetchAndParse, filterByRegion, filterByJpKddi } = require('./subscription');
 const clashApi = require('./clash-api');
 
 const ROOT = path.join(__dirname, '..', '..');
@@ -127,6 +127,12 @@ async function refresh() {
   _state.subscriptionUrl = cfg.subscriptionUrl || '';
   _state.rotationKeyword = cfg.regionFilter || 'US';
   _state.rotationStrategy = cfg.rotationStrategy || 'sequential';
+
+  const jpCfg = cfg.jpCheckout || {};
+  const jpEnabledByConfig = jpCfg.enabled !== false;
+  _state.jp.keyword = jpCfg.keyword || JP_DEFAULT_KEYWORD;
+  _state.jp.rotationStrategy = jpCfg.rotationStrategy || 'sequential';
+
   if (!_state.subscriptionUrl) throw new Error('未配置机场订阅 URL');
 
   console.log(`[Proxy] Fetching subscription...`);
@@ -136,16 +142,52 @@ async function refresh() {
   console.log(`[Proxy] After region filter (${_state.rotationKeyword}): ${filtered.length}`);
   if (filtered.length === 0) throw new Error(`没有匹配地区 "${_state.rotationKeyword}" 的节点`);
 
+  let jpFiltered = [];
+  if (jpEnabledByConfig) {
+    jpFiltered = filterByJpKddi(all, _state.jp.keyword);
+    console.log(`[Proxy] JP-KDDI filter (keyword=${_state.jp.keyword}): ${jpFiltered.length}`);
+  } else {
+    console.log(`[Proxy] JP-Checkout channel disabled by config`);
+  }
+
   _state.outbounds = filtered;
   _state.nodeTags = filtered.map(o => o.tag);
   _state.rotationIndex = 0;
 
-  const sbConfig = buildSingboxConfig(filtered);
-  await singbox.start(sbConfig);
+  _state.jp.outbounds = jpFiltered;
+  _state.jp.nodeTags = jpFiltered.map(o => o.tag);
+  _state.jp.rotationIndex = 0;
+  _state.jp.currentNode = jpFiltered[0]?.tag || '';
+  _state.jp.enabled = false;
+  _state.jp.lastError = '';
+  if (!jpEnabledByConfig) {
+    _state.jp.lastError = 'JP 通道已被 config.jpCheckout.enabled=false 禁用';
+  } else if (jpFiltered.length === 0) {
+    _state.jp.lastError = `订阅中未找到关键字 "${_state.jp.keyword}" 的节点`;
+  }
+
+  const useJp = jpEnabledByConfig && jpFiltered.length > 0;
+  const sbConfig = buildSingboxConfig(filtered, useJp ? jpFiltered : null);
+
+  try {
+    await singbox.start(sbConfig);
+    _state.jp.enabled = useJp;
+  } catch (err) {
+    if (useJp && /7891|address already in use|bind/i.test(err.message || '')) {
+      console.log(`[Proxy] 7891 端口被占用或绑定失败，降级关闭 JP 通道: ${err.message}`);
+      _state.jp.enabled = false;
+      _state.jp.lastError = `端口 7891 被占用，JP 通道已禁用: ${(err.message || '').slice(0, 120)}`;
+      const fallbackConfig = buildSingboxConfig(filtered, null);
+      await singbox.start(fallbackConfig);
+    } else {
+      throw err;
+    }
+  }
+
   _state.enabled = true;
   _state.currentNode = filtered[0].tag;
   _state.lastError = '';
-  console.log(`[Proxy] sing-box running on http://127.0.0.1:${HTTP_PORT} (Clash API on ${CLASH_API_PORT})`);
+  console.log(`[Proxy] sing-box running: main=:${HTTP_PORT}(${filtered.length}) jp=${_state.jp.enabled ? `:${JP_HTTP_PORT}(${jpFiltered.length})` : 'disabled'}`);
   return filtered.length;
 }
 
