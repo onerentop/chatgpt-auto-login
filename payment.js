@@ -348,7 +348,8 @@ async function handleOpenAIPage(page) {
 
   // Step 3: Wait a bit then click submit
   await randomDelay(1500, 2000);
-  await clickSubmit(page);
+  const submitted = await clickSubmit(page);
+  if (!submitted) console.log('    [Pay] Submit button not found/clickable');
   console.log('    [Pay] OpenAI page submitted');
 }
 
@@ -434,7 +435,7 @@ async function handlePayPalCheckout(page, phoneOverride, smsOverride) {
   // PayPal's React re-rendered the select back to the geo-detected default.
   const finalCountry = await page.evaluate(() => {
     const sels = ['#country', '#countryCode', 'select[name="country"]', 'select[name="countryCode"]', 'select[id*="ountry"]'];
-    for (const sel of sels) { const el = document.querySelector(sel); if (el?.tagName === 'SELECT') return el.value; }
+    for (const sel of sels) { const el = document.querySelector(sel); if (el?.tagName === 'SELECT') return el.value || 'UNKNOWN'; }
     return 'US';  // no select found = probably already removed by PayPal, assume US
   });
   if (finalCountry !== 'US') {
@@ -469,7 +470,8 @@ async function handlePayPalCheckout(page, phoneOverride, smsOverride) {
   if (missed.length) console.log(`    [Pay] MISSED: ${missed.join(', ')}`);
 
   await randomDelay(500, 1000);
-  await clickSubmit(page);
+  const ppSubmitted = await clickSubmit(page);
+  if (!ppSubmitted) console.log('    [Pay] Submit button not found/clickable');
   console.log('    [Pay] PayPal checkout submitted');
 
   // Handle SMS verification code dialog

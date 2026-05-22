@@ -323,6 +323,15 @@ class PipelineEngine extends EventEmitter {
                 paymentOk = !!payResult.success;
                 paymentReason = payResult.reason || '';
               } catch (e) {
+                if (e.code === 'NOT_FREE_TRIAL') {
+                  console.log(`${p} ${e.message}`);
+                  finalResult.status = 'no_link';
+                  finalResult.reason = e.message;
+                  allResults.push(finalResult);
+                  this.emitStatus({ email: account.email, status: 'no_link', phase: 'done', progress, reason: e.message });
+                  summary.noLink = (summary.noLink || 0) + 1;
+                  continue;
+                }
                 console.log(`${p} Auto-fill error: ${e.message}`);
                 paymentReason = e.message?.slice(0, 100) || 'exception';
               }

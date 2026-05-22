@@ -3,11 +3,9 @@
 Input: JSON on stdin { email, password, client_id, refresh_token }
 Output: JSON lines on stdout — log lines as {"log":"..."}, final result as {"status":...}
 """
-import sys, os, json, uuid, time, random, re, string, hashlib, base64, secrets, imaplib, struct
+import sys, os, json, uuid, time, random, re, string, hashlib, base64, secrets, imaplib
 import email as email_lib
 from urllib.parse import urlparse, parse_qs, urlencode, quote
-
-sys.path.insert(0, r"D:\workspace\projects\cliproxyaccountcleaner")
 
 # Chrome fingerprint profiles (local, no external dependency)
 _CHROME_PROFILES = [
@@ -61,6 +59,7 @@ def _fetch_imap_otp(email_addr, client_id, refresh_token, baseline_uid, timeout=
     for attempt in range(30):
         if time.time() - start > timeout:
             break
+        imap = None
         try:
             imap = imaplib.IMAP4_SSL("outlook.office365.com", 993, timeout=15)
             auth_str = f"user={email_addr}\x01auth=Bearer {imap_token}\x01\x01"
@@ -77,7 +76,6 @@ def _fetch_imap_otp(email_addr, client_id, refresh_token, baseline_uid, timeout=
                 if "openai" in from_addr.lower() or "chatgpt" in subject.lower() or "code" in subject.lower():
                     m = re.search(r"\b(\d{6})\b", subject)
                     if m:
-                        imap.logout()
                         return m.group(1)
                     body = ""
                     if msg.is_multipart():
@@ -90,12 +88,16 @@ def _fetch_imap_otp(email_addr, client_id, refresh_token, baseline_uid, timeout=
                     body_clean = re.sub(r"<[^>]+>", " ", body)
                     m = re.search(r"\b(\d{6})\b", body_clean)
                     if m:
-                        imap.logout()
                         return m.group(1)
-            imap.logout()
         except Exception as e:
             if attempt == 0:
                 _log(f"IMAP poll error: {str(e)[:50]}")
+        finally:
+            if imap:
+                try:
+                    imap.logout()
+                except Exception:
+                    pass
         time.sleep(3)
     return None
 
@@ -202,7 +204,7 @@ def _do_pkce_flow(session, email, password, ms_client_id, ms_refresh_token):
             try:
                 from chatgpt_register.chatgpt_register import build_sentinel_token
                 sentinel = build_sentinel_token(session, device_id, flow="authorize_continue", user_agent=session.headers.get("User-Agent", ""), sec_ch_ua=session.headers.get("sec-ch-ua", "")) or ""
-            except:
+            except Exception:
                 sentinel = ""
             r = session.post(f"{AUTH}/api/accounts/authorize/continue",
                 json={"username": {"kind": "email", "value": email}},
@@ -273,7 +275,7 @@ def _do_pkce_flow(session, email, password, ms_client_id, ms_refresh_token):
                             if code_match:
                                 auth_code = code_match.group(1)
                                 _log("PKCE: Got code from connection error")
-                except:
+                except Exception:
                     _log(f"PKCE: Choose-account response: {r.status_code} {str(r.url)[:60]}")
 
         # Need to log in
@@ -282,7 +284,7 @@ def _do_pkce_flow(session, email, password, ms_client_id, ms_refresh_token):
             try:
                 from chatgpt_register.chatgpt_register import build_sentinel_token
                 sentinel = build_sentinel_token(session, device_id, flow="authorize_continue", user_agent=session.headers.get("User-Agent", ""), sec_ch_ua=session.headers.get("sec-ch-ua", "")) or ""
-            except:
+            except Exception:
                 sentinel = ""
             r = session.post(f"{AUTH}/api/accounts/authorize/continue",
                 json={"username": {"kind": "email", "value": email}},
@@ -303,7 +305,7 @@ def _do_pkce_flow(session, email, password, ms_client_id, ms_refresh_token):
                     return {"error": "OTP not received for PKCE"}
                 try:
                     sentinel = build_sentinel_token(session, device_id, flow="email_otp_validate", user_agent=session.headers.get("User-Agent", ""), sec_ch_ua=session.headers.get("sec-ch-ua", "")) or ""
-                except:
+                except Exception:
                     sentinel = ""
                 r = session.post(f"{AUTH}/api/accounts/email-otp/validate",
                     json={"code": otp},
@@ -415,18 +417,24 @@ def _fetch_otp_for_pkce(ms_client_id, ms_refresh_token, email, pre_baseline=0):
             _log(f"PKCE OTP: Using pre-auth baseline UID: {baseline}")
         else:
             imap = imaplib.IMAP4_SSL("outlook.office365.com", 993, timeout=15)
-            imap.authenticate("XOAUTH2", lambda x: auth_str.encode())
-            imap.select("INBOX")
-            _, msgs = imap.search(None, "ALL")
-            uids = msgs[0].split()
-            baseline = int(uids[-1]) if uids else 0
-            imap.logout()
+            try:
+                imap.authenticate("XOAUTH2", lambda x: auth_str.encode())
+                imap.select("INBOX")
+                _, msgs = imap.search(None, "ALL")
+                uids = msgs[0].split()
+                baseline = int(uids[-1]) if uids else 0
+            finally:
+                try:
+                    imap.logout()
+                except Exception:
+                    pass
             _log(f"PKCE OTP: Baseline UID: {baseline}")
 
         time.sleep(5)
 
         # Poll — same pattern as _fetch_imap_otp
         for attempt in range(20):
+            imap = None
             try:
                 imap = imaplib.IMAP4_SSL("outlook.office365.com", 993, timeout=15)
                 imap.authenticate("XOAUTH2", lambda x: auth_str.encode())
@@ -444,7 +452,6 @@ def _fetch_otp_for_pkce(ms_client_id, ms_refresh_token, email, pre_baseline=0):
                         m = re.search(r"\b(\d{6})\b", subject)
                         if m:
                             _log(f"PKCE OTP: Got code: {m.group(1)} (subj)")
-                            imap.logout()
                             return m.group(1)
                         body = ""
                         if msg.is_multipart():
@@ -457,12 +464,16 @@ def _fetch_otp_for_pkce(ms_client_id, ms_refresh_token, email, pre_baseline=0):
                         m = re.search(r"\b(\d{6})\b", re.sub(r"<[^>]+>", " ", body))
                         if m:
                             _log(f"PKCE OTP: Got code: {m.group(1)} (body)")
-                            imap.logout()
                             return m.group(1)
-                imap.logout()
             except Exception as e:
                 if attempt == 0:
                     _log(f"PKCE OTP: IMAP error: {str(e)[:50]}")
+            finally:
+                if imap:
+                    try:
+                        imap.logout()
+                    except Exception:
+                        pass
             time.sleep(3)
 
         _log("PKCE OTP: Not received after 20 attempts")
@@ -572,7 +583,7 @@ def main():
             impersonate, chrome_major, chrome_full, ua, sec_ch_ua = _random_chrome_version()
             device_id = str(uuid.uuid4())
             try: session = curl_requests.Session(impersonate=impersonate)
-            except: session = curl_requests.Session()
+            except Exception: session = curl_requests.Session()
             if proxies: session.proxies = proxies
             session.headers.update({"User-Agent": ua, "sec-ch-ua": sec_ch_ua, "sec-ch-ua-mobile": "?0", "sec-ch-ua-platform": '"Windows"', "Accept-Language": "en-US,en;q=0.9"})
             session.cookies.set("oai-did", device_id, domain="chatgpt.com")
@@ -631,7 +642,7 @@ def main():
             sentinel = ""
             try:
                 sentinel = build_sentinel_token(session, device_id, flow="authorize_continue", user_agent=ua, sec_ch_ua=sec_ch_ua) or ""
-            except: pass
+            except Exception: pass
             r = session.post(f"{AUTH}/api/accounts/authorize/continue",
                 json={"username": {"kind": "email", "value": email}},
                 headers={"Accept": "application/json", "Content-Type": "application/json",
@@ -663,7 +674,7 @@ def main():
             sentinel = ""
             try:
                 sentinel = build_sentinel_token(session, device_id, flow="username_password_create", user_agent=ua, sec_ch_ua=sec_ch_ua) or ""
-            except: pass
+            except Exception: pass
             r = session.post(f"{AUTH}/api/accounts/user/register",
                 json={"username": email, "password": password},
                 headers={"Accept": "application/json", "Content-Type": "application/json",
@@ -696,7 +707,7 @@ def main():
             sentinel = ""
             try:
                 sentinel = build_sentinel_token(session, device_id, flow="email_otp_validate", user_agent=ua, sec_ch_ua=sec_ch_ua) or ""
-            except: pass
+            except Exception: pass
             r = session.post(f"{AUTH}/api/accounts/email-otp/validate",
                 json={"code": otp},
                 headers={"Accept": "application/json", "Content-Type": "application/json",
@@ -760,7 +771,7 @@ def main():
                 # Try 2: protocol PoW fallback
                 if not sentinel:
                     try: sentinel = build_sentinel_token(session, device_id, flow="create_account", user_agent=ua, sec_ch_ua=sec_ch_ua) or ""
-                    except: pass
+                    except Exception: pass
                     if sentinel:
                         _log("Sentinel token (PoW) obtained")
 
@@ -777,7 +788,7 @@ def main():
                         ca_data = r.json()
                         continue_url = ca_data.get("continue_url", "") or continue_url
                         page_type = (ca_data.get("page") or {}).get("type", "") or page_type
-                    except: pass
+                    except Exception: pass
                 elif r.status_code == 400 and "already_exists" in (r.text or "already"):
                     _log("Account already exists, jumping to consent")
                     continue_url = f"{AUTH}/sign-in-with-chatgpt/codex/consent"
@@ -804,20 +815,20 @@ def main():
             r = session.get(f"{BASE}/api/auth/session", headers={"Accept": "application/json"}, timeout=15)
             session_data = r.json()
             access_token = session_data.get("accessToken")
-        except: pass
+        except Exception: pass
 
         if not access_token and final_continue and "auth.openai.com" in str(final_continue):
             # continue_url is on auth.openai.com (about_you/add_phone) — follow then retry
             _log(f"Following auth continue: {final_continue[:60]}...")
             try:
                 r = session.get(final_continue, headers={"Accept": "text/html", "Upgrade-Insecure-Requests": "1"}, allow_redirects=True, timeout=30)
-            except: pass
+            except Exception: pass
             time.sleep(1)
             try:
                 r = session.get(f"{BASE}/api/auth/session", headers={"Accept": "application/json"}, timeout=15)
                 session_data = r.json()
                 access_token = session_data.get("accessToken")
-            except: pass
+            except Exception: pass
 
         if not access_token:
             page_info = page_type or (otp_page if need_otp else "unknown")
@@ -830,11 +841,6 @@ def main():
         # accessToken obtained — checkout link will be fetched via Discord by Node.js engine
         checkout_url = ""
         checkout_error = ""
-        try:
-            # Only check plan type, don't generate checkout link
-            pass
-        except Exception as e:
-            checkout_error = str(e)
 
         plan_type = session_data.get("account", {}).get("planType", session_data.get("chatgpt_plan_type", "free"))
 

@@ -375,7 +375,9 @@ function saveCPAAuthFile(email, accessToken, session) {
 
   // Parse JWT
   let payload = {};
-  try { payload = JSON.parse(Buffer.from(accessToken.split('.')[1], 'base64').toString()); } catch {}
+  try { payload = JSON.parse(Buffer.from(accessToken.split('.')[1], 'base64').toString()); } catch (e) {
+    console.log(`[CPA] WARNING: accessToken JWT parse failed — auth file will have empty account_id`);
+  }
   const authClaim = payload['https://api.openai.com/auth'] || {};
   const accountId = authClaim.chatgpt_account_id || '';
   const userId = authClaim.chatgpt_user_id || authClaim.user_id || '';

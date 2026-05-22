@@ -102,7 +102,9 @@ class ProtocolEngine extends EventEmitter {
     try {
       const { statusDB } = require('./server/db');
       statusDB.set(data.email, data);
-    } catch {}
+    } catch (e) {
+      console.log(`[DB] statusDB.set failed for ${data.email}: ${e.message?.slice(0, 60)}`);
+    }
   }
 
   // Run PKCE and emit final status. Used by both already-Plus and post-payment branches.
@@ -133,7 +135,7 @@ class ProtocolEngine extends EventEmitter {
       this.stopFlag = true;
       if (this._pyProc) try { this._pyProc.kill(); } catch {}
       if (this._chromeProc) try { this._chromeProc.kill(); } catch {}
-      if (this._browser) try { this._browser.close(); } catch {}
+      if (this._browser) try { this._browser.close().catch(() => {}); } catch {}
       if (this._gw) try { this._gw.cleanup(); } catch {}
       if (this._tempDir) try { fs.rmSync(this._tempDir, { recursive: true, force: true }); } catch {}
       this._pyProc = null; this._chromeProc = null; this._browser = null; this._gw = null; this._tempDir = null;
@@ -314,10 +316,6 @@ class ProtocolEngine extends EventEmitter {
             break;
           }
         }
-        if (!discordOk) {
-          this.emitStatus({ email: account.email, status: 'error', phase: 'discord', progress, reason: 'Discord timeout after 3 retries' });
-          summary.error++;
-        }
         if (!link) continue;
 
         // Step 3: Payment (fresh Chrome for each account)
@@ -422,13 +420,20 @@ class ProtocolEngine extends EventEmitter {
             }
             consecutiveErrors = 0;
           } else {
-            await randomDelay(ACCOUNT_DELAY_MIN, ACCOUNT_DELAY_MAX);
+            {
+              const delayMs = ACCOUNT_DELAY_MIN + Math.floor(Math.random() * (ACCOUNT_DELAY_MAX - ACCOUNT_DELAY_MIN));
+              for (let elapsed = 0; elapsed < delayMs; elapsed += 1000) {
+                if (this.stopFlag) break;
+                await new Promise(r => setTimeout(r, 1000));
+              }
+            }
           }
         }
       }
 
     } catch (e) {
       console.log(`[Proto-Engine] Fatal: ${e.message}`);
+      summary.error = summary.total;  // All accounts failed due to gateway
     } finally {
       if (this._browser) try { await this._browser.close(); } catch {}
       if (this._chromeProc) try { this._chromeProc.kill(); } catch {}
