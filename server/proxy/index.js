@@ -12,6 +12,8 @@ const SELECTOR_TAG = 'auto-rotate';
 const HTTP_PORT = 7890;
 const CLASH_API_PORT = 9090;
 
+const BAD_NODE_TTL_MS = 30 * 60 * 1000;  // 30 min — nodes recover eventually
+
 let _state = {
   enabled: false,
   subscriptionUrl: '',
@@ -23,14 +25,36 @@ let _state = {
   rotationKeyword: 'US', // region filter
   lastError: '',
   exitIp: '',
+  badNodes: new Map(),   // tag → expiry timestamp (ms). Nodes that produced repeated TLS/network errors.
 };
 
 function readCfg() {
   try { return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8')); } catch { return {}; }
 }
 
+function isBad(tag) {
+  const expiry = _state.badNodes.get(tag);
+  if (!expiry) return false;
+  if (Date.now() > expiry) { _state.badNodes.delete(tag); return false; }
+  return true;
+}
+
+function markBad(tag, ttlMs = BAD_NODE_TTL_MS) {
+  if (!tag) return;
+  _state.badNodes.set(tag, Date.now() + ttlMs);
+  console.log(`[Proxy] Marked bad: ${tag} (TTL ${Math.round(ttlMs/60000)}min)`);
+}
+
 function getState() {
-  return { ..._state, available: _state.nodeTags.length };
+  // Surface badNodes as a plain object for JSON serialization.
+  // Skip expired entries on read so the API view is always current.
+  const now = Date.now();
+  const badNodes = {};
+  for (const [tag, expiry] of _state.badNodes.entries()) {
+    if (expiry > now) badNodes[tag] = expiry;
+    else _state.badNodes.delete(tag);
+  }
+  return { ..._state, available: _state.nodeTags.length, badNodes };
 }
 
 function buildSingboxConfig(outbounds) {
@@ -91,16 +115,40 @@ async function stop() {
   _state.exitIp = '';
 }
 
-/** Switch to the next node according to rotation strategy. */
+/** Switch to the next node according to rotation strategy, skipping nodes in the
+ * bad-node blacklist (with TTL). If every node is currently blacklisted (all bad),
+ * clear the blacklist as a fail-safe and pick any node — better to retry a stale
+ * "bad" mark than to fail with no candidates.
+ */
 async function rotate() {
   if (!_state.enabled || _state.nodeTags.length === 0) throw new Error('代理未启用');
-  let nextTag;
-  if (_state.rotationStrategy === 'random') {
-    nextTag = _state.nodeTags[Math.floor(Math.random() * _state.nodeTags.length)];
-  } else {
-    _state.rotationIndex = (_state.rotationIndex + 1) % _state.nodeTags.length;
-    nextTag = _state.nodeTags[_state.rotationIndex];
+
+  // Try to find a non-bad next node; bounded by nodeTags.length attempts.
+  let nextTag = null;
+  for (let i = 0; i < _state.nodeTags.length; i++) {
+    let candidate;
+    if (_state.rotationStrategy === 'random') {
+      candidate = _state.nodeTags[Math.floor(Math.random() * _state.nodeTags.length)];
+    } else {
+      _state.rotationIndex = (_state.rotationIndex + 1) % _state.nodeTags.length;
+      candidate = _state.nodeTags[_state.rotationIndex];
+    }
+    if (!isBad(candidate)) { nextTag = candidate; break; }
   }
+
+  if (!nextTag) {
+    // Every node is bad. Clear the blacklist and try once more — TTLs may have lapsed
+    // since they were set, and a stuck blacklist is worse than re-trying a flaky node.
+    console.log(`[Proxy] All ${_state.nodeTags.length} nodes are blacklisted; clearing and rotating fresh`);
+    _state.badNodes.clear();
+    if (_state.rotationStrategy === 'random') {
+      nextTag = _state.nodeTags[Math.floor(Math.random() * _state.nodeTags.length)];
+    } else {
+      _state.rotationIndex = (_state.rotationIndex + 1) % _state.nodeTags.length;
+      nextTag = _state.nodeTags[_state.rotationIndex];
+    }
+  }
+
   await clashApi.switchSelector(SELECTOR_TAG, nextTag);
   _state.currentNode = nextTag;
   return nextTag;
@@ -168,6 +216,8 @@ module.exports = {
   stop,
   rotate,
   switchTo,
+  markBad,
+  isBad,
   detectExit,
   getProxyUrl,
   SELECTOR_TAG,

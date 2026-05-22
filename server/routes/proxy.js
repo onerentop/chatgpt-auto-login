@@ -42,4 +42,11 @@ router.post('/detect-exit', async (req, res) => {
   catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+router.post('/mark-bad', (req, res) => {
+  const { node, ttlMs } = req.body || {};
+  if (!node || typeof node !== 'string') return res.status(400).json({ error: 'node required' });
+  proxy.markBad(node, ttlMs);
+  res.json({ ok: true, node, badNodes: proxy.getState().badNodes });
+});
+
 module.exports = router;
