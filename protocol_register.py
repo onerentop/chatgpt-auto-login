@@ -7,6 +7,8 @@ import sys, os, json, uuid, time, random, re, string, hashlib, base64, secrets, 
 import email as email_lib
 from urllib.parse import urlparse, parse_qs, urlencode, quote
 
+sys.path.insert(0, r"D:\workspace\projects\cliproxyaccountcleaner")
+
 # Chrome fingerprint profiles (local, no external dependency)
 _CHROME_PROFILES = [
     {"major": 146, "impersonate": "chrome146", "build": 7876, "patch_range": (10, 100),
