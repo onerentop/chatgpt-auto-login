@@ -12,6 +12,10 @@ const SELECTOR_TAG = 'auto-rotate';
 const HTTP_PORT = 7890;
 const CLASH_API_PORT = 9090;
 
+const JP_HTTP_PORT = 7891;
+const JP_SELECTOR_TAG = 'jp-checkout';
+const JP_DEFAULT_KEYWORD = 'KDDI';
+
 const BAD_NODE_TTL_MS = 30 * 60 * 1000;  // 30 min — nodes recover eventually
 
 let _state = {
@@ -26,6 +30,18 @@ let _state = {
   lastError: '',
   exitIp: '',
   badNodes: new Map(),   // tag → expiry timestamp (ms). Nodes that produced repeated TLS/network errors.
+  jp: {
+    enabled: false,
+    keyword: JP_DEFAULT_KEYWORD,
+    outbounds: [],
+    nodeTags: [],
+    currentNode: '',
+    rotationStrategy: 'sequential',
+    rotationIndex: 0,
+    badNodes: new Map(),
+    exitIp: '',
+    lastError: '',
+  },
 };
 
 function readCfg() {
@@ -46,15 +62,27 @@ function markBad(tag, ttlMs = BAD_NODE_TTL_MS) {
 }
 
 function getState() {
-  // Surface badNodes as a plain object for JSON serialization.
-  // Skip expired entries on read so the API view is always current.
   const now = Date.now();
   const badNodes = {};
   for (const [tag, expiry] of _state.badNodes.entries()) {
     if (expiry > now) badNodes[tag] = expiry;
     else _state.badNodes.delete(tag);
   }
-  return { ..._state, available: _state.nodeTags.length, badNodes };
+  const jpBadNodes = {};
+  for (const [tag, expiry] of _state.jp.badNodes.entries()) {
+    if (expiry > now) jpBadNodes[tag] = expiry;
+    else _state.jp.badNodes.delete(tag);
+  }
+  return {
+    ..._state,
+    available: _state.nodeTags.length,
+    badNodes,
+    jp: {
+      ..._state.jp,
+      available: _state.jp.nodeTags.length,
+      badNodes: jpBadNodes,
+    },
+  };
 }
 
 function buildSingboxConfig(outbounds) {
