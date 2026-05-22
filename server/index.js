@@ -44,6 +44,20 @@ initDB().then(() => {
   const PORT = process.env.PORT || 3000;
   server.listen(PORT, () => {
     console.log(`Server running on http://localhost:${PORT}`);
+
+    // Auto-start proxy if config.proxy.enabled is true
+    try {
+      const fs = require('fs');
+      const cfg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'config.json'), 'utf-8'));
+      if (cfg.proxy?.enabled) {
+        const proxyMgr = require('./proxy');
+        proxyMgr.refresh().then((n) => {
+          console.log(`[Proxy] Auto-started: ${n} nodes, current: ${proxyMgr.getState().currentNode}`);
+        }).catch((e) => {
+          console.log(`[Proxy] Auto-start failed: ${e.message?.slice(0, 80)}`);
+        });
+      }
+    } catch {}
   });
 }).catch(err => {
   console.error('Failed to init DB:', err);
