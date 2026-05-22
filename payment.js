@@ -85,6 +85,12 @@ async function fetchAddress() {
   return { street: '123 Main St', city: 'New York', state: 'New York', zip: '10001' };
 }
 
+async function getAddress(page) {
+  if (page._cachedAddress) return page._cachedAddress;
+  page._cachedAddress = await fetchAddress();
+  return page._cachedAddress;
+}
+
 async function fillInput(page, selector, value) {
   try {
     const el = page.locator(selector).first();
@@ -248,7 +254,7 @@ async function handleOpenAIPage(page) {
     await randomDelay(2000, 3000);
   }
 
-  const addr = await fetchAddress();
+  const addr = await getAddress(page);
   console.log('    [Pay] Address:', JSON.stringify(addr));
 
   // Wait for billing address form to appear after PayPal selection
@@ -443,7 +449,7 @@ async function handlePayPalCheckout(page, phoneOverride, smsOverride) {
     throw new Error(`Country reverted to "${finalCountry}" before fill`);
   }
 
-  const addr = await fetchAddress();
+  const addr = await getAddress(page);
   const email = randEmail();
   const password = randPass();
   console.log('    [Pay] Email:', email);
