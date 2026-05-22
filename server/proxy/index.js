@@ -30,9 +30,12 @@ let _state = {
   lastError: '',
   exitIp: '',
   badNodes: new Map(),   // tag → expiry timestamp (ms). Nodes that produced repeated TLS/network errors.
+  allTags: [],   // 订阅里全部节点 tag (refresh 时缓存，供 /api/proxy/nodes 用)
   jp: {
     enabled: false,
     keyword: JP_DEFAULT_KEYWORD,
+    whitelist: [],
+    whitelistMisses: [],
     outbounds: [],
     nodeTags: [],
     currentNode: '',
