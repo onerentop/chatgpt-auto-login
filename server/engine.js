@@ -16,6 +16,7 @@ const os = require('os');
 
 const { LogCapture } = require('./logger');
 const { connectGateway, getPaymentLink } = require('./discord-gateway');
+const { fetchCheckoutLink } = require('./chatgpt-checkout');
 const { launchChrome, waitForCDP, findChrome } = require('./chrome');
 const proxyMgr = require('./proxy');
 
@@ -162,12 +163,20 @@ class PipelineEngine extends EventEmitter {
 
       console.log(`Loaded ${filtered.length} accounts to process.`);
 
-      // Connect Discord Gateway
-      currentPhase = 'discord-connect';
-      console.log('Connecting to Discord Gateway...');
-      gw = await connectGateway();
-      this._gw = gw;
-      console.log('Discord connected!');
+      // Determine payment-link source from config; default 'api' (direct ChatGPT call).
+      // 'discord' falls back to the legacy WebSocket bot path.
+      const rootCfgForSource = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf-8'));
+      const linkSource = rootCfgForSource.paymentLinkSource || 'api';
+      console.log(`Payment link source: ${linkSource}`);
+
+      // Connect Discord Gateway only when needed.
+      if (linkSource === 'discord') {
+        currentPhase = 'discord-connect';
+        console.log('Connecting to Discord Gateway...');
+        gw = await connectGateway();
+        this._gw = gw;
+        console.log('Discord connected!');
+      }
 
       // Process each account
       for (let i = 0; i < filtered.length; i++) {
@@ -278,19 +287,25 @@ class PipelineEngine extends EventEmitter {
             }
           } else {
             // Not Plus → full payment flow
-            // Phase 2: Discord bot → payment link (retry up to 3 times on timeout)
-            currentPhase = 'discord';
-            console.log(`${p} Phase 2: Discord bot...`);
-            this.emitStatus({ email: account.email, status: 'running', phase: 'discord', progress });
-            let discord;
+            // Phase 2: payment link fetch (retry up to 3 times on transient errors)
+            currentPhase = linkSource === 'discord' ? 'discord' : 'checkout';
+            console.log(`${p} Phase 2: payment link via ${linkSource}...`);
+            this.emitStatus({ email: account.email, status: 'running', phase: currentPhase, progress });
+            let discord;  // keep variable name to minimize downstream diff
             for (let dRetry = 0; dRetry < 3; dRetry++) {
               try {
-                if (dRetry > 0) console.log(`${p} Discord retry ${dRetry + 1}/3...`);
-                discord = await getPaymentLink(gw, loginResult.accessToken);
+                if (dRetry > 0) console.log(`${p} Link fetch retry ${dRetry + 1}/3...`);
+                if (linkSource === 'discord') {
+                  discord = await getPaymentLink(gw, loginResult.accessToken);
+                } else {
+                  discord = await proxyMgr.withCheckoutNode(
+                    () => fetchCheckoutLink(loginResult.accessToken)
+                  );
+                }
                 break;
               } catch (de) {
-                console.log(`${p} Discord error: ${de.message?.slice(0, 60)}`);
-                if (dRetry < 2 && de.message?.includes('Timeout')) {
+                console.log(`${p} Link fetch error: ${de.message?.slice(0, 60)}`);
+                if (dRetry < 2 && (de.message?.includes('Timeout') || de.message?.includes('fetch'))) {
                   await new Promise(r => setTimeout(r, 2000));
                   continue;
                 }
