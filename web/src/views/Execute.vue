@@ -154,6 +154,7 @@ const tableRef = ref(null)
 const running = ref(false)
 const accounts = ref([])
 const selected = ref([])
+const autoExpandedEmail = ref('')
 
 const search = ref('')
 const statusFilter = ref('')
@@ -216,6 +217,7 @@ async function onExpand(row, expandedRows) {
 }
 
 watch(() => socketState.accountStatuses, (statuses) => {
+  let currentRunning = ''
   for (const [email, data] of Object.entries(statuses)) {
     const row = accounts.value.find(a => a.email === email)
     if (row) {
@@ -223,7 +225,19 @@ watch(() => socketState.accountStatuses, (statuses) => {
       row._phase = data.phase || ''
       if (PLUS_STATUSES.includes(data.status)) { row._hasAuth = true; row._plan = 'plus'; }
       if (['error', 'no_link'].includes(data.status)) row._plan = 'free'
+      if (data.status === 'running') currentRunning = email
     }
+  }
+  if (currentRunning && currentRunning !== autoExpandedEmail.value) {
+    nextTick(() => {
+      if (autoExpandedEmail.value) {
+        const prev = accounts.value.find(a => a.email === autoExpandedEmail.value)
+        if (prev) tableRef.value?.toggleRowExpansion(prev, false)
+      }
+      const cur = accounts.value.find(a => a.email === currentRunning)
+      if (cur) tableRef.value?.toggleRowExpansion(cur, true)
+      autoExpandedEmail.value = currentRunning
+    })
   }
 }, { deep: true })
 
