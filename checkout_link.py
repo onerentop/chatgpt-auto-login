@@ -48,7 +48,11 @@ def main():
                 print(json.dumps({"status": "success", "link": m.group(0), "raw": text[:500]}))
                 return
             _log(f"No link in response (status={r.status_code}): {text[:120]}")
-            if r.status_code in (401, 403):
+            # 401 → invalid token, no retry helps.
+            # 403 with JSON body → real auth/permission denied.
+            # 403 with HTML body → Cloudflare challenge (transient), retry with a different impersonate.
+            is_cloudflare_challenge = r.status_code == 403 and text.lstrip().startswith('<')
+            if r.status_code == 401 or (r.status_code == 403 and not is_cloudflare_challenge):
                 print(json.dumps({"status": "no_link", "link": "", "raw": text[:500]}))
                 return
         except Exception as e:
