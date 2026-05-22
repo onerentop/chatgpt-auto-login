@@ -368,39 +368,77 @@ async function handlePayPalCheckout(page, phoneOverride, smsOverride) {
   console.log('    [Pay] PayPal checkout page detected');
   await randomDelay(2000, 3000);
 
-  // Set country to US — PayPal's <select> is a React-controlled component, so a
-  // bare `el.value = 'US'` is overwritten on the next render. We have to use the
-  // native setter so React's onChange picks it up, then poll until the value
-  // actually sticks before continuing (dependent fields like state list, zip
-  // validation, etc. only update once React commits the new country).
-  const initial = await page.evaluate(() => {
-    const c = document.getElementById('country');
-    return c ? c.value : null;
+  // Set country to US. PayPal uses different element IDs across A/B tests and
+  // locale variants (#country, #countryCode, select[name="country"], etc.). We
+  // try multiple selectors and wait for at least one to appear before switching.
+  // If none is found or the switch doesn't stick, we abort rather than fill a
+  // Chinese-schema form with US address data.
+  const countryInfo = await page.evaluate(() => {
+    const sels = ['#country', '#countryCode', 'select[name="country"]', 'select[name="countryCode"]', 'select[id*="ountry"]'];
+    for (const sel of sels) {
+      const el = document.querySelector(sel);
+      if (el && el.tagName === 'SELECT') return { sel, value: el.value };
+    }
+    return null;
+  });
+  if (!countryInfo) {
+    // Element not in DOM yet — wait up to 8s for any country <select> to appear.
+    const appeared = await page.waitForFunction(() => {
+      const sels = ['#country', '#countryCode', 'select[name="country"]', 'select[name="countryCode"]', 'select[id*="ountry"]'];
+      for (const sel of sels) { const el = document.querySelector(sel); if (el?.tagName === 'SELECT') return sel; }
+      return null;
+    }, { timeout: 8000 }).then(h => h.jsonValue()).catch(() => null);
+    if (!appeared) {
+      console.log('    [Pay] WARNING: no country <select> found after 8s — aborting');
+      throw new Error('PayPal country selector not found');
+    }
+  }
+  // Re-read with the confirmed selector
+  const { sel: countrySel, initial } = await page.evaluate(() => {
+    const sels = ['#country', '#countryCode', 'select[name="country"]', 'select[name="countryCode"]', 'select[id*="ountry"]'];
+    for (const sel of sels) {
+      const el = document.querySelector(sel);
+      if (el?.tagName === 'SELECT') return { sel, initial: el.value };
+    }
+    return { sel: null, initial: null };
   });
   if (initial !== null && initial !== 'US') {
-    await page.evaluate(() => {
-      const c = document.getElementById('country');
+    await page.evaluate((sel) => {
+      const c = document.querySelector(sel);
       if (!c) return;
       const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set;
       setter.call(c, 'US');
       c.dispatchEvent(new Event('input', { bubbles: true }));
       c.dispatchEvent(new Event('change', { bubbles: true }));
-    });
+    }, countrySel);
     // Wait until React commits the new value (poll up to ~10s).
-    const ok = await page.waitForFunction(
-      () => document.getElementById('country')?.value === 'US',
-      { timeout: 10000 },
-    ).then(() => true).catch(() => false);
+    const ok = await page.waitForFunction((sel) => {
+      const c = document.querySelector(sel);
+      return c && c.value === 'US';
+    }, { timeout: 10000 }, countrySel).then(() => true).catch(() => false);
     if (ok) {
-      console.log(`    [Pay] Country: ${initial} → US`);
+      console.log(`    [Pay] Country: ${initial} → US (via ${countrySel})`);
     } else {
-      console.log(`    [Pay] WARNING: country still "${await page.evaluate(() => document.getElementById('country')?.value)}" after switch attempt; aborting fill`);
-      throw new Error(`Failed to switch country to US (stuck at "${initial}")`);
+      const stuck = await page.evaluate((sel) => document.querySelector(sel)?.value, countrySel);
+      console.log(`    [Pay] WARNING: country still "${stuck}" after switch attempt; aborting fill`);
+      throw new Error(`Failed to switch country to US (stuck at "${stuck}")`);
     }
     // Give the dependent fields (state options, address schema) a beat to repaint.
     await randomDelay(1500, 2500);
   } else if (initial === 'US') {
     console.log('    [Pay] Country already US');
+  }
+
+  // Final guard: double-check country is US before filling. Catches any race where
+  // PayPal's React re-rendered the select back to the geo-detected default.
+  const finalCountry = await page.evaluate(() => {
+    const sels = ['#country', '#countryCode', 'select[name="country"]', 'select[name="countryCode"]', 'select[id*="ountry"]'];
+    for (const sel of sels) { const el = document.querySelector(sel); if (el?.tagName === 'SELECT') return el.value; }
+    return 'US';  // no select found = probably already removed by PayPal, assume US
+  });
+  if (finalCountry !== 'US') {
+    console.log(`    [Pay] FINAL CHECK FAILED: country is "${finalCountry}" — aborting fill`);
+    throw new Error(`Country reverted to "${finalCountry}" before fill`);
   }
 
   const addr = await fetchAddress();
