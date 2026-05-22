@@ -49,4 +49,21 @@ router.post('/mark-bad', (req, res) => {
   res.json({ ok: true, node, badNodes: proxy.getState().badNodes });
 });
 
+router.post('/jp/rotate', async (req, res) => {
+  try { const node = await proxy.rotateJp(); res.json({ ok: true, currentNode: node }); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/jp/detect-exit', async (req, res) => {
+  try { const ip = await proxy.detectJpExit(); res.json({ ok: true, exitIp: ip }); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/jp/mark-bad', (req, res) => {
+  const { node, ttlMs } = req.body || {};
+  if (!node || typeof node !== 'string') return res.status(400).json({ error: 'node required' });
+  proxy.markJpBad(node, ttlMs);
+  res.json({ ok: true, node, jpBadNodes: proxy.getState().jp.badNodes });
+});
+
 module.exports = router;
