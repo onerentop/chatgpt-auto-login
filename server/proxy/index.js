@@ -150,19 +150,25 @@ async function refresh() {
   const jpEnabledByConfig = jpCfg.enabled !== false;
   _state.jp.keyword = jpCfg.keyword || JP_DEFAULT_KEYWORD;
   _state.jp.rotationStrategy = jpCfg.rotationStrategy || 'sequential';
+  _state.jp.whitelist = Array.isArray(jpCfg.whitelist) ? jpCfg.whitelist : [];
 
   if (!_state.subscriptionUrl) throw new Error('未配置机场订阅 URL');
 
   console.log(`[Proxy] Fetching subscription...`);
   const all = await fetchAndParse(_state.subscriptionUrl);
   console.log(`[Proxy] Total nodes parsed: ${all.length}`);
+  _state.allTags = all.map(o => o.tag);
+
   const filtered = filterByRegion(all, _state.rotationKeyword);
   console.log(`[Proxy] After region filter (${_state.rotationKeyword}): ${filtered.length}`);
   if (filtered.length === 0) throw new Error(`没有匹配地区 "${_state.rotationKeyword}" 的节点`);
 
-  let jpFiltered = [];
-  if (jpEnabledByConfig) {
-    jpFiltered = filterByJpKddi(all, _state.jp.keyword);
+  const jpPick = pickJpNodes(all, { ...jpCfg, enabled: jpEnabledByConfig });
+  const jpFiltered = jpPick.filtered;
+  _state.jp.whitelistMisses = jpPick.misses;
+  if (jpPick.usedWhitelist) {
+    console.log(`[Proxy] JP whitelist: ${jpFiltered.length}/${_state.jp.whitelist.length} matched (${jpPick.misses.length} missing${jpPick.misses.length > 0 ? ': ' + jpPick.misses.join(', ') : ''})`);
+  } else if (jpEnabledByConfig) {
     console.log(`[Proxy] JP-KDDI filter (keyword=${_state.jp.keyword}): ${jpFiltered.length}`);
   } else {
     console.log(`[Proxy] JP-Checkout channel disabled by config`);
@@ -180,7 +186,9 @@ async function refresh() {
   _state.jp.lastError = '';
   if (!jpEnabledByConfig) {
     _state.jp.lastError = 'JP 通道已被 config.jpCheckout.enabled=false 禁用';
-  } else if (jpFiltered.length === 0) {
+  } else if (jpPick.usedWhitelist && jpFiltered.length === 0) {
+    _state.jp.lastError = `白名单 [${_state.jp.whitelist.join(', ')}] 在订阅中无任何匹配`;
+  } else if (!jpPick.usedWhitelist && jpFiltered.length === 0) {
     _state.jp.lastError = `订阅中未找到关键字 "${_state.jp.keyword}" 的节点`;
   }
 
