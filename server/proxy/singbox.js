@@ -99,9 +99,45 @@ async function start(configJson) {
   _proc = spawn(binPath, ['run', '-c', _configPath], { stdio: ['ignore', 'pipe', 'pipe'] });
   _proc.stdout.on('data', (d) => process.stdout.write(`[sing-box] ${d}`));
   _proc.stderr.on('data', (d) => process.stderr.write(`[sing-box err] ${d}`));
-  _proc.on('exit', (code) => { console.log(`[sing-box] exited ${code}`); _proc = null; });
-  // wait a moment for ports to bind
+  let exitCode = null;
+  _proc.on('exit', (code) => { exitCode = code; console.log(`[sing-box] exited ${code}`); _proc = null; });
+
+  // Give sing-box a moment to bind ports
   await new Promise(r => setTimeout(r, 1500));
+
+  // If the process died during startup, surface the failure
+  if (!_proc) {
+    throw new Error(`sing-box exited unexpectedly (code: ${exitCode}); check if a port (e.g. 7890/7891) is already in use, or see sing-box log for "address already in use"`);
+  }
+
+  // Probe every mixed/http/socks inbound port to confirm it is actually listening
+  const ports = (configJson.inbounds || [])
+    .filter((ib) => ib && (ib.type === 'mixed' || ib.type === 'http' || ib.type === 'socks'))
+    .map((ib) => ib.listen_port)
+    .filter(Boolean);
+
+  const net = require('net');
+  for (const port of ports) {
+    const ok = await new Promise((resolve) => {
+      const sock = net.connect(port, '127.0.0.1');
+      let done = false;
+      const finish = (result) => {
+        if (done) return;
+        done = true;
+        try { sock.destroy(); } catch {}
+        resolve(result);
+      };
+      sock.once('connect', () => finish(true));
+      sock.once('error', () => finish(false));
+      setTimeout(() => finish(false), 1000);
+    });
+    if (!ok) {
+      try { _proc?.kill(); } catch {}
+      _proc = null;
+      throw new Error(`sing-box failed to bind port ${port}: address already in use`);
+    }
+  }
+
   return _proc;
 }
 
