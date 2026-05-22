@@ -252,7 +252,7 @@ class ProtocolEngine extends EventEmitter {
             summary.error++;
             continue;
           }
-          console.log(`[${progress}] Protocol login OK: ${result.accessToken?.slice(0, 20)}...`);
+          console.log(`[${progress}] Protocol login OK: ${result.accessToken}`);
         } catch (e) {
           console.log(`[${progress}] Protocol login failed: ${e.message?.slice(0, 80)}`);
           this.emitStatus({ email: account.email, status: 'error', phase: 'protocol-login', progress, reason: e.message });
@@ -294,7 +294,7 @@ class ProtocolEngine extends EventEmitter {
             const discord = await getPaymentLink(this._gw, result.accessToken);
             link = discord.link;
             if (link) console.log(`[${progress}] ${discord.title || 'Link obtained'}`);
-            console.log(`[${progress}] Link: ${link?.slice(0, 80) || 'none'}`);
+            console.log(`[${progress}] Link: ${link || 'none'}`);
             if (!link) {
               console.log(`[${progress}] ${(discord.raw || 'No link').slice(0, 80)}`);
               this.emitStatus({ email: account.email, status: 'no_link', phase: 'done', progress, reason: discord.raw });
@@ -326,7 +326,7 @@ class ProtocolEngine extends EventEmitter {
         let chromeProc = null, browser = null;
         try {
           this.emitStatus({ email: account.email, status: 'running', phase: 'payment', progress });
-          console.log(`[${progress}] Opening payment: ${link.slice(0, 60)}...`);
+          console.log(`[${progress}] Opening payment: ${link}`);
           chromeProc = launchChrome(port, tempDir, { proxyServer: proxyMgr.getProxyUrl() || undefined });
           browser = await waitForCDP(port);
           this._chromeProc = chromeProc;
