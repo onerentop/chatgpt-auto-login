@@ -76,10 +76,6 @@
       <el-form-item label="区域过滤">
         <el-input v-model="form.proxyRegionFilter" placeholder="留空=不过滤；US=仅美国" />
       </el-form-item>
-      <el-form-item label="Checkout 区域">
-        <el-input v-model="form.proxyCheckoutRegionFilter" placeholder="日本=JP 节点池（取链接时临时切换）" />
-        <span style="color:#909399;margin-left:8px;font-size:12px">链接来源=API 时使用</span>
-      </el-form-item>
       <el-form-item label="轮换策略">
         <el-radio-group v-model="form.proxyRotationStrategy">
           <el-radio value="sequential">顺序</el-radio>
@@ -130,7 +126,6 @@ const form = reactive({
   proxyEnabled: false,
   proxySubscriptionUrl: '',
   proxyRegionFilter: 'US',
-  proxyCheckoutRegionFilter: '日本',
   proxyRotationStrategy: 'sequential',
 })
 
@@ -148,7 +143,6 @@ onMounted(async () => {
       if (cfg.proxy.enabled !== undefined) form.proxyEnabled = cfg.proxy.enabled
       if (cfg.proxy.subscriptionUrl !== undefined) form.proxySubscriptionUrl = cfg.proxy.subscriptionUrl
       if (cfg.proxy.regionFilter !== undefined) form.proxyRegionFilter = cfg.proxy.regionFilter
-      if (cfg.proxy.checkoutRegionFilter !== undefined) form.proxyCheckoutRegionFilter = cfg.proxy.checkoutRegionFilter
       if (cfg.proxy.rotationStrategy !== undefined) form.proxyRotationStrategy = cfg.proxy.rotationStrategy
     }
   } catch (err) {
@@ -173,13 +167,11 @@ async function handleSave() {
     delete payload.proxyEnabled
     delete payload.proxySubscriptionUrl
     delete payload.proxyRegionFilter
-    delete payload.proxyCheckoutRegionFilter
     delete payload.proxyRotationStrategy
     payload.proxy = {
       enabled: form.proxyEnabled,
       subscriptionUrl: form.proxySubscriptionUrl,
       regionFilter: form.proxyRegionFilter,
-      checkoutRegionFilter: form.proxyCheckoutRegionFilter,
       rotationStrategy: form.proxyRotationStrategy,
     }
     await api.put('/config', payload)
