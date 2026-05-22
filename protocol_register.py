@@ -490,6 +490,16 @@ def main():
         from curl_cffi import requests as curl_requests
         from chatgpt_register.chatgpt_register import build_sentinel_token
 
+        # HTTP/1.1 constant for TLS-retry fallback (curl_cffi >= 0.5.9).
+        # Some unstable proxy paths break HTTP/2 framing mid-handshake — falling back
+        # to HTTP/1.1 on retry often unblocks the request when the same node would
+        # otherwise produce repeated "TLS connect error: invalid library" failures.
+        try:
+            from curl_cffi import CurlHttpVersion
+            HTTP11 = CurlHttpVersion.V1_1
+        except Exception:
+            HTTP11 = None
+
         proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
         if proxy_url:
             _log(f"Using proxy: {proxy_url}")
@@ -532,7 +542,18 @@ def main():
         r = None
         for attempt in range(5):
             try:
-                r = session.get(f"{BASE}/", headers={"Accept": "text/html", "Upgrade-Insecure-Requests": "1"}, allow_redirects=True, timeout=20)
+                # On retry (attempt >= 2), force HTTP/1.1 if available. Curl_cffi's default
+                # HTTP/2 framing can break on unstable proxy paths, producing repeated
+                # "invalid library" TLS errors that don't go away by just rotating the
+                # Chrome fingerprint. HTTP/1.1 sidesteps the framing problem at the cost
+                # of slightly weaker JA3 fidelity, which is the right trade on retry.
+                req_kwargs = {"headers": {"Accept": "text/html", "Upgrade-Insecure-Requests": "1"},
+                              "allow_redirects": True, "timeout": 20}
+                if attempt >= 2 and HTTP11 is not None:
+                    req_kwargs["http_version"] = HTTP11
+                    if attempt == 2:
+                        _log("Forcing HTTP/1.1 for remaining retries")
+                r = session.get(f"{BASE}/", **req_kwargs)
                 if r.status_code == 200:
                     break
                 if r.status_code == 403 and attempt < 4:
