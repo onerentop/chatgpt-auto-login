@@ -35,6 +35,33 @@ def _random_chrome_version():
 def _log(msg):
     print(json.dumps({"log": f"  [Proto] {msg}"}), flush=True)
 
+class _RetrySession:
+    """Wraps curl_cffi session — auto-retries get/post on transient errors."""
+    def __init__(self, session, retries=3):
+        self._s = session
+        self._retries = retries
+    def __getattr__(self, name):
+        return getattr(self._s, name)
+    def get(self, url, **kw):
+        return self._do('get', url, **kw)
+    def post(self, url, **kw):
+        return self._do('post', url, **kw)
+    def _do(self, method, url, **kw):
+        for attempt in range(self._retries):
+            try:
+                return getattr(self._s, method)(url, **kw)
+            except Exception as e:
+                err = str(e)
+                if attempt < self._retries - 1 and any(k in err for k in [
+                    'curl:', 'timed out', 'Timeout', 'Connection',
+                    'reset by peer', 'SSL', 'TLS', 'OPENSSL', 'Recv failure',
+                ]):
+                    wait = 3 * (attempt + 1)
+                    _log(f"Retry {attempt+1}/{self._retries}: {err[:60]}, wait {wait}s")
+                    time.sleep(wait)
+                    continue
+                raise
+
 def _generate_password(length=14):
     lower = string.ascii_lowercase
     upper = string.ascii_uppercase
@@ -599,6 +626,8 @@ def main():
             print(json.dumps({"status": "tls_failure", "error": "Homepage failed after 5 attempts (likely node-level TLS issue)"}))
             sys.exit(0)
         time.sleep(random.uniform(0.5, 1.5))
+
+        session = _RetrySession(session)
 
         # Step 1: Signin (chatgpt.com flow — no add_phone requirement)
         _log("Step 1: CSRF + Signin...")
