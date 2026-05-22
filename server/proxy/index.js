@@ -85,18 +85,29 @@ function getState() {
   };
 }
 
-function buildSingboxConfig(outbounds) {
+function buildSingboxConfig(us, jp /* nullable */) {
+  const inbounds = [
+    { type: 'mixed', tag: 'in-mixed', listen: '127.0.0.1', listen_port: HTTP_PORT, sniff: true },
+  ];
+  const outbounds = [
+    { type: 'selector', tag: SELECTOR_TAG, outbounds: us.map(o => o.tag), default: us[0]?.tag },
+    ...us,
+  ];
+  const rules = [];
+
+  if (Array.isArray(jp) && jp.length > 0) {
+    inbounds.push({ type: 'mixed', tag: 'in-jp', listen: '127.0.0.1', listen_port: JP_HTTP_PORT, sniff: true });
+    outbounds.push({ type: 'selector', tag: JP_SELECTOR_TAG, outbounds: jp.map(o => o.tag), default: jp[0].tag });
+    outbounds.push(...jp);
+    rules.push({ inbound: 'in-jp', outbound: JP_SELECTOR_TAG });
+  }
+
+  outbounds.push({ type: 'direct', tag: 'direct' }, { type: 'block', tag: 'block' });
+
   return {
     log: { level: 'warn' },
-    inbounds: [
-      { type: 'mixed', tag: 'in-mixed', listen: '127.0.0.1', listen_port: HTTP_PORT, sniff: true },
-    ],
-    outbounds: [
-      { type: 'selector', tag: SELECTOR_TAG, outbounds: outbounds.map(o => o.tag), default: outbounds[0]?.tag },
-      ...outbounds,
-      { type: 'direct', tag: 'direct' },
-      { type: 'block', tag: 'block' },
-    ],
+    inbounds,
+    outbounds,
     experimental: {
       clash_api: {
         external_controller: `127.0.0.1:${CLASH_API_PORT}`,
@@ -105,6 +116,7 @@ function buildSingboxConfig(outbounds) {
     },
     route: {
       final: SELECTOR_TAG,
+      rules,
     },
   };
 }
