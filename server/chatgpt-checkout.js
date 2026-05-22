@@ -1,64 +1,58 @@
-// Direct ChatGPT internal /backend-api/payments/checkout caller.
-// Replacement for the Discord-bot path of obtaining a pay.openai.com link.
-//
-// The endpoint and request body shape come from reverse-engineering the
-// official ChatGPT web client (see openai-plus-vxt extension). The promo
-// `plus-1-month-free` only returns a link when the request's exit IP
-// geolocates to Japan AND billing_details.country === 'JP'.
+// Spawn checkout_link.py to fetch a pay.openai.com link via Python curl_cffi
+// (Chrome JA3 fingerprint). undici was Cloudflare-blocked on this endpoint;
+// curl_cffi passes. Same spawn protocol as protocol-engine.js:runProtocolRegister.
+const { spawn } = require('child_process');
+const path = require('path');
 const proxyMgr = require('./proxy');
 
-const ENDPOINT = 'https://chatgpt.com/backend-api/payments/checkout';
+const SCRIPT = path.join(__dirname, '..', 'checkout_link.py');
 
-async function fetchCheckoutLink(accessToken, opts = {}) {
-  const body = {
-    entry_point: 'all_plans_pricing_modal',
-    plan_name: 'chatgptplusplan',
-    billing_details: {
+function fetchCheckoutLink(accessToken, opts = {}) {
+  return new Promise((resolve) => {
+    const py = spawn('py', ['-3', SCRIPT], { stdio: ['pipe', 'pipe', 'pipe'] });
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true; py.kill();
+      resolve({ link: '', title: '', raw: 'ERROR: Python timeout (60s)' });
+    }, 60000);
+
+    const input = JSON.stringify({
+      access_token: accessToken,
       country: opts.country || 'JP',
       currency: opts.currency || 'JPY',
-    },
-    cancel_url: 'https://chatgpt.com/#pricing',
-    checkout_ui_mode: 'hosted',
-    promo_campaign: {
-      promo_campaign_id: opts.promoCampaignId || 'plus-1-month-free',
-      is_coupon_from_query_param: false,
-    },
-  };
-
-  // Import both fetch and ProxyAgent from the same undici copy. Node's global
-  // fetch uses a DIFFERENT (internal) undici, and its ProxyAgent/fetch interfaces
-  // don't match the npm package's — leading to UND_ERR_INVALID_ARG at runtime.
-  const { fetch: undiciFetch, ProxyAgent } = require('undici');
-  const proxyUrl = proxyMgr.getProxyUrl();
-  const dispatcher = proxyUrl ? new ProxyAgent(proxyUrl) : undefined;
-
-  let res, text = '';
-  try {
-    res = await undiciFetch(ENDPOINT, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-      },
-      body: JSON.stringify(body),
-      dispatcher,
+      promo_id: opts.promoCampaignId || 'plus-1-month-free',
+      proxy: proxyMgr.getProxyUrl(),
     });
-    text = await res.text();
-  } catch (e) {
-    return { link: '', title: '', raw: `ERROR: ${(e.message || 'fetch failed').slice(0, 200)}` };
-  }
 
-  const linkMatch = text.match(/https:\/\/pay\.openai\.com[^\s"\\)]+/);
-  if (!linkMatch) {
-    console.log(`[Checkout] No pay.openai.com link in response (status ${res.status}): ${text.slice(0, 200)}`);
-  }
-  return {
-    link: linkMatch ? linkMatch[0] : '',
-    title: '',
-    raw: text.slice(0, 500),
-  };
+    let stdout = '';
+    let stderr = '';
+    py.stdout.on('data', (data) => {
+      for (const line of data.toString().split('\n').filter(l => l.trim())) {
+        try {
+          const p = JSON.parse(line);
+          if (p.log) console.log(p.log);
+          else stdout = line;
+        } catch {
+          stdout = line;
+        }
+      }
+    });
+    py.stderr.on('data', (data) => { stderr += data.toString(); });
+    py.on('close', () => {
+      clearTimeout(timer);
+      if (settled) return;
+      settled = true;
+      try {
+        const r = JSON.parse(stdout);
+        resolve({ link: r.link || '', title: '', raw: r.raw || r.error || '' });
+      } catch {
+        resolve({ link: '', title: '', raw: `ERROR: ${stderr.slice(-200) || 'Python parse failed'}` });
+      }
+    });
+    py.stdin.write(input);
+    py.stdin.end();
+  });
 }
 
 module.exports = { fetchCheckoutLink };
