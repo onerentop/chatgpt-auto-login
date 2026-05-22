@@ -298,9 +298,7 @@ class PipelineEngine extends EventEmitter {
                 if (linkSource === 'discord') {
                   discord = await getPaymentLink(gw, loginResult.accessToken);
                 } else {
-                  discord = await proxyMgr.withCheckoutNode(
-                    () => fetchCheckoutLink(loginResult.accessToken)
-                  );
+                  discord = await fetchCheckoutLink(loginResult.accessToken);
                 }
                 break;
               } catch (de) {

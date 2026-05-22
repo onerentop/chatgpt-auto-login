@@ -306,9 +306,7 @@ class ProtocolEngine extends EventEmitter {
             if (linkSource === 'discord') {
               r = await getPaymentLink(this._gw, result.accessToken);
             } else {
-              r = await proxyMgr.withCheckoutNode(
-                () => fetchCheckoutLink(result.accessToken)
-              );
+              r = await fetchCheckoutLink(result.accessToken);
             }
             link = r.link;
             if (link) console.log(`[${progress}] ${r.title || 'Link obtained'}`);
