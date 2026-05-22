@@ -42,3 +42,46 @@ test('buildSingboxConfig: outbounds 含 direct + block 兜底', () => {
   assert.ok(tags.includes('direct'));
   assert.ok(tags.includes('block'));
 });
+
+test('pickJpNodes: whitelist 非空时优先使用白名单', () => {
+  const all = [{ tag: 'nodeA' }, { tag: 'KDDI-1' }, { tag: 'KDDI-2' }];
+  const r = proxy.pickJpNodes(all, { enabled: true, keyword: 'KDDI', whitelist: ['nodeA'] });
+  assert.strictEqual(r.usedWhitelist, true);
+  assert.strictEqual(r.filtered.length, 1);
+  assert.strictEqual(r.filtered[0].tag, 'nodeA');
+  assert.deepStrictEqual(r.misses, []);
+});
+
+test('pickJpNodes: whitelist 空 → keyword 分支', () => {
+  const all = [{ tag: 'nodeA' }, { tag: 'KDDI-1' }, { tag: 'KDDI-2' }];
+  const r = proxy.pickJpNodes(all, { enabled: true, keyword: 'KDDI', whitelist: [] });
+  assert.strictEqual(r.usedWhitelist, false);
+  assert.strictEqual(r.filtered.length, 2);
+  assert.strictEqual(r.filtered[0].tag, 'KDDI-1');
+  assert.deepStrictEqual(r.misses, []);
+});
+
+test('pickJpNodes: enabled=false 返回空', () => {
+  const all = [{ tag: 'KDDI-1' }];
+  const r = proxy.pickJpNodes(all, { enabled: false, keyword: 'KDDI', whitelist: ['KDDI-1'] });
+  assert.deepStrictEqual(r.filtered, []);
+  assert.strictEqual(r.usedWhitelist, false);
+  assert.deepStrictEqual(r.misses, []);
+});
+
+test('pickJpNodes: whitelist 含不存在 tag 时收集 misses', () => {
+  const all = [{ tag: 'nodeA' }];
+  const r = proxy.pickJpNodes(all, { enabled: true, keyword: 'KDDI', whitelist: ['nodeA', 'unknown1', 'unknown2'] });
+  assert.strictEqual(r.usedWhitelist, true);
+  assert.strictEqual(r.filtered.length, 1);
+  assert.strictEqual(r.filtered[0].tag, 'nodeA');
+  assert.deepStrictEqual(r.misses, ['unknown1', 'unknown2']);
+});
+
+test('pickJpNodes: whitelist 非数组（字符串误填）视为空 → fallback keyword 分支', () => {
+  const all = [{ tag: 'nodeA' }, { tag: 'KDDI-1' }];
+  const r = proxy.pickJpNodes(all, { enabled: true, keyword: 'KDDI', whitelist: 'KDDI' });
+  assert.strictEqual(r.usedWhitelist, false);
+  assert.strictEqual(r.filtered.length, 1);
+  assert.strictEqual(r.filtered[0].tag, 'KDDI-1');
+});

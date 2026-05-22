@@ -2,7 +2,7 @@
 const fs = require('fs');
 const path = require('path');
 const singbox = require('./singbox');
-const { fetchAndParse, filterByRegion, filterByJpKddi } = require('./subscription');
+const { fetchAndParse, filterByRegion, filterByJpKddi, filterByWhitelist } = require('./subscription');
 const clashApi = require('./clash-api');
 
 const ROOT = path.join(__dirname, '..', '..');
@@ -83,6 +83,21 @@ function getState() {
       badNodes: jpBadNodes,
     },
   };
+}
+
+function pickJpNodes(all, jpCfg) {
+  if (!jpCfg || jpCfg.enabled === false) {
+    return { filtered: [], misses: [], usedWhitelist: false };
+  }
+  const whitelist = Array.isArray(jpCfg.whitelist) ? jpCfg.whitelist : [];
+  if (whitelist.length > 0) {
+    const filtered = filterByWhitelist(all, whitelist);
+    const presentTags = new Set(all.map(o => o.tag));
+    const misses = whitelist.filter(t => typeof t === 'string' && t && !presentTags.has(t));
+    return { filtered, misses, usedWhitelist: true };
+  }
+  const filtered = filterByJpKddi(all, jpCfg.keyword || 'KDDI');
+  return { filtered, misses: [], usedWhitelist: false };
 }
 
 function buildSingboxConfig(us, jp /* nullable */) {
@@ -394,6 +409,7 @@ module.exports = {
   detectExit,
   getProxyUrl,
   buildSingboxConfig,
+  pickJpNodes,
   // JP-Checkout channel
   getJpProxyUrl,
   rotateJp,
