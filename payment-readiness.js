@@ -105,8 +105,16 @@ async function waitForPageReady(page, profile, opts = {}) {
   const totalTimeoutMs = opts.totalTimeoutMs || 60000;
   const elementTimeoutMs = profile.elementTimeoutMs || 5000;
   const log = opts.log || (() => {});
+  const signal = opts.signal;
   const start = Date.now();
   const deadline = start + totalTimeoutMs;
+
+  // Short-circuit if abort already fired. We log the same "Readiness timeout"
+  // shape so callers/log-greppers see a consistent format, with missing=['aborted'].
+  if (signal?.aborted) {
+    log(`[Pay] Readiness aborted (${profile.name}) — signal already aborted`);
+    return { ready: false, waitedMs: 0, missing: ['aborted'] };
+  }
 
   // Concurrently run DOM-stability wait and all element checks. Element checks
   // get the smaller of their own timeout and the remaining budget so we never
@@ -117,10 +125,38 @@ async function waitForPageReady(page, profile, opts = {}) {
     return checkElement(page, spec, Math.min(elementTimeoutMs, remaining));
   });
 
-  const [domStableOk, elementResults] = await Promise.all([
+  // Race the bulk-await against an abort promise so signal firing mid-wait
+  // unwinds immediately instead of waiting for the underlying timeouts.
+  const bulkPromise = Promise.all([
     domStablePromise,
     Promise.all(elementPromises),
   ]);
+  const abortPromise = signal
+    ? new Promise((_resolve, reject) => {
+        const onAbort = () => {
+          const e = new Error('Aborted');
+          e.name = 'AbortError';
+          reject(e);
+        };
+        if (signal.aborted) onAbort();
+        else signal.addEventListener('abort', onAbort, { once: true });
+      })
+    : null;
+
+  let domStableOk;
+  let elementResults;
+  try {
+    [domStableOk, elementResults] = abortPromise
+      ? await Promise.race([bulkPromise, abortPromise])
+      : await bulkPromise;
+  } catch (e) {
+    if (e?.name === 'AbortError') {
+      const waitedMs = Date.now() - start;
+      log(`[Pay] Readiness aborted (${profile.name}) — signal fired mid-wait waited=${waitedMs}ms`);
+      return { ready: false, waitedMs, missing: ['aborted'] };
+    }
+    throw e;
+  }
 
   const missing = elementResults.filter((r) => !r.ok).map((r) => r.name);
   const ready = domStableOk && missing.length === 0;
