@@ -10,7 +10,7 @@ function __setDb(db, saveFn) {
 }
 
 function add(tag, channel, ttlMs, reason = '', source = 'auto') {
-  if (!_db) throw new Error('blacklist: db not initialized');
+  if (!_db) return;
   const expiresAt = Date.now() + ttlMs;
   _db.run(
     'INSERT OR REPLACE INTO proxy_blacklist (tag, channel, expires_at, reason, source, added_at) VALUES (?,?,?,?,?,datetime(\'now\'))',
