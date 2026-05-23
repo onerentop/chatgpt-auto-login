@@ -10,10 +10,18 @@ const SCRIPT = path.join(__dirname, '..', 'checkout_link.py');
 function fetchCheckoutLink(accessToken, opts = {}) {
   return new Promise((resolve) => {
     const jpUrl = proxyMgr.getJpProxyUrl();
-    const mainUrl = proxyMgr.getProxyUrl();
-    const proxy = jpUrl || mainUrl;
-    const usingJp = !!jpUrl;
-    const currentJpNode = usingJp ? (proxyMgr.getState().jp?.currentNode || '') : '';
+    if (!jpUrl) {
+      resolve({
+        link: '',
+        title: '',
+        raw: 'NO_JP_PROXY: JP checkout channel unavailable',
+        pk: '',
+        noJpProxy: true,
+      });
+      return;
+    }
+    const proxy = jpUrl;
+    const currentJpNode = proxyMgr.getState().jp?.currentNode || '';
 
     const input = JSON.stringify({
       access_token: accessToken,
@@ -32,10 +40,10 @@ function fetchCheckoutLink(accessToken, opts = {}) {
       if (settled) return;
       settled = true;
       py.kill();
-      if (typeof currentJpNode !== 'undefined' && currentJpNode) {
+      if (currentJpNode) {
         try { proxyMgr.markJpBad(currentJpNode); } catch {}
       }
-      resolve({ link: '', title: '', raw: 'ERROR: Python timeout (60s)' });
+      resolve({ link: '', title: '', raw: 'ERROR: Python timeout (60s)', pk: '' });
     }, 60000);
 
     py.stdout.on('data', (data) => {
@@ -50,6 +58,15 @@ function fetchCheckoutLink(accessToken, opts = {}) {
       }
     });
     py.stderr.on('data', (data) => { stderr += data.toString(); });
+    py.on('error', (e) => {
+      clearTimeout(timer);
+      if (settled) return;
+      settled = true;
+      if (currentJpNode) {
+        try { proxyMgr.markJpBad(currentJpNode); } catch {}
+      }
+      resolve({ link: '', title: '', raw: `ERROR: spawn failed: ${e.message?.slice(0, 100)}`, pk: '' });
+    });
     py.on('close', () => {
       clearTimeout(timer);
       if (settled) return;
@@ -57,19 +74,14 @@ function fetchCheckoutLink(accessToken, opts = {}) {
       try {
         const r = JSON.parse(stdout);
         const link = r.link || '';
-        let raw = r.raw || r.error || '';
-        if (!usingJp && link === '') {
-          raw = `WARN: jp_channel_disabled, fallback to main proxy. ${raw}`;
-        } else if (!usingJp) {
-          raw = `WARN: jp_channel_disabled, fallback to main proxy (link still obtained). ${raw}`;
-        }
-        if (usingJp && link === '' && currentJpNode) {
+        const raw = r.raw || r.error || '';
+        if (link === '' && currentJpNode) {
           proxyMgr.markJpBad(currentJpNode);
         }
-        resolve({ link, title: '', raw });
+        resolve({ link, title: '', raw, pk: r.pk || '' });
       } catch {
-        if (usingJp && currentJpNode) proxyMgr.markJpBad(currentJpNode);
-        resolve({ link: '', title: '', raw: `ERROR: ${stderr.slice(-200) || 'Python parse failed'}` });
+        if (currentJpNode) proxyMgr.markJpBad(currentJpNode);
+        resolve({ link: '', title: '', raw: `ERROR: ${stderr.slice(-200) || 'Python parse failed'}`, pk: '' });
       }
     });
     py.stdin.write(input);

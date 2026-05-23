@@ -69,6 +69,12 @@ function verifyCheckoutIsFree(link, pk) {
       }
     });
     py.stderr.on('data', (data) => { stderr += data.toString(); });
+    py.on('error', (e) => {
+      clearTimeout(timer);
+      if (settled) return;
+      settled = true;
+      resolve({ ok: false, reason: 'spawn_error', raw: e.message?.slice(0, 200) });
+    });
     py.on('close', () => {
       clearTimeout(timer);
       if (settled) return;
