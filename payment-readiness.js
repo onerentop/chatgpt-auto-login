@@ -1,0 +1,75 @@
+// payment-readiness.js — wait until a payment page (Stripe/PayPal/SMS dialog) is
+// truly ready for automation: DOM has stopped mutating AND all critical elements
+// are present/visible/interactive. Replaces fixed randomDelay-based waits in payment.js.
+
+const PROFILES = {
+  openai: {
+    name: 'openai-stripe',
+    stableWindowMs: 800,
+    requiredElements: [
+      { name: 'priceRendered', kind: 'js',
+        check: () => /\$\s*[0-9]/.test(document.body.innerText || '') },
+      { name: 'paymentAccordion', kind: 'visible',
+        selector: '[data-testid="paypal-accordion-item-button"], [data-testid="card-accordion-item-button"], #payment-method-accordion-item-title-paypal' },
+      { name: 'submitBtn', kind: 'attached',
+        selector: 'button[data-testid="hosted-payment-submit-button"], button[data-testid="submit-button"]' },
+    ],
+  },
+  paypalAccordionExpanded: {
+    name: 'paypal-accordion-expanded',
+    stableWindowMs: 500,
+    elementTimeoutMs: 10000,
+    requiredElements: [
+      { name: 'addressLine1', kind: 'visible', selector: '#billingAddressLine1, input[name*="addressLine1"]' },
+      { name: 'stateSelect', kind: 'select', selector: '#billingAdministrativeArea' },
+      { name: 'termsCheckbox', kind: 'attached', selector: '#termsOfServiceConsentCheckbox, input[type="checkbox"]' },
+    ],
+  },
+  paypalLogin: {
+    name: 'paypal-login',
+    stableWindowMs: 800,
+    requiredElements: [
+      { name: 'emailInput', kind: 'visible', selector: '#email' },
+      { name: 'submitBtn', kind: 'attached', selector: 'button[data-testid="submit-button"], button[type="submit"]' },
+    ],
+  },
+  paypalCheckout: {
+    name: 'paypal-checkout',
+    stableWindowMs: 1000,
+    elementTimeoutMs: 8000,
+    requiredElements: [
+      { name: 'countrySelect', kind: 'selectAny',
+        selectors: ['#country', '#countryCode', 'select[name="country"]', 'select[name="countryCode"]', 'select[id*="ountry"]'] },
+      { name: 'emailInput',  kind: 'visible', selector: '#email' },
+      { name: 'cardNumber',  kind: 'visible', selector: '#cardNumber' },
+      { name: 'firstName',   kind: 'visible', selector: '#firstName' },
+    ],
+  },
+  paypalCheckoutAfterCountry: {
+    name: 'paypal-checkout-after-country',
+    stableWindowMs: 1500,
+    elementTimeoutMs: 8000,
+    requiredElements: [
+      { name: 'billingLine1', kind: 'visible', selector: '#billingLine1' },
+      { name: 'billingState', kind: 'select',  selector: '#billingState' },
+      { name: 'billingZip',   kind: 'visible', selector: '#billingPostalCode' },
+    ],
+  },
+  smsDialog: {
+    name: 'sms-dialog',
+    stableWindowMs: 500,
+    elementTimeoutMs: 8000,
+    requiredElements: [
+      { name: 'codeDialog', kind: 'text', anyOf: ['Enter your code', '输入验证码', '输入你的验证码'] },
+      { name: 'codeInput', kind: 'visibleAny',
+        selectors: ['input[autocomplete="one-time-code"]', 'input[type="tel"]', 'input[type="number"]'] },
+    ],
+  },
+};
+
+async function waitForPageReady(page, profile, opts = {}) {
+  // Will be implemented in Task 4.
+  return { ready: false, waitedMs: 0, missing: [] };
+}
+
+module.exports = { PROFILES, waitForPageReady };
