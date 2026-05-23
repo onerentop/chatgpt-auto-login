@@ -10,7 +10,7 @@
     "web:build": "cd web && npm run build"
   },
   "dependencies": {
-    "archiver": "^8.0.0",
+    "archiver": "^7.0.1",
     "cors": "^2.8.6",
     "csv-parse": "^5.6.0",
     "express": "^5.2.1",
