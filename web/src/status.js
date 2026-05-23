@@ -12,6 +12,7 @@ const TYPE_MAP = {
   no_promo: 'info',
   verify_error: 'danger',
   paypal_captcha: 'warning',
+  aborted: 'info',
 }
 
 const LABEL_MAP = {
@@ -26,6 +27,7 @@ const LABEL_MAP = {
   no_promo: '无0元资格',
   verify_error: 'Stripe验证失败',
   paypal_captcha: 'PayPal人机验证',
+  aborted: '已停止',
 }
 
 export function statusType(s) {
