@@ -134,3 +134,80 @@ test('checkElement: unknown kind → ok:false', async () => {
   const r = await _internal.checkElement(page, { name: 'foo', kind: 'unknown' }, 1000);
   assert.deepStrictEqual(r, { name: 'foo', ok: false });
 });
+
+test('waitForPageReady: 全就绪 → ready:true, missing:[]', async () => {
+  const page = {
+    locator: () => mockLocator({ waitForOutcome: 'ok', isEnabledReturn: true }),
+    async evaluate(fn) {
+      if (fn.__readinessRole === 'domStable') return true;
+      return true;
+    },
+  };
+  const profile = {
+    name: 'test', stableWindowMs: 100,
+    requiredElements: [
+      { name: 'a', kind: 'visible', selector: '#a' },
+      { name: 'b', kind: 'attached', selector: '#b' },
+    ],
+  };
+  const r = await waitForPageReady(page, profile, { totalTimeoutMs: 5000 });
+  assert.strictEqual(r.ready, true);
+  assert.deepStrictEqual(r.missing, []);
+  assert.ok(r.waitedMs >= 0);
+});
+
+test('waitForPageReady: DOM 永不稳定但元素就绪 → ready:false, missing:[]', async () => {
+  const page = {
+    locator: () => mockLocator({ waitForOutcome: 'ok' }),
+    async evaluate(fn) {
+      if (fn.__readinessRole === 'domStable') return false;
+      return true;
+    },
+  };
+  const profile = {
+    name: 'test', stableWindowMs: 100,
+    requiredElements: [{ name: 'a', kind: 'visible', selector: '#a' }],
+  };
+  const r = await waitForPageReady(page, profile, { totalTimeoutMs: 1000 });
+  assert.strictEqual(r.ready, false);
+  assert.deepStrictEqual(r.missing, []);
+});
+
+test('waitForPageReady: 部分元素超时 → ready:false, missing 含名', async () => {
+  const page = {
+    locator: (sel) => {
+      // #good 通过；#bad throw
+      if (sel === '#good') return mockLocator({ waitForOutcome: 'ok' });
+      return mockLocator({ waitForOutcome: 'throw' });
+    },
+    async evaluate(fn) {
+      if (fn.__readinessRole === 'domStable') return true;
+      return true;
+    },
+  };
+  const profile = {
+    name: 'test', stableWindowMs: 100,
+    requiredElements: [
+      { name: 'good', kind: 'visible', selector: '#good' },
+      { name: 'bad',  kind: 'visible', selector: '#bad' },
+    ],
+  };
+  const r = await waitForPageReady(page, profile, { totalTimeoutMs: 1000 });
+  assert.strictEqual(r.ready, false);
+  assert.deepStrictEqual(r.missing, ['bad']);
+});
+
+test('waitForPageReady: log callback 被调用一次', async () => {
+  const logged = [];
+  const page = {
+    locator: () => mockLocator({ waitForOutcome: 'ok' }),
+    async evaluate(fn) { return true; },
+  };
+  const profile = {
+    name: 'test', stableWindowMs: 50,
+    requiredElements: [{ name: 'a', kind: 'visible', selector: '#a' }],
+  };
+  await waitForPageReady(page, profile, { totalTimeoutMs: 500, log: (m) => logged.push(m) });
+  assert.strictEqual(logged.length, 1);
+  assert.ok(logged[0].includes('ready') || logged[0].includes('timeout'));
+});

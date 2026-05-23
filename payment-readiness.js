@@ -101,8 +101,36 @@ async function waitForDomStable(page, windowMs, deadline) {
 }
 
 async function waitForPageReady(page, profile, opts = {}) {
-  // Will be implemented in Task 4.
-  return { ready: false, waitedMs: 0, missing: [] };
+  const totalTimeoutMs = opts.totalTimeoutMs || 60000;
+  const elementTimeoutMs = profile.elementTimeoutMs || 5000;
+  const log = opts.log || (() => {});
+  const start = Date.now();
+  const deadline = start + totalTimeoutMs;
+
+  // Concurrently run DOM-stability wait and all element checks. Element checks
+  // get the smaller of their own timeout and the remaining budget so we never
+  // exceed totalTimeoutMs.
+  const domStablePromise = waitForDomStable(page, profile.stableWindowMs, deadline);
+  const elementPromises = profile.requiredElements.map((spec) => {
+    const remaining = Math.max(500, deadline - Date.now());
+    return checkElement(page, spec, Math.min(elementTimeoutMs, remaining));
+  });
+
+  const [domStableOk, elementResults] = await Promise.all([
+    domStablePromise,
+    Promise.all(elementPromises),
+  ]);
+
+  const missing = elementResults.filter((r) => !r.ok).map((r) => r.name);
+  const ready = domStableOk && missing.length === 0;
+  const waitedMs = Date.now() - start;
+
+  if (ready) {
+    log(`[Pay] Page ready (${profile.name}) in ${waitedMs}ms`);
+  } else {
+    log(`[Pay] Readiness timeout (${profile.name}) — missing=[${missing.join(',')}] domStable=${domStableOk} waited=${waitedMs}ms`);
+  }
+  return { ready, waitedMs, missing };
 }
 
 async function checkElement(page, spec, timeoutMs) {
