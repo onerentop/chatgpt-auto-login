@@ -267,3 +267,17 @@ test('U2-fix-I3 getState 不再 mutate state（只投影）', () => {
   const stateAfter = p.getState();
   assert.strictEqual(stateAfter.badNodes['us-expired'], undefined);
 });
+
+test('U11 clearBlacklist syncs DB (no resurrection on restart)', () => {
+  const removeAllCalls = [];
+  const blMock = {
+    add: () => {}, remove: () => {},
+    removeAll: (ch) => removeAllCalls.push(ch),
+    loadAll: () => [], pruneExpired: () => {}, __setDb: () => {},
+  };
+  const p = freshProxy({ blacklistMock: blMock });
+  p.blacklistManually('node-a', 'main', 60000, 'x');
+  p.clearBlacklist('main');
+  assert.strictEqual(p.isBad('node-a'), false);
+  assert.deepStrictEqual(removeAllCalls, ['main']);
+});

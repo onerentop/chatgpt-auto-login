@@ -390,10 +390,12 @@ async function rotate() {
   }
 
   if (!nextTag) {
-    // Every node is bad. Clear the blacklist and try once more — TTLs may have lapsed
-    // since they were set, and a stuck blacklist is worse than re-trying a flaky node.
+    // Every node is bad. Clear the blacklist (memory + DB) and try once more — TTLs
+    // may have lapsed since they were set, and a stuck blacklist is worse than
+    // re-trying a flaky node. Must sync DB or restart would resurrect cleared rows.
     console.log(`[Proxy] All ${_state.nodeTags.length} nodes are blacklisted; clearing and rotating fresh`);
     _state.badNodes.clear();
+    try { blacklist.removeAll('main'); } catch {}
     if (_state.rotationStrategy === 'random') {
       nextTag = _state.nodeTags[Math.floor(Math.random() * _state.nodeTags.length)];
     } else {
@@ -425,6 +427,7 @@ async function rotateJp() {
   if (!nextTag) {
     console.log(`[Proxy:JP] All ${_state.jp.nodeTags.length} KDDI nodes are blacklisted; clearing and rotating fresh`);
     _state.jp.badNodes.clear();
+    try { blacklist.removeAll('jp'); } catch {}
     if (_state.jp.rotationStrategy === 'random') {
       nextTag = _state.jp.nodeTags[Math.floor(Math.random() * _state.jp.nodeTags.length)];
     } else {
