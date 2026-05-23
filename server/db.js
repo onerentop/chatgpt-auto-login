@@ -31,6 +31,9 @@ async function initDB() {
       progress TEXT DEFAULT '',
       reason TEXT DEFAULT '',
       has_auth_file INTEGER DEFAULT 0,
+      payment_link TEXT DEFAULT '',
+      payment_link_pk TEXT DEFAULT '',
+      payment_link_at TEXT DEFAULT '',
       updated_at TEXT DEFAULT (datetime('now'))
     );
     CREATE TABLE IF NOT EXISTS execution_logs (
@@ -55,6 +58,25 @@ async function initDB() {
 
   // Wire blacklist persistence module to the live DB
   try { require('./proxy/blacklist').__setDb(db, save); } catch {}
+
+  // Defensive column migration: add payment_link / payment_link_pk / payment_link_at
+  // to account_status if absent. SQLite has no ALTER TABLE ADD COLUMN IF NOT
+  // EXISTS, so we PRAGMA first. Newly-created tables already have the columns
+  // from CREATE TABLE; this branch only fires on upgrades from data.db files
+  // created before v2.25.
+  const colsResult = db.exec("PRAGMA table_info(account_status)");
+  const existingCols = new Set(
+    colsResult[0]?.values.map((row) => row[1]) || []
+  );
+  if (!existingCols.has('payment_link')) {
+    db.run("ALTER TABLE account_status ADD COLUMN payment_link TEXT DEFAULT ''");
+  }
+  if (!existingCols.has('payment_link_pk')) {
+    db.run("ALTER TABLE account_status ADD COLUMN payment_link_pk TEXT DEFAULT ''");
+  }
+  if (!existingCols.has('payment_link_at')) {
+    db.run("ALTER TABLE account_status ADD COLUMN payment_link_at TEXT DEFAULT ''");
+  }
 
   // One-time migration of old status values
   const hasOld = db.exec("SELECT COUNT(*) FROM account_status WHERE status IN ('needs_phone','oauth_failed','success','already_plus','failed','pending')");
@@ -112,14 +134,41 @@ const statusDB = {
   },
   list() { return mapRows(db.exec("SELECT * FROM account_status")); },
   set(email, data) {
-    const { status, phase, progress, reason, has_auth_file } = { status:'idle', phase:'', progress:'', reason:'', has_auth_file:0, ...data };
-    db.run("INSERT OR REPLACE INTO account_status (email, status, phase, progress, reason, has_auth_file, updated_at) VALUES (?,?,?,?,?,?,datetime('now'))",
-      [email, status, phase, progress||'', reason||'', has_auth_file?1:0]);
+    // Merge with existing row so callers can update just a subset of fields.
+    // Critical invariant: NOT passing `paymentLink` must keep the existing
+    // DB value — otherwise every transient emitStatus call (which doesn't
+    // know about cached links) would silently wipe the cache.
+    const existing = this.get(email) || {};
+    const incoming = data || {};
+    const { status, phase, progress, reason, has_auth_file } = {
+      status: 'idle', phase: '', progress: '', reason: '', has_auth_file: 0,
+      ...incoming,
+    };
+    // camelCase → snake_case for the new payment_link* fields. Only override
+    // when the caller explicitly passed the key.
+    const payment_link = 'paymentLink' in incoming
+      ? (incoming.paymentLink || '')
+      : (existing.payment_link || '');
+    const payment_link_pk = 'paymentLinkPk' in incoming
+      ? (incoming.paymentLinkPk || '')
+      : (existing.payment_link_pk || '');
+    const payment_link_at = ('paymentLink' in incoming && incoming.paymentLink)
+      ? new Date().toISOString()
+      : (existing.payment_link_at || '');
+    db.run(
+      "INSERT OR REPLACE INTO account_status (email, status, phase, progress, reason, has_auth_file, payment_link, payment_link_pk, payment_link_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,datetime('now'))",
+      [email, status, phase, progress || '', reason || '', has_auth_file ? 1 : 0,
+       payment_link, payment_link_pk, payment_link_at]
+    );
     save();
   },
   reset(email) { db.run("UPDATE account_status SET status='idle', phase='', progress='', reason='' WHERE email=?", [email]); save(); },
   resetAll() { db.run("UPDATE account_status SET status='idle', phase='', progress='', reason=''"); save(); },
   resetRunning() { db.run("UPDATE account_status SET status='idle', phase='', reason='Stopped' WHERE status='running'"); save(); },
+  clearPaymentLink(email) {
+    db.run("UPDATE account_status SET payment_link='', payment_link_pk='', payment_link_at='' WHERE email=?", [email]);
+    save();
+  },
 };
 
 let _logWriteCount = 0;
