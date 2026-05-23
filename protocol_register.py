@@ -848,7 +848,22 @@ def main():
                 bdate = f"{random.randint(1990, 2002)}-{random.randint(1,12):02d}-{random.randint(1,28):02d}"
                 _log(f"create_account: name={name}, bdate={bdate}")
 
-                # Try 1: with browser-based Turnstile sentinel (no-op stub in this project)
+                # Try 1: browser-based Turnstile sentinel (Playwright → window.SentinelSDK.token)
+                # OpenAI's create_account endpoint rejects PoW-only sentinels with
+                # registration_disallowed in 2026 — a real Turnstile token is required.
+                # When this returns None we want to know *why* (Playwright missing /
+                # SDK not loaded / token() returned empty), so we capture the
+                # sentinel_browser logger output and pipe it through _log.
+                import logging as _logging
+                _sb_logger = _logging.getLogger("sentinel_browser")
+                _sb_records = []
+                class _CaptureHandler(_logging.Handler):
+                    def emit(self, record):
+                        _sb_records.append(f"{record.levelname}: {record.getMessage()}")
+                _capture = _CaptureHandler(level=_logging.DEBUG)
+                _sb_logger.addHandler(_capture)
+                _sb_logger.setLevel(_logging.DEBUG)
+
                 sentinel = ""
                 sentinel_source = ""
                 try:
@@ -856,8 +871,16 @@ def main():
                     if sentinel:
                         sentinel_source = "browser"
                         _log("Sentinel token (Turnstile) obtained")
+                    else:
+                        _log("Turnstile (browser) returned empty — see sentinel_browser logs below")
+                        for rec in _sb_records[-8:]:
+                            _log(f"  sentinel_browser> {rec[:200]}")
                 except Exception as e:
-                    _log(f"Turnstile failed: {str(e)[:40]}")
+                    _log(f"Turnstile failed: {str(e)[:120]}")
+                    for rec in _sb_records[-8:]:
+                        _log(f"  sentinel_browser> {rec[:200]}")
+                finally:
+                    _sb_logger.removeHandler(_capture)
 
                 # Try 2: protocol PoW fallback
                 if not sentinel:
