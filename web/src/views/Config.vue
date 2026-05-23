@@ -73,8 +73,27 @@
       <el-form-item label="机场订阅 URL">
         <el-input v-model="form.proxySubscriptionUrl" placeholder="https://.../subscribe?token=..." />
       </el-form-item>
+      <el-form-item label="节点白名单">
+        <el-select v-model="form.proxyWhitelist" multiple filterable clearable
+                   collapse-tags collapse-tags-tooltip
+                   placeholder="留空 = 按区域关键字过滤；选中 = 精确指定节点"
+                   style="width: 480px">
+          <el-option v-for="tag in allNodeTags" :key="tag" :label="tag" :value="tag">
+            <span :style="usTagSet.has(tag) ? 'font-weight:600;color:#67c23a' : ''">
+              {{ tag }}
+            </span>
+            <span v-if="usTagSet.has(tag)" style="float:right;color:#67c23a;font-size:11px">US</span>
+          </el-option>
+        </el-select>
+        <div style="font-size:12px;color:#909399;margin-top:4px">
+          匹配 regionFilter 的节点已绿色高亮。空 = 关键字过滤模式（默认）。
+        </div>
+      </el-form-item>
       <el-form-item label="区域过滤">
-        <el-input v-model="form.proxyRegionFilter" placeholder="留空=不过滤；US=仅美国" />
+        <el-input v-model="form.proxyRegionFilter" placeholder="留空=不过滤；US=仅美国"
+                  :disabled="form.proxyWhitelist?.length > 0" />
+        <span v-if="form.proxyWhitelist?.length > 0"
+              style="color:#909399;margin-left:8px;font-size:12px">已被白名单覆盖</span>
       </el-form-item>
       <el-form-item label="轮换策略">
         <el-radio-group v-model="form.proxyRotationStrategy">
@@ -205,9 +224,17 @@
       </el-form-item>
       <el-form-item label="代理状态" v-if="proxyStatus">
         <div style="font-size:12px;color:#606266">
-          <div>状态：{{ proxyStatus.enabled ? '运行中' : '未运行' }} ({{ proxyStatus.nodeTags?.length || 0 }} 节点)</div>
+          <div>状态：{{ proxyStatus.enabled ? '运行中' : '未运行' }}
+               ({{ proxyStatus.nodeTags?.length || 0 }} 节点<span
+                  v-if="proxyStatus.whitelist?.length"> / 白名单 {{ proxyStatus.whitelist.length }} 个</span>)</div>
           <div v-if="proxyStatus.currentNode">当前节点：{{ proxyStatus.currentNode }}</div>
           <div v-if="proxyStatus.exitIp">出口 IP：{{ proxyStatus.exitIp }}</div>
+          <div v-if="proxyStatus.whitelistMisses?.length"
+               style="color:#e6a23c;margin-top:4px">
+            ⚠ 白名单未命中：{{ proxyStatus.whitelistMisses.slice(0,3).join(', ') }}{{
+              proxyStatus.whitelistMisses.length > 3 ? `... 共 ${proxyStatus.whitelistMisses.length} 个` : ''
+            }}
+          </div>
           <div v-if="proxyStatus.lastError" style="color:#f56c6c">错误：{{ proxyStatus.lastError }}</div>
         </div>
       </el-form-item>
@@ -226,6 +253,7 @@ const refreshingProxy = ref(false)
 const proxyStatus = ref(null)
 const allNodeTags = ref([])
 const jpKddiTagSet = ref(new Set())
+const usTagSet = ref(new Set())
 
 const FAIL_THRESHOLD = 3
 const blacklist = ref({ main: [], jp: [] })
@@ -249,6 +277,7 @@ const form = reactive({
   proxySubscriptionUrl: '',
   proxyRegionFilter: 'US',
   proxyRotationStrategy: 'sequential',
+  proxyWhitelist: [],
   proxyJpEnabled: true,
   proxyJpKeyword: 'KDDI',
   proxyJpWhitelist: [],
@@ -269,6 +298,7 @@ onMounted(async () => {
       if (cfg.proxy.subscriptionUrl !== undefined) form.proxySubscriptionUrl = cfg.proxy.subscriptionUrl
       if (cfg.proxy.regionFilter !== undefined) form.proxyRegionFilter = cfg.proxy.regionFilter
       if (cfg.proxy.rotationStrategy !== undefined) form.proxyRotationStrategy = cfg.proxy.rotationStrategy
+      if (Array.isArray(cfg.proxy.whitelist)) form.proxyWhitelist = cfg.proxy.whitelist
       if (cfg.proxy.jpCheckout) {
         if (cfg.proxy.jpCheckout.enabled !== undefined) form.proxyJpEnabled = cfg.proxy.jpCheckout.enabled
         if (cfg.proxy.jpCheckout.keyword !== undefined) form.proxyJpKeyword = cfg.proxy.jpCheckout.keyword
@@ -298,9 +328,11 @@ async function loadAllNodes() {
     const { data } = await api.get('/proxy/nodes')
     allNodeTags.value = data.nodeTags || []
     jpKddiTagSet.value = new Set(data.jpKddiTags || [])
+    usTagSet.value = new Set(data.usTags || [])
   } catch {
     allNodeTags.value = []
     jpKddiTagSet.value = new Set()
+    usTagSet.value = new Set()
   }
 }
 
@@ -312,6 +344,7 @@ async function handleSave() {
     delete payload.proxySubscriptionUrl
     delete payload.proxyRegionFilter
     delete payload.proxyRotationStrategy
+    delete payload.proxyWhitelist
     delete payload.proxyJpEnabled
     delete payload.proxyJpKeyword
     delete payload.proxyJpWhitelist
@@ -320,6 +353,7 @@ async function handleSave() {
       subscriptionUrl: form.proxySubscriptionUrl,
       regionFilter: form.proxyRegionFilter,
       rotationStrategy: form.proxyRotationStrategy,
+      whitelist: form.proxyWhitelist || [],
       jpCheckout: {
         enabled: form.proxyJpEnabled,
         keyword: form.proxyJpKeyword,
