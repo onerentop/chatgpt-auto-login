@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { randomDelay } = require('./utils');
+const { waitForPageReady, PROFILES } = require('./payment-readiness');
 
 const CONFIG_PATH = path.join(__dirname, 'config.json');
 
@@ -171,12 +172,16 @@ async function clickSubmit(page) {
 async function handleOpenAIPage(page) {
   console.log('    [Pay] OpenAI/Stripe page detected');
 
+  const r0 = await waitForPageReady(page, PROFILES.openai, { log: (m) => console.log('    ' + m) });
+  if (!r0.ready) {
+    console.log(`    [Pay] 警告：openai-stripe 页 60s 未就绪 missing=[${r0.missing.join(',')}]，仍尝试继续`);
+  }
+
   // Step 0a: Detect if this is actually a $0 trial. Some Discord links lead to a
   // regular paid subscription page; we don't want to start filling cards on those.
   // Strategy: (1) look for a localized "Total due today" label and parse the amount
   // after it; (2) fallback — if no label matched but there ARE USD amounts on the
   // page AND none of them is $0, then there's no "free" anywhere → treat as paid.
-  await randomDelay(1500, 2500);  // let Stripe render the prices
   const scan = await page.evaluate(() => {
     const raw = document.body.innerText || '';
     // Normalize: NBSP → space, collapse whitespace
