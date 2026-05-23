@@ -17,6 +17,8 @@
           <el-option label="JP节点不可用" value="no_jp_proxy" />
           <el-option label="无0元资格" value="no_promo" />
           <el-option label="Stripe验证失败" value="verify_error" />
+          <el-option label="Stripe计费失败" value="stripe_billing_error" />
+          <el-option label="订阅激活超时" value="activation_error" />
         </el-select>
         <el-button @click="handleDownloadAll">下载全部 ZIP</el-button>
         <el-button @click="loadResults">刷新</el-button>

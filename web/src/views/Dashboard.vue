@@ -48,6 +48,21 @@
       </el-col>
     </el-row>
 
+    <el-row :gutter="20" style="margin-bottom: 20px">
+      <el-col :span="12">
+        <el-card shadow="hover">
+          <div style="font-size:28px;font-weight:bold;color:#f56c6c">{{ stats.stripeBillingError }}</div>
+          <div style="color:#909399;margin-top:8px">Stripe 计费失败</div>
+        </el-card>
+      </el-col>
+      <el-col :span="12">
+        <el-card shadow="hover">
+          <div style="font-size:28px;font-weight:bold;color:#f56c6c">{{ stats.activationError }}</div>
+          <div style="color:#909399;margin-top:8px">订阅激活超时</div>
+        </el-card>
+      </el-col>
+    </el-row>
+
     <el-card>
       <template #header>最近执行状态</template>
       <el-table :data="results" stripe size="small" max-height="400">
@@ -76,7 +91,7 @@ import { ref, reactive, onMounted } from 'vue'
 import api from '../api'
 import { statusType, isPlus } from '../status'
 
-const stats = reactive({ total: 0, plus: 0, success: 0, error: 0, noJpProxy: 0, noPromo: 0, verifyError: 0 })
+const stats = reactive({ total: 0, plus: 0, success: 0, error: 0, noJpProxy: 0, noPromo: 0, verifyError: 0, stripeBillingError: 0, activationError: 0 })
 const results = ref([])
 
 onMounted(async () => {
@@ -95,6 +110,8 @@ onMounted(async () => {
     stats.noJpProxy = statuses.filter(r => r.status === 'no_jp_proxy').length
     stats.noPromo = statuses.filter(r => r.status === 'no_promo').length
     stats.verifyError = statuses.filter(r => r.status === 'verify_error').length
+    stats.stripeBillingError = statuses.filter(r => r.status === 'stripe_billing_error').length
+    stats.activationError = statuses.filter(r => r.status === 'activation_error').length
     results.value = statuses
   } catch {}
 })

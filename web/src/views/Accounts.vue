@@ -21,6 +21,8 @@
           <el-option label="JP节点不可用" value="no_jp_proxy" />
           <el-option label="无0元资格" value="no_promo" />
           <el-option label="Stripe验证失败" value="verify_error" />
+          <el-option label="Stripe计费失败" value="stripe_billing_error" />
+          <el-option label="订阅激活超时" value="activation_error" />
         </el-select>
         <el-select v-model="planFilter" placeholder="Plan" clearable style="width:110px;margin-left:8px">
           <el-option label="Plus" value="plus" />
