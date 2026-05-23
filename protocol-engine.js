@@ -250,14 +250,18 @@ class ProtocolEngine extends EventEmitter {
             result = await runProtocolRegister(account, this);
             if (result.status === 'tls_failure') {
               console.log(`[${progress}] TLS still failing after rotation — giving up on this account`);
-              try { proxyMgr.recordBadAttempt(proxyMgr.getState().currentNode, 'main', 'tls_failure'); } catch {}
+              if (proxyMgr.getState().enabled) {
+                try { proxyMgr.recordBadAttempt(proxyMgr.getState().currentNode, 'main', 'tls_failure'); } catch {}
+              }
               this.emitStatus({ email: account.email, status: 'error', phase: 'protocol-login', progress, reason: result.error });
               summary.error++;
               continue;
             }
           }
           // G1: 任何"业务返回"（success / deactivated 等）都代表节点工作正常
-          try { proxyMgr.recordGoodAttempt(proxyMgr.getState().currentNode, 'main'); } catch {}
+          if (proxyMgr.getState().enabled) {
+            try { proxyMgr.recordGoodAttempt(proxyMgr.getState().currentNode, 'main'); } catch {}
+          }
           if (result.status === 'deactivated') {
             console.log(`[${progress}] Account deactivated/deleted by OpenAI`);
             this.emitStatus({ email: account.email, status: 'deactivated', phase: 'done', progress, reason: 'account_deactivated' });
@@ -268,7 +272,7 @@ class ProtocolEngine extends EventEmitter {
         } catch (e) {
           console.log(`[${progress}] Protocol login failed: ${e.message?.slice(0, 80)}`);
           // T8: 网络类异常算节点失败；业务异常不算
-          if (proxyMgr.isProxyNetError(e.message)) {
+          if (proxyMgr.isProxyNetError(e.message) && proxyMgr.getState().enabled) {
             try { proxyMgr.recordBadAttempt(proxyMgr.getState().currentNode, 'main', 'protocol_net_error'); } catch {}
           }
           this.emitStatus({ email: account.email, status: 'error', phase: 'protocol-login', progress, reason: e.message });
@@ -394,14 +398,20 @@ class ProtocolEngine extends EventEmitter {
             await page.goto(link, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
             pageUrl = page.url();
             if (pageUrl.startsWith('chrome-error://') || pageUrl === 'about:blank') {
-              try { proxyMgr.recordBadAttempt(proxyMgr.getState().currentNode, 'main', 'payment_unreachable'); } catch {}
+              if (proxyMgr.getState().enabled) {
+                try { proxyMgr.recordBadAttempt(proxyMgr.getState().currentNode, 'main', 'payment_unreachable'); } catch {}
+              }
               throw new Error(`Payment page unreachable after node rotation (${pageUrl.slice(0, 40)})`);
             }
             // 重试后真实页面打开 → 算 G3 成功
-            try { proxyMgr.recordGoodAttempt(proxyMgr.getState().currentNode, 'main'); } catch {}
+            if (proxyMgr.getState().enabled) {
+              try { proxyMgr.recordGoodAttempt(proxyMgr.getState().currentNode, 'main'); } catch {}
+            }
           } else {
             // G3: 一次到位也算成功
-            try { proxyMgr.recordGoodAttempt(proxyMgr.getState().currentNode, 'main'); } catch {}
+            if (proxyMgr.getState().enabled) {
+              try { proxyMgr.recordGoodAttempt(proxyMgr.getState().currentNode, 'main'); } catch {}
+            }
           }
 
           try { await page.locator('text=PayPal').first().waitFor({ state: 'visible', timeout: 15000 }); } catch {}

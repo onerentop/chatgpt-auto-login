@@ -45,6 +45,11 @@ function verifyCheckoutIsFree(link, pk) {
       return;
     }
     const proxy = proxyMgr.getProxyUrl() || '';
+    // Captured at function entry: if an external caller (e.g., UI Rotate button) rotates
+    // mid-call during the up-to-15s Python wait, we'll attribute the outcome to the node
+    // that was actually used for the Stripe request — not whatever node is current when
+    // Python returns. Trade-off: misses the case where rotation IS the right node to
+    // blame (rare, requires external concurrent action; engine flows are sequential).
     const currentNode = proxyMgr.getState().currentNode || '';
     const reportFail = (reason) => {
       if (currentNode && proxyMgr.getState().enabled) {

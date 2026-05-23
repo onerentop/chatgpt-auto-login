@@ -239,10 +239,14 @@ class PipelineEngine extends EventEmitter {
             console.log(`${p} Login ${isDeactivated ? 'account_deactivated' : 'failed'}: ${loginResult.reason || loginResult.status}`);
             // T9: 失败 reason 是网络类才算节点错误；deactivated / 密码错误等不算
             if (!isDeactivated && proxyMgr.isProxyNetError(loginResult.reason)) {
-              try { proxyMgr.recordBadAttempt(proxyMgr.getState().currentNode, 'main', 'login_net_error'); } catch {}
+              if (proxyMgr.getState().enabled) {
+                try { proxyMgr.recordBadAttempt(proxyMgr.getState().currentNode, 'main', 'login_net_error'); } catch {}
+              }
             } else if (isDeactivated) {
               // deactivated 是账号问题，节点工作正常
-              try { proxyMgr.recordGoodAttempt(proxyMgr.getState().currentNode, 'main'); } catch {}
+              if (proxyMgr.getState().enabled) {
+                try { proxyMgr.recordGoodAttempt(proxyMgr.getState().currentNode, 'main'); } catch {}
+              }
             }
             finalResult.status = statusOut;
             finalResult.reason = isDeactivated ? 'account_deactivated' : `Login: ${loginResult.reason || loginResult.status}`;
@@ -258,7 +262,9 @@ class PipelineEngine extends EventEmitter {
             continue;
           }
           // G2: 登录成功
-          try { proxyMgr.recordGoodAttempt(proxyMgr.getState().currentNode, 'main'); } catch {}
+          if (proxyMgr.getState().enabled) {
+            try { proxyMgr.recordGoodAttempt(proxyMgr.getState().currentNode, 'main'); } catch {}
+          }
           console.log(`${p} Login OK, accessToken obtained.`);
 
           // Check plan type from session
@@ -411,12 +417,18 @@ class PipelineEngine extends EventEmitter {
                   await page.goto(discord.link, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
                   pageUrl = page.url();
                   if (pageUrl.startsWith('chrome-error://') || pageUrl === 'about:blank') {
-                    try { proxyMgr.recordBadAttempt(proxyMgr.getState().currentNode, 'main', 'payment_unreachable'); } catch {}
+                    if (proxyMgr.getState().enabled) {
+                      try { proxyMgr.recordBadAttempt(proxyMgr.getState().currentNode, 'main', 'payment_unreachable'); } catch {}
+                    }
                     throw new Error(`Payment page unreachable after node rotation (${pageUrl.slice(0, 40)})`);
                   }
-                  try { proxyMgr.recordGoodAttempt(proxyMgr.getState().currentNode, 'main'); } catch {}
+                  if (proxyMgr.getState().enabled) {
+                    try { proxyMgr.recordGoodAttempt(proxyMgr.getState().currentNode, 'main'); } catch {}
+                  }
                 } else {
-                  try { proxyMgr.recordGoodAttempt(proxyMgr.getState().currentNode, 'main'); } catch {}
+                  if (proxyMgr.getState().enabled) {
+                    try { proxyMgr.recordGoodAttempt(proxyMgr.getState().currentNode, 'main'); } catch {}
+                  }
                 }
 
                 // Pre-warm: let Stripe paint the PayPal accordion before
