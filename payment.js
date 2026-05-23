@@ -583,6 +583,20 @@ async function handleSmsVerification(page, smsOverride) {
 
 // ========== Main Auto-Pay ==========
 
+// Poll the page URL while the user manually drags the PayPal slider CAPTCHA.
+// Returns true if the URL leaves paypal.com/agreements/approve before timeoutMs
+// (user dragged slider, PayPal redirected onward), false otherwise.
+async function waitForCaptchaResolution(page, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    await new Promise(r => setTimeout(r, 2000));
+    let url;
+    try { url = page.url(); } catch { return false; }
+    if (!/paypal\.com\/agreements\/approve/i.test(url)) return true;
+  }
+  return false;
+}
+
 async function autoPayment(page, phoneConfig) {
   // phoneConfig: { phone, smsApiUrl } — thread-local override
   const PHONE = phoneConfig?.phone || CONFIG.phone;
@@ -601,6 +615,8 @@ async function autoPayment(page, phoneConfig) {
   // Wait and handle PayPal pages as they come
   // After OpenAI submit, PayPal redirect can take 5-15 seconds
   let paypalHandled = false;
+  let captchaFirstSeenAt = 0;
+  let captchaHandled = false;
   for (let round = 0; round < 15; round++) {
     await randomDelay(2000, 3000);
     let currentUrl;
@@ -612,6 +628,21 @@ async function autoPayment(page, phoneConfig) {
       await handlePayPalCheckout(page, PHONE, SMS_API);
       paypalHandled = true;
       break;
+    } else if (/paypal\.com\/agreements\/approve/i.test(currentUrl)) {
+      // agreements/approve is normally a 1-3s pass-through URL. If we are still
+      // here after 4s, Akamai slider CAPTCHA was almost certainly shown.
+      if (!captchaFirstSeenAt) {
+        captchaFirstSeenAt = Date.now();
+      } else if (Date.now() - captchaFirstSeenAt > 4000 && !captchaHandled) {
+        captchaHandled = true;
+        console.log('    [Pay] PayPal slider CAPTCHA detected — please drag manually (90s timeout)');
+        const cleared = await waitForCaptchaResolution(page, 90000);
+        if (!cleared) {
+          return { success: false, status: 'paypal_captcha', reason: 'PayPal slider CAPTCHA timeout (90s)' };
+        }
+        console.log('    [Pay] CAPTCHA cleared, continuing flow');
+      }
+      continue;
     } else if (currentUrl.includes('pay.openai.com') || currentUrl.includes('checkout.stripe.com')) {
       // Still on OpenAI/Stripe, waiting for redirect
       if (round % 3 === 2) console.log('    [Pay] Waiting for PayPal redirect...');
