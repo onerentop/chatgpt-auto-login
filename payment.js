@@ -109,14 +109,25 @@ async function selectOption(page, selector, text) {
     await page.evaluate(({ sel, txt }) => {
       const el = document.querySelector(sel);
       if (!el) return;
+      const q = txt.toLowerCase();
+      let chosen = -1;
       for (let i = 0; i < el.options.length; i++) {
-        if (el.options[i].text.toLowerCase().includes(txt.toLowerCase()) ||
-            el.options[i].value.toLowerCase().includes(txt.toLowerCase())) {
-          el.value = el.options[i].value;
-          el.dispatchEvent(new Event('change', { bubbles: true }));
-          return;
+        if (el.options[i].text.toLowerCase() === q || el.options[i].value.toLowerCase() === q) {
+          chosen = i; break;
         }
       }
+      if (chosen === -1) {
+        for (let i = 0; i < el.options.length; i++) {
+          if (el.options[i].text.toLowerCase().includes(q) || el.options[i].value.toLowerCase().includes(q)) {
+            chosen = i; break;
+          }
+        }
+      }
+      if (chosen === -1) return;
+      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set;
+      setter.call(el, el.options[chosen].value);
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
     }, { sel: selector, txt: text });
     return true;
   } catch (e) {
@@ -290,30 +301,44 @@ async function handleOpenAIPage(page) {
     }
 
     function fillSelect(id, text) {
+      // Exact-match-first avoids "Kansas" matching "Arkansas" via substring.
+      // Native setter + input/change is required for React-managed Stripe form
+      // to register the selection (plain el.value = ... is invisible to React).
+      var q = text.toLowerCase();
       var el = document.getElementById(id);
       if (!el) {
-        // Try by selector
         var selects = document.querySelectorAll('select');
-        for (var s = 0; s < selects.length; s++) {
+        var fallback = null;
+        for (var s = 0; s < selects.length && !el; s++) {
           for (var i = 0; i < selects[s].options.length; i++) {
-            if (selects[s].options[i].text.toLowerCase().includes(text.toLowerCase())) {
-              el = selects[s];
-              break;
-            }
+            var t = selects[s].options[i].text.toLowerCase();
+            if (t === q) { el = selects[s]; break; }
+            if (!fallback && t.includes(q)) fallback = selects[s];
           }
-          if (el) break;
         }
+        if (!el) el = fallback;
       }
       if (!el) return false;
+      var chosen = -1;
       for (var i = 0; i < el.options.length; i++) {
-        if (el.options[i].text.toLowerCase().includes(text.toLowerCase()) || el.options[i].value.toLowerCase().includes(text.toLowerCase())) {
-          el.value = el.options[i].value;
-          el.dispatchEvent(new Event('change', { bubbles: true }));
-          log.push('select=' + el.options[i].text);
-          return true;
+        if (el.options[i].text.toLowerCase() === q || el.options[i].value.toLowerCase() === q) {
+          chosen = i; break;
         }
       }
-      return false;
+      if (chosen === -1) {
+        for (var i = 0; i < el.options.length; i++) {
+          if (el.options[i].text.toLowerCase().includes(q) || el.options[i].value.toLowerCase().includes(q)) {
+            chosen = i; break;
+          }
+        }
+      }
+      if (chosen === -1) return false;
+      var setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set;
+      setter.call(el, el.options[chosen].value);
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+      log.push('select=' + el.options[chosen].text);
+      return true;
     }
 
     // Fill address - try all known selectors
