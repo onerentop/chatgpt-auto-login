@@ -112,16 +112,21 @@ function buildSingboxConfig(us /* nullable */, jp /* nullable */) {
 
   const inbounds = [];
   const outbounds = [];
-  const rules = [];
+  // sing-box 1.11+ removed the legacy inbound 'sniff: true' field; sniff is now
+  // a route rule action. Run it first so subsequent rules can match on the
+  // sniffed destination domain. We don't actually use the sniffed value for
+  // routing (rules below are inbound-based), but the action populates request
+  // metadata that some outbounds (e.g. VLESS with reality SNI) may consult.
+  const rules = [{ action: 'sniff' }];
 
   if (hasUs) {
-    inbounds.push({ type: 'mixed', tag: 'in-mixed', listen: '127.0.0.1', listen_port: HTTP_PORT, sniff: true });
+    inbounds.push({ type: 'mixed', tag: 'in-mixed', listen: '127.0.0.1', listen_port: HTTP_PORT });
     outbounds.push({ type: 'selector', tag: SELECTOR_TAG, outbounds: us.map(o => o.tag), default: us[0].tag });
     outbounds.push(...us);
   }
 
   if (hasJp) {
-    inbounds.push({ type: 'mixed', tag: 'in-jp', listen: '127.0.0.1', listen_port: JP_HTTP_PORT, sniff: true });
+    inbounds.push({ type: 'mixed', tag: 'in-jp', listen: '127.0.0.1', listen_port: JP_HTTP_PORT });
     outbounds.push({ type: 'selector', tag: JP_SELECTOR_TAG, outbounds: jp.map(o => o.tag), default: jp[0].tag });
     outbounds.push(...jp);
     rules.push({ inbound: 'in-jp', outbound: JP_SELECTOR_TAG });
@@ -228,9 +233,14 @@ async function refresh() {
     _state.enabled = mainEnabledByConfig;
     _state.jp.enabled = jpEnabledByConfig;
   } catch (err) {
-    // 7891 collision: degrade only when main channel is also enabled (otherwise we'd start nothing).
-    if (mainEnabledByConfig && jpEnabledByConfig && /7891|address already in use|bind/i.test(err.message || '')) {
-      console.log(`[Proxy] 7891 端口被占用或绑定失败，降级关闭 JP 通道: ${err.message}`);
+    // Degrade to US-only when sing-box reports a *real* bind failure on :7891.
+    // We deliberately match only "failed to bind port" (the literal string our
+    // singbox.start throws when its net.connect probe fails) — not the generic
+    // "exited unexpectedly" message, whose boilerplate hint contains the
+    // substring "7890/7891" and previously caused config-error exits to be
+    // mis-classified as port collisions, masking the real cause.
+    if (mainEnabledByConfig && jpEnabledByConfig && /failed to bind port 7891/i.test(err.message || '')) {
+      console.log(`[Proxy] 7891 端口被占用，降级关闭 JP 通道: ${err.message}`);
       _state.jp.lastError = `端口 7891 被占用，JP 通道已禁用: ${(err.message || '').slice(0, 120)}`;
       const fallbackConfig = buildSingboxConfig(filtered, null);
       await singbox.start(fallbackConfig);

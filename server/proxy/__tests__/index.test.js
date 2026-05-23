@@ -7,7 +7,10 @@ test('buildSingboxConfig: 仅 US 池时只有一个 inbound', () => {
   const cfg = proxy.buildSingboxConfig(us, null);
   assert.strictEqual(cfg.inbounds.length, 1);
   assert.strictEqual(cfg.inbounds[0].listen_port, 7890);
-  assert.strictEqual(cfg.route.rules.length, 0);
+  assert.strictEqual(cfg.inbounds[0].sniff, undefined, 'legacy inbound sniff field removed');
+  // rules[0] is the global sniff action; no other rules when JP is off
+  assert.strictEqual(cfg.route.rules.length, 1);
+  assert.deepStrictEqual(cfg.route.rules[0], { action: 'sniff' });
   assert.strictEqual(cfg.route.final, 'auto-rotate');
   const selectorTags = cfg.outbounds.filter(o => o.type === 'selector').map(o => o.tag);
   assert.deepStrictEqual(selectorTags, ['auto-rotate']);
@@ -20,8 +23,11 @@ test('buildSingboxConfig: us + jp 池有两个 inbound + 路由规则', () => {
   assert.strictEqual(cfg.inbounds.length, 2);
   assert.strictEqual(cfg.inbounds[1].tag, 'in-jp');
   assert.strictEqual(cfg.inbounds[1].listen_port, 7891);
-  assert.strictEqual(cfg.route.rules.length, 1);
-  assert.deepStrictEqual(cfg.route.rules[0], { inbound: 'in-jp', outbound: 'jp-checkout' });
+  assert.strictEqual(cfg.inbounds[1].sniff, undefined, 'legacy inbound sniff field removed');
+  // rules[0] is the global sniff action; rules[1] is the JP route
+  assert.strictEqual(cfg.route.rules.length, 2);
+  assert.deepStrictEqual(cfg.route.rules[0], { action: 'sniff' });
+  assert.deepStrictEqual(cfg.route.rules[1], { inbound: 'in-jp', outbound: 'jp-checkout' });
   const selectorTags = cfg.outbounds.filter(o => o.type === 'selector').map(o => o.tag);
   assert.deepStrictEqual(selectorTags, ['auto-rotate', 'jp-checkout']);
   const jpSelector = cfg.outbounds.find(o => o.tag === 'jp-checkout');
@@ -33,7 +39,9 @@ test('buildSingboxConfig: jp 数组为空数组时视为无 JP（不加 inbound�
   const us = [{ type: 'shadowsocks', tag: 'us-1' }];
   const cfg = proxy.buildSingboxConfig(us, []);
   assert.strictEqual(cfg.inbounds.length, 1);
-  assert.strictEqual(cfg.route.rules.length, 0);
+  // Only the global sniff rule remains; no JP-specific routing
+  assert.strictEqual(cfg.route.rules.length, 1);
+  assert.deepStrictEqual(cfg.route.rules[0], { action: 'sniff' });
 });
 
 test('buildSingboxConfig: outbounds 含 direct + block 兜底', () => {
@@ -52,8 +60,10 @@ test('buildSingboxConfig: 仅 JP 池（主代理 off）不监听 7890，final �
   const selectorTags = cfg.outbounds.filter(o => o.type === 'selector').map(o => o.tag);
   assert.deepStrictEqual(selectorTags, ['jp-checkout']);
   assert.strictEqual(cfg.route.final, 'jp-checkout');
-  assert.strictEqual(cfg.route.rules.length, 1);
-  assert.deepStrictEqual(cfg.route.rules[0], { inbound: 'in-jp', outbound: 'jp-checkout' });
+  // rules[0] sniff action, rules[1] JP route
+  assert.strictEqual(cfg.route.rules.length, 2);
+  assert.deepStrictEqual(cfg.route.rules[0], { action: 'sniff' });
+  assert.deepStrictEqual(cfg.route.rules[1], { inbound: 'in-jp', outbound: 'jp-checkout' });
 });
 
 test('buildSingboxConfig: us=[] + jp=[] 抛错（无意义启动）', () => {
