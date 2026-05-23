@@ -1,5 +1,25 @@
 # Changelog
 
+## v2.19.1 — 2026-05-23
+
+### payment.js rolled back to v2.14.0 baseline
+
+实测验证 v2.19 Phase 2.5 链路全程正常（osxti6295 端到端 `redirect_status=succeeded`），但 v2.14 之后的 6 个 payment.js perf/fix 累积导致 PayPal checkout 12 字段在当前 PayPal DOM 下全部 MISSED。先回退 payment.js 到 v2.14.0 最后已知能用的状态，未来如需重新引入这些 perf，按 commit 单独 cherry-pick + 充分验证。
+
+回退的提交：
+- `def0d11` fix(payment): restore 'unable to add this card' regex
+- `5e28006` perf(payment): race post-submit outcome
+- `f695f84` perf(payment): waitForURL replaces polling loops
+- `e9e03e0` perf(payment): replace randomDelays with selector waits
+- `ef4d1a9` perf(payment): parallelize PayPal field fills（提前已 revert 为 29f97aa）
+- `4201276` perf(payment): cache fetchAddress
+
+端到端实测（v2.19 + v2.14 payment.js）：
+
+- ✅ `gexi4056685` → status=`no_promo`（Phase 2.5 拦截 \$20，不浪费 payment.js）
+- ✅ `osxti6295` → status=`plus_no_rt`（全流程通过：\$0 → 12 字段 Filled → SMS 307251 → `redirect_status=succeeded`）
+- ⚠ `hprfvxml12008` → status=`error`/PayPal `genericError`（PayPal 服务端在 SMS 提交后拒；非代码问题，单账号风控）
+
 ## v2.19.0 — 2026-05-23
 
 ### Reliable JP-First Checkout
