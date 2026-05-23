@@ -70,7 +70,8 @@ const PROFILES = {
 async function waitForDomStable(page, windowMs, deadline) {
   const remainingMs = deadline - Date.now();
   if (remainingMs <= 0) return false;
-  const inject = async function injectedDomStable(_windowMs, _maxMs) {
+  // Playwright's page.evaluate(fn, arg) takes ONE argument — pack values into an object.
+  const inject = async function injectedDomStable({ windowMs: _windowMs, maxMs: _maxMs }) {
     return await new Promise((resolve) => {
       let timer = null;
       let observer = null;
@@ -94,7 +95,7 @@ async function waitForDomStable(page, windowMs, deadline) {
   };
   inject.__readinessRole = 'domStable';
   try {
-    return await page.evaluate(inject, windowMs, remainingMs);
+    return await page.evaluate(inject, { windowMs, maxMs: remainingMs });
   } catch (e) {
     return false;
   }

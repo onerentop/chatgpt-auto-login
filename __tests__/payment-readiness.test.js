@@ -55,6 +55,24 @@ test('waitForDomStable: 立即返回 true 时 ready=true', async () => {
   assert.strictEqual(ok, true);
 });
 
+test('waitForDomStable: page.evaluate 收到 单个 object arg（防多-arg 回归）', async () => {
+  // Regression: Playwright's page.evaluate takes ONE arg only; passing multiple
+  // positional args silently drops everything after the first, leaving inject's
+  // _maxMs as undefined and setTimeout(fn, undefined) fires immediately.
+  let capturedArgs = null;
+  const page = {
+    async evaluate(fn, ...args) {
+      capturedArgs = args;
+      return true;
+    },
+  };
+  await _internal.waitForDomStable(page, 800, Date.now() + 10000);
+  assert.strictEqual(capturedArgs.length, 1, `page.evaluate 必须只收 1 个 arg，实际 ${capturedArgs.length}`);
+  assert.strictEqual(typeof capturedArgs[0], 'object');
+  assert.strictEqual(capturedArgs[0].windowMs, 800);
+  assert.ok(capturedArgs[0].maxMs > 0 && capturedArgs[0].maxMs <= 10000);
+});
+
 test('waitForDomStable: deadline 已过返回 false', async () => {
   const page = mockPage({ stableReturns: false, stableDelayMs: 0 });
   const deadline = Date.now() - 1;
