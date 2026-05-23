@@ -7,16 +7,32 @@ import sys, os, json, uuid, time, random, re, string, hashlib, base64, secrets, 
 import email as email_lib
 from urllib.parse import urlparse, parse_qs, urlencode, quote
 
-# In-project no-op stubs for sentinel token generation. The original code
-# imported from an external 'chatgpt_register' package (Turnstile token
-# minter) but we deliberately keep this project self-contained — sentinel
-# becomes "" everywhere, which works for most accounts. Risk-controlled
-# accounts may see slightly lower success rate.
-def build_sentinel_token(*args, **kwargs):
-    return ""
+# Force stdout/stderr UTF-8 — prevents GBK terminals from crashing on emoji /
+# CJK strings printed by vendored chatgpt_register at import time.
+try:
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+except Exception:
+    pass
 
-def get_sentinel_token_browser(*args, **kwargs):
-    return ""
+# Import vendored chatgpt_register/ (Turnstile sentinel token helper).
+# It lives inside this project (chatgpt_register/), no sys.path hack needed.
+# Top-level side-effect prints in the vendored module would corrupt our
+# JSON-lines stdout protocol with the JS spawner — redirect stdout to stderr
+# during import, then restore. If the package is missing for any reason,
+# fall back to no-op stubs so the main flow still runs.
+_orig_stdout = sys.stdout
+sys.stdout = sys.stderr
+try:
+    from chatgpt_register.chatgpt_register import build_sentinel_token
+    from chatgpt_register.sentinel_browser import get_sentinel_token_browser
+except Exception:
+    def build_sentinel_token(*args, **kwargs):
+        return ""
+    def get_sentinel_token_browser(*args, **kwargs):
+        return ""
+finally:
+    sys.stdout = _orig_stdout
 
 # Chrome fingerprint profiles (local, no external dependency)
 _CHROME_PROFILES = [

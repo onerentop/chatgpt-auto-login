@@ -18,3 +18,4 @@ __pycache__/
 server.log
 bin/
 server-test.log
+*.pyc
