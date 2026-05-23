@@ -95,6 +95,7 @@ class ProtocolEngine extends EventEmitter {
     this._chromeProc = null;
     this._browser = null;
     this._tempDir = null;
+    this._abortController = null;
   }
 
   getStatus() { return this.status; }
@@ -135,12 +136,14 @@ class ProtocolEngine extends EventEmitter {
   stop() {
     if (this.status !== 'idle') {
       this.stopFlag = true;
+      if (this._abortController) try { this._abortController.abort(); } catch {}
       if (this._pyProc) try { this._pyProc.kill(); } catch {}
       if (this._chromeProc) try { this._chromeProc.kill(); } catch {}
       if (this._browser) try { this._browser.close().catch(() => {}); } catch {}
       if (this._gw) try { this._gw.cleanup(); } catch {}
       if (this._tempDir) try { fs.rmSync(this._tempDir, { recursive: true, force: true }); } catch {}
       this._pyProc = null; this._chromeProc = null; this._browser = null; this._gw = null; this._tempDir = null;
+      this._abortController = null;
 
       // Reset any "running" accounts in DB to idle
       try {
@@ -156,6 +159,7 @@ class ProtocolEngine extends EventEmitter {
   async start(startFrom = 0, filterEmails = null) {
     this.status = 'running';
     this.stopFlag = false;
+    this._abortController = new AbortController();
 
     // LogCapture: hijack console.log to emit 'log' events (same as PipelineEngine)
     const { LogCapture } = require('./server/logger');
@@ -399,7 +403,7 @@ class ProtocolEngine extends EventEmitter {
           let paymentResult = { success: false };
           try {
             const slot = runtimeCfg.phoneSlots?.[0] || { phone: runtimeCfg.phone, smsApiUrl: runtimeCfg.smsApiUrl };
-            paymentResult = await autoPayment(page, { phone: slot.phone, smsApiUrl: slot.smsApiUrl, email: account.email }) || { success: false };
+            paymentResult = await autoPayment(page, { phone: slot.phone, smsApiUrl: slot.smsApiUrl, email: account.email }, { signal: this._abortController.signal }) || { success: false };
           } catch (e) {
             if (e.code === 'NOT_FREE_TRIAL') {
               // Link is not a $0 trial — treat as no_link (same outcome as Discord
@@ -420,6 +424,10 @@ class ProtocolEngine extends EventEmitter {
               this.emitStatus({ email: account.email, status: 'plus_no_rt', phase: 'done', progress });
             }
             summary.success++;
+          } else if (paymentResult.status === 'aborted') {
+            console.log(`[${progress}] Payment aborted by user`);
+            this.emitStatus({ email: account.email, status: 'aborted', phase: 'payment', progress, reason: 'Stopped by user' });
+            summary.aborted = (summary.aborted || 0) + 1;
           } else if (paymentResult.notFreeTrial) {
             this.emitStatus({ email: account.email, status: 'no_link', phase: 'done', progress, reason: paymentResult.reason });
             summary.noLink++;
