@@ -552,12 +552,11 @@ async function handleSmsVerification(page, smsOverride) {
   const SMS_URL = smsOverride || CONFIG.smsApiUrl;
   if (!SMS_URL) return;
 
-  await randomDelay(2000, 3000);
-
-  // Check if SMS code dialog appeared ("Enter your code")
-  const codeDialog = page.locator('text=Enter your code').or(page.locator('text=输入验证码').or(page.locator('text=输入你的验证码')));
-  const dialogVisible = await codeDialog.isVisible({ timeout: 8000 }).catch(() => false);
-  if (!dialogVisible) {
+  // SMS dialog is optional — readiness returning ready:false means no dialog
+  // surfaced within the timeout; treat same as "no dialog detected".
+  const rSms = await waitForPageReady(page, PROFILES.smsDialog,
+    { totalTimeoutMs: 15000, log: (m) => console.log('    ' + m) });
+  if (!rSms.ready) {
     console.log('    [Pay] No SMS verification dialog detected');
     return false;
   }
