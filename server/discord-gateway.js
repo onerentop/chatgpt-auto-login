@@ -2,6 +2,55 @@
 const WebSocket = require('ws');
 const { CONFIG: PAY_CONFIG } = require('../payment');
 
+// Route Discord WS + REST through the project's internal sing-box proxy when
+// it's running. Without this, users behind the GFW can't reach gateway.discord.gg
+// / discord.com/api even though all other automation is going via the proxy.
+// We use the main (US) channel — Discord doesn't care about geo and the main
+// channel is the stable one; JP-Checkout's :7891 stays reserved for OpenAI's
+// checkout endpoint. Both helpers return null when proxy is disabled, so
+// callers fall back to direct connections automatically.
+function _proxyUrlOrNull() {
+  try { return require('./proxy').getProxyUrl() || null; } catch { return null; }
+}
+function _makeHttpsAgent() {
+  const url = _proxyUrlOrNull();
+  if (!url) return null;
+  const { HttpsProxyAgent } = require('https-proxy-agent');
+  return new HttpsProxyAgent(url);
+}
+// Node's global fetch() is backed by Node's internal undici, but its dispatcher
+// option requires the version that exactly matches Node's bundled undici. The
+// npm 'undici' package commonly ships ahead of Node's bundle, producing ABI
+// mismatches like UND_ERR_INVALID_ARG 'invalid onRequestStart method'. To
+// avoid that whole class of problems we bypass fetch for the proxied path and
+// use https.request directly with the same HttpsProxyAgent that the WebSocket
+// uses. Public API mirrors what `fetch(url, { method, headers, body })` would
+// return for our usage: just `.status` + `.text()`.
+function _requestViaProxy(url, { method, headers, body }) {
+  const https = require('https');
+  const { URL } = require('url');
+  const u = new URL(url);
+  const agent = _makeHttpsAgent();
+  return new Promise((resolve, reject) => {
+    const req = https.request({
+      method, agent,
+      hostname: u.hostname, port: u.port || 443,
+      path: u.pathname + u.search, headers,
+    }, (res) => {
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => {
+        const text = Buffer.concat(chunks).toString('utf-8');
+        resolve({ status: res.statusCode, text: async () => text });
+      });
+      res.on('error', reject);
+    });
+    req.on('error', reject);
+    if (body) req.write(body);
+    req.end();
+  });
+}
+
 const DISCORD_TOKEN = PAY_CONFIG.discordToken || '';
 const CHANNEL_ID = PAY_CONFIG.discordChannelId || '';
 const HUB_MESSAGE_ID = PAY_CONFIG.discordMessageId || '';
@@ -29,7 +78,9 @@ function nn() {
 
 function connectGateway() {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket('wss://gateway.discord.gg/?v=9&encoding=json');
+    const agent = _makeHttpsAgent();
+    if (agent) console.log('[Gateway] Connecting via proxy', _proxyUrlOrNull());
+    const ws = new WebSocket('wss://gateway.discord.gg/?v=9&encoding=json', agent ? { agent } : {});
     let hb = null, seq = null, sessionId = null;
     const eh = {};
     function on(e, f) { if (!eh[e]) eh[e] = []; eh[e].push(f); }
@@ -74,7 +125,14 @@ function waitForAny(gw, events, filter, ms = 30000) {
 }
 
 async function interact(body) {
-  const r = await fetch(`${API_BASE}/interactions`, { method: 'POST', headers: discordHeaders, body: JSON.stringify(body) });
+  const url = `${API_BASE}/interactions`;
+  const payload = JSON.stringify(body);
+  // Route through the project's sing-box proxy when it's running. Falls back
+  // to direct fetch when proxy is disabled or unavailable.
+  const useProxy = _proxyUrlOrNull() !== null;
+  const r = useProxy
+    ? await _requestViaProxy(url, { method: 'POST', headers: discordHeaders, body: payload })
+    : await fetch(url, { method: 'POST', headers: discordHeaders, body: payload });
   if (r.status !== 204 && r.status !== 200) throw new Error(`Interaction ${r.status}: ${await r.text()}`);
 }
 
