@@ -247,33 +247,25 @@ async function handleOpenAIPage(page) {
   console.log('    [Pay] PayPal clicked:', ppClicked || 'FAILED');
   // Wait for accordion to expand (no double click — it would collapse it)
 
-  // Verify billing form appears
-  await randomDelay(2000, 3000);
-  let formFound = false;
-  for (let w = 0; w < 10; w++) {
-    const hasForm = await page.locator('#billingAddressLine1').isVisible({ timeout: 1000 }).catch(() => false);
-    if (hasForm) { formFound = true; break; }
-    await new Promise(r => setTimeout(r, 1000));
+  // Verify billing form appears + key fields ready (state options loaded, terms checkbox attached)
+  const r1 = await waitForPageReady(page, PROFILES.paypalAccordionExpanded, { log: (m) => console.log('    ' + m) });
+  const formFound = r1.ready;
+  if (!r1.ready) {
+    console.log(`    [Pay] 警告：accordion 展开未就绪 missing=[${r1.missing.join(',')}]`);
   }
   if (!formFound) {
     console.log('    [Pay] Billing form not visible, reloading to retry...');
     await page.reload({ waitUntil: 'networkidle', timeout: 30000 }).catch(() => {});
-    await randomDelay(3000, 4000);
+    const r1a = await waitForPageReady(page, PROFILES.openai, { log: (m) => console.log('    ' + m) });
+    if (!r1a.ready) console.log(`    [Pay] 警告：reload 后 openai 未就绪 missing=[${r1a.missing.join(',')}]`);
     ppClicked = await page.evaluate(() => { var el = document.querySelector('[data-testid="paypal-accordion-item-button"]') || document.querySelector('#payment-method-accordion-item-title-paypal'); if (el) { el.click(); return true; } return false; }).catch(() => false);
     console.log('    [Pay] PayPal retry:', ppClicked);
-    await randomDelay(2000, 3000);
+    const r1b = await waitForPageReady(page, PROFILES.paypalAccordionExpanded, { log: (m) => console.log('    ' + m) });
+    if (!r1b.ready) console.log(`    [Pay] 警告：retry 后 accordion 未就绪 missing=[${r1b.missing.join(',')}]`);
   }
 
   const addr = await fetchAddress();
   console.log('    [Pay] Address:', JSON.stringify(addr));
-
-  // Wait for billing address form to appear after PayPal selection
-  console.log('    [Pay] Waiting for billing form...');
-  for (let w = 0; w < 10; w++) {
-    const hasForm = await page.locator('#billingAddressLine1, input[name*="addressLine1"]').first().isVisible({ timeout: 1000 }).catch(() => false);
-    if (hasForm) break;
-    await new Promise(r => setTimeout(r, 1000));
-  }
 
   // Step 2: Fill address fields (after PayPal form has loaded)
   const fillResult = await page.evaluate((addr) => {
