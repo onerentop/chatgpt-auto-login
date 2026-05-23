@@ -14,6 +14,9 @@
           <el-option label="Plus(无RT)" value="plus_no_rt" />
           <el-option label="无链接" value="no_link" />
           <el-option label="错误" value="error" />
+          <el-option label="JP节点不可用" value="no_jp_proxy" />
+          <el-option label="无0元资格" value="no_promo" />
+          <el-option label="Stripe验证失败" value="verify_error" />
         </el-select>
         <el-button @click="handleDownloadAll">下载全部 ZIP</el-button>
         <el-button @click="loadResults">刷新</el-button>

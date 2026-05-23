@@ -42,6 +42,9 @@
           <el-option label="无链接" value="no_link" />
           <el-option label="空闲" value="idle" />
           <el-option label="运行中" value="running" />
+          <el-option label="JP节点不可用" value="no_jp_proxy" />
+          <el-option label="无0元资格" value="no_promo" />
+          <el-option label="Stripe验证失败" value="verify_error" />
         </el-select>
         <el-select v-model="planFilter" placeholder="Plan" clearable style="width:110px;margin-left:8px">
           <el-option label="Plus" value="plus" />
