@@ -73,4 +73,47 @@ router.get('/nodes', (req, res) => {
   res.json({ nodeTags: allTags, total: allTags.length, jpKddiTags });
 });
 
+function buildBlacklistView(state) {
+  const now = Date.now();
+  const toRows = (badNodes) => Object.entries(badNodes || {}).map(([tag, entry]) => ({
+    tag,
+    expiresAt: entry.expiresAt,
+    ttlRemainingMs: Math.max(0, entry.expiresAt - now),
+    reason: entry.reason || '',
+    source: entry.source || 'auto',
+  }));
+  return { main: toRows(state.badNodes), jp: toRows(state.jp?.badNodes) };
+}
+
+router.get('/blacklist', (req, res) => {
+  res.json(buildBlacklistView(proxy.getState()));
+});
+
+router.post('/blacklist/add', (req, res) => {
+  const { tag, channel, ttlMs, reason } = req.body || {};
+  if (!tag || typeof tag !== 'string') return res.status(400).json({ error: 'tag required' });
+  if (!['main', 'jp'].includes(channel)) return res.status(400).json({ error: "channel must be 'main' or 'jp'" });
+  try {
+    proxy.blacklistManually(tag, channel, ttlMs, reason);
+    res.json(buildBlacklistView(proxy.getState()));
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.post('/blacklist/remove', (req, res) => {
+  const { tag, channel } = req.body || {};
+  if (!tag || typeof tag !== 'string') return res.status(400).json({ error: 'tag required' });
+  if (!['main', 'jp'].includes(channel)) return res.status(400).json({ error: "channel must be 'main' or 'jp'" });
+  proxy.removeFromBlacklist(tag, channel);
+  res.json(buildBlacklistView(proxy.getState()));
+});
+
+router.post('/blacklist/clear', (req, res) => {
+  const { channel } = req.body || {};
+  if (!['main', 'jp'].includes(channel)) return res.status(400).json({ error: "channel must be 'main' or 'jp'" });
+  proxy.clearBlacklist(channel);
+  res.json(buildBlacklistView(proxy.getState()));
+});
+
 module.exports = router;
