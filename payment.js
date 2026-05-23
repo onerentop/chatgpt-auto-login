@@ -628,9 +628,12 @@ async function autoPayment(page, phoneConfig) {
     return { success: false, reason: 'PayPal not reached' };
   }
 
-  // Wait for PayPal to finish processing and redirect back to pay.openai.com
+  // Wait for PayPal to finish processing and redirect back to pay.openai.com.
+  // Also fail-fast on paypal.com/checkoutweb/genericError (risk-control rejection)
+  // — saves ~30s vs waiting for the full 30s loop.
   console.log('    [Pay] Waiting for payment redirect...');
   let paymentSuccess = false;
+  let genericError = false;
   for (let w = 0; w < 15; w++) {
     await new Promise(r => setTimeout(r, 2000));
     let currentUrl;
@@ -645,11 +648,19 @@ async function autoPayment(page, phoneConfig) {
       paymentSuccess = true;
       break;
     }
+    if (/paypal\.com\/checkoutweb\/genericError/i.test(currentUrl)) {
+      console.log(`    [Pay] PayPal risk-control rejected (genericError): ${currentUrl.slice(0, 80)}`);
+      genericError = true;
+      break;
+    }
     if (w % 3 === 2) console.log(`    [Pay] Waiting... (${currentUrl.slice(0, 50)})`);
   }
 
   console.log('    [Pay] Auto-payment flow completed');
-  return { success: paymentSuccess, reason: paymentSuccess ? '' : 'Payment redirect not detected' };
+  return {
+    success: paymentSuccess,
+    reason: paymentSuccess ? '' : (genericError ? 'PayPal risk-control (genericError)' : 'Payment redirect not detected'),
+  };
 }
 
 module.exports = { autoPayment, CONFIG };
