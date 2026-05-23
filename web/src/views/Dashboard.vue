@@ -27,6 +27,27 @@
       </el-col>
     </el-row>
 
+    <el-row :gutter="20" style="margin-bottom: 20px">
+      <el-col :span="8">
+        <el-card shadow="hover">
+          <div style="font-size:28px;font-weight:bold;color:#e6a23c">{{ stats.noJpProxy }}</div>
+          <div style="color:#909399;margin-top:8px">JP 节点不可用</div>
+        </el-card>
+      </el-col>
+      <el-col :span="8">
+        <el-card shadow="hover">
+          <div style="font-size:28px;font-weight:bold;color:#909399">{{ stats.noPromo }}</div>
+          <div style="color:#909399;margin-top:8px">无 0 元资格</div>
+        </el-card>
+      </el-col>
+      <el-col :span="8">
+        <el-card shadow="hover">
+          <div style="font-size:28px;font-weight:bold;color:#f56c6c">{{ stats.verifyError }}</div>
+          <div style="color:#909399;margin-top:8px">Stripe 验证失败</div>
+        </el-card>
+      </el-col>
+    </el-row>
+
     <el-card>
       <template #header>最近执行状态</template>
       <el-table :data="results" stripe size="small" max-height="400">
@@ -55,7 +76,7 @@ import { ref, reactive, onMounted } from 'vue'
 import api from '../api'
 import { statusType, isPlus } from '../status'
 
-const stats = reactive({ total: 0, plus: 0, success: 0, error: 0 })
+const stats = reactive({ total: 0, plus: 0, success: 0, error: 0, noJpProxy: 0, noPromo: 0, verifyError: 0 })
 const results = ref([])
 
 onMounted(async () => {
@@ -71,6 +92,9 @@ onMounted(async () => {
     stats.plus = statuses.filter(r => r.status === 'plus').length
     stats.success = statuses.filter(r => isPlus(r.status)).length
     stats.error = statuses.filter(r => r.status === 'error').length
+    stats.noJpProxy = statuses.filter(r => r.status === 'no_jp_proxy').length
+    stats.noPromo = statuses.filter(r => r.status === 'no_promo').length
+    stats.verifyError = statuses.filter(r => r.status === 'verify_error').length
     results.value = statuses
   } catch {}
 })

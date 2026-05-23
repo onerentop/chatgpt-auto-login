@@ -8,6 +8,9 @@ const TYPE_MAP = {
   no_link: 'warning',
   error: 'danger',
   deactivated: 'danger',
+  no_jp_proxy: 'warning',
+  no_promo: 'info',
+  verify_error: 'danger',
 }
 
 const LABEL_MAP = {
@@ -18,6 +21,9 @@ const LABEL_MAP = {
   no_link: '无链接',
   error: '错误',
   deactivated: '已删除',
+  no_jp_proxy: 'JP节点不可用',
+  no_promo: '无0元资格',
+  verify_error: 'Stripe验证失败',
 }
 
 export function statusType(s) {
@@ -29,7 +35,7 @@ export function statusLabel(s) {
 }
 
 export const PLUS_STATUSES = ['plus', 'plus_no_rt']
-export const ERROR_STATUSES = ['error', 'no_link', 'deactivated']
+export const ERROR_STATUSES = ['error', 'no_link', 'deactivated', 'no_promo']
 
 export function isPlus(status) {
   return PLUS_STATUSES.includes((status || '').toLowerCase())
