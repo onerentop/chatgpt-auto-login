@@ -377,7 +377,10 @@ async function handleOpenAIPage(page) {
 
 async function handlePayPalLogin(page) {
   console.log('    [Pay] PayPal login page detected');
-  await randomDelay(2000, 3000);
+  const r = await waitForPageReady(page, PROFILES.paypalLogin, { log: (m) => console.log('    ' + m) });
+  if (!r.ready) {
+    console.log(`    [Pay] 警告：paypal-login 60s 未就绪 missing=[${r.missing.join(',')}]，仍尝试继续`);
+  }
 
   const email = randEmail();
   console.log('    [Pay] Email:', email);
