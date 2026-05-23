@@ -850,9 +850,11 @@ def main():
 
                 # Try 1: with browser-based Turnstile sentinel (no-op stub in this project)
                 sentinel = ""
+                sentinel_source = ""
                 try:
                     sentinel = get_sentinel_token_browser(device_id) or ""
                     if sentinel:
+                        sentinel_source = "browser"
                         _log("Sentinel token (Turnstile) obtained")
                 except Exception as e:
                     _log(f"Turnstile failed: {str(e)[:40]}")
@@ -862,6 +864,7 @@ def main():
                     try: sentinel = build_sentinel_token(session, device_id, flow="create_account", user_agent=ua, sec_ch_ua=sec_ch_ua) or ""
                     except Exception: pass
                     if sentinel:
+                        sentinel_source = "PoW"
                         _log("Sentinel token (PoW) obtained")
 
                 headers_ca = {"Accept": "application/json", "Content-Type": "application/json",
@@ -869,9 +872,34 @@ def main():
                     "ext-passkey-client-capabilities": "conditional-create,conditional-get"}
                 if sentinel:
                     headers_ca["openai-sentinel-token"] = sentinel
+
+                # Diagnostic dump before POST — sentinel summary + device id help triage
+                # 400 invalid_request rejections (was the token expired? PoW vs browser?
+                # Was the device-id consistent with the cookie set earlier?). We avoid
+                # logging the full token (long + sensitive) but include length + head/tail
+                # which is enough to detect token churn or empty-token bugs.
+                def _tok_summary(t):
+                    if not t: return "(none)"
+                    head = t[:8] if len(t) >= 8 else t
+                    tail = t[-8:] if len(t) >= 16 else ""
+                    return f"len={len(t)} src={sentinel_source} head={head}...{('tail=' + tail) if tail else ''}"
+                _log(f"create_account REQ: device_id={device_id} sentinel={_tok_summary(sentinel)}")
+
                 r = _post_with_h1_fallback(session, f"{AUTH}/api/accounts/create_account",
                     json={"name": name, "birthdate": bdate}, headers=headers_ca, timeout=30)
-                _log(f"create_account: {r.status_code} {r.text[:120]}")
+                if r.status_code == 200:
+                    _log(f"create_account: {r.status_code} {r.text[:120]}")
+                else:
+                    # Non-2xx: dump full body and a handful of triage headers. The 120-char
+                    # slice that used to live here truncated 'invalid_request' error
+                    # bodies that may contain a more specific 'param'/'code'/'sentinel'
+                    # field, hiding the actual reason for rejection.
+                    _log(f"create_account: {r.status_code}")
+                    _log(f"create_account RESP body: {r.text}")
+                    for h in ['cf-ray', 'x-request-id', 'x-amzn-trace-id', 'server', 'openai-version', 'openai-organization']:
+                        val = r.headers.get(h)
+                        if val:
+                            _log(f"  resp.{h}: {val}")
                 if r.status_code == 200:
                     try:
                         ca_data = r.json()
