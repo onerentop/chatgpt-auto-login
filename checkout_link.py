@@ -45,7 +45,9 @@ def main():
             text = r.text
             m = re.search(r'https://pay\.openai\.com[^\s"\\)]+', text)
             if m:
-                print(json.dumps({"status": "success", "link": m.group(0), "raw": text[:500]}))
+                pk_match = re.search(r'pk_live_[A-Za-z0-9]+', text)
+                pk = pk_match.group(0) if pk_match else ""
+                print(json.dumps({"status": "success", "link": m.group(0), "pk": pk, "raw": text[:500]}))
                 return
             _log(f"No link in response (status={r.status_code}): {text[:120]}")
             # 401 → invalid token, no retry helps.

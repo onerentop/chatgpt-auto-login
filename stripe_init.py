@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 """Probe Stripe payment_pages/init for a pay.openai.com cs_live session.
 
-Input: JSON on stdin  { cs_id, proxy }
+Input: JSON on stdin  { cs_id, pk, proxy }
+   cs_id: cs_live_* session id (from OpenAI checkout response)
+   pk:    pk_live_* Stripe publishable key (from OpenAI checkout response,
+          surfaced by checkout_link.py as the "pk" field)
+   proxy: HTTP proxy URL; default = direct (use main proxy 7890 from caller)
 Output: JSON line on stdout — log lines as {"log":"..."}, final as {"status":...}
 
-Two-step protocol:
-  1) GET https://pay.openai.com/c/pay/{cs_id}  -> extract pk_live_* from HTML
-  2) POST https://api.stripe.com/v1/payment_pages/{cs_id}/init  with key=pk_live_*
-     -> JSON containing invoice.amount_due / currency / total_discount_amounts,
-        payment_method_types
+Single-step protocol:
+  POST https://api.stripe.com/v1/payment_pages/{cs_id}/init  with key=pk
+    -> JSON containing invoice.amount_due / currency / total_discount_amounts,
+       payment_method_types
 """
 import sys, json, random, re
 from curl_cffi import requests as cr
@@ -24,39 +27,25 @@ def _emit(payload):
 def main():
     inp = json.loads(sys.stdin.read())
     cs_id = inp['cs_id']
+    pk = inp.get('pk', '')
     proxy = inp.get('proxy') or None
     proxies = {'http': proxy, 'https': proxy} if proxy else None
 
     if not re.match(r'^cs_live_[A-Za-z0-9]+$', cs_id):
         _emit({"status": "error", "reason": "invalid_cs_id"})
         return
+    if not re.match(r'^pk_live_[A-Za-z0-9]+$', pk):
+        _emit({"status": "error", "reason": "invalid_pk"})
+        return
 
     imp = random.choice(_CHROME)
-    _log(f"impersonate={imp}, proxy={'(set)' if proxy else '(direct)'}")
+    _log(f"impersonate={imp}, cs={cs_id[:25]}..., pk={pk[:15]}..., proxy={'(set)' if proxy else '(direct)'}")
 
-    # Step 1: get pk_live_* from pay.openai.com page
-    page_url = f"https://pay.openai.com/c/pay/{cs_id}"
-    try:
-        page_resp = cr.get(page_url, impersonate=imp, proxies=proxies, timeout=15)
-    except Exception as e:
-        _emit({"status": "error", "reason": f"page_fetch: {str(e)[:80]}"})
-        return
-    if page_resp.status_code != 200:
-        _emit({"status": "error", "reason": f"page_http_{page_resp.status_code}"})
-        return
-    m = re.search(r'pk_live_[A-Za-z0-9]+', page_resp.text)
-    if not m:
-        _emit({"status": "error", "reason": "no_pk_in_page"})
-        return
-    pk = m.group(0)
-    _log(f"found {pk[:20]}...")
-
-    # Step 2: POST init
     init_url = f"https://api.stripe.com/v1/payment_pages/{cs_id}/init"
     try:
         init_resp = cr.post(
             init_url,
-            data={"key": pk, "eager_browser_locale": "en-US", "expected_amount": ""},
+            data={"key": pk, "browser_locale": "en-US"},
             impersonate=imp,
             proxies=proxies,
             timeout=15,
