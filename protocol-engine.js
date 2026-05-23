@@ -11,6 +11,7 @@ const { autoPayment } = require('./payment');
 const { randomDelay, saveCPAAuthFile } = require('./utils');
 const { connectGateway, getPaymentLink } = require('./server/discord-gateway');
 const { fetchCheckoutLink } = require('./server/chatgpt-checkout');
+const { verifyCheckoutIsFree } = require('./server/stripe-verify');
 const { launchChrome, waitForCDP } = require('./server/chrome');
 const proxyMgr = require('./server/proxy');
 
@@ -183,7 +184,7 @@ class ProtocolEngine extends EventEmitter {
     if (accounts.length === 0) throw new Error('No accounts');
 
     const runtimeCfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf-8'));
-    const summary = { total: accounts.length, success: 0, noLink: 0, error: 0 };
+    const summary = { total: accounts.length, success: 0, noLink: 0, error: 0, noJpProxy: 0, noPromo: 0, verifyError: 0 };
 
     // Rate-limit / anti-bot cooldown configuration
     const COOLDOWN_THRESHOLD = 3;          // N consecutive failures triggers cooldown
@@ -299,21 +300,25 @@ class ProtocolEngine extends EventEmitter {
         }
 
         let linkFetchOk = false;
+        let fetchResult = null;
         for (let dRetry = 0; dRetry < 3; dRetry++) {
           try {
             if (dRetry > 0) console.log(`[${progress}] Link fetch retry ${dRetry + 1}/3...`);
-            let r;
             if (linkSource === 'discord') {
-              r = await getPaymentLink(this._gw, result.accessToken);
+              fetchResult = await getPaymentLink(this._gw, result.accessToken);
             } else {
-              r = await fetchCheckoutLink(result.accessToken);
+              fetchResult = await fetchCheckoutLink(result.accessToken);
             }
-            link = r.link;
-            if (link) console.log(`[${progress}] ${r.title || 'Link obtained'}`);
+            link = fetchResult.link;
+            if (link) console.log(`[${progress}] ${fetchResult.title || 'Link obtained'}`);
             console.log(`[${progress}] Link: ${link || 'none'}`);
-            if (!link) {
-              console.log(`[${progress}] ${(r.raw || 'No link').slice(0, 80)}`);
-              this.emitStatus({ email: account.email, status: 'no_link', phase: 'done', progress, reason: r.raw });
+            if (fetchResult.noJpProxy) {
+              console.log(`[${progress}] No JP proxy — skipping account`);
+              this.emitStatus({ email: account.email, status: 'no_jp_proxy', phase: 'done', progress, reason: 'JP checkout channel unavailable' });
+              summary.noJpProxy++;
+            } else if (!link) {
+              console.log(`[${progress}] ${(fetchResult.raw || 'No link').slice(0, 80)}`);
+              this.emitStatus({ email: account.email, status: 'no_link', phase: 'done', progress, reason: fetchResult.raw });
               summary.noLink++;
             }
             linkFetchOk = true;
@@ -331,6 +336,26 @@ class ProtocolEngine extends EventEmitter {
           }
         }
         if (!link) continue;
+
+        // Phase 2.5: Stripe init 验证 (API path only; Discord skips — bot is authority)
+        if (linkSource !== 'discord') {
+          this.emitStatus({ email: account.email, status: 'running', phase: 'verify', progress });
+          console.log(`[${progress}] Phase 2.5: Verifying $0 via Stripe init...`);
+          const v = await verifyCheckoutIsFree(link, fetchResult.pk);
+          if (!v.ok) {
+            console.log(`[${progress}] Verify failed: ${v.reason}`);
+            this.emitStatus({ email: account.email, status: 'verify_error', phase: 'done', progress, paymentLink: link, reason: `Stripe init: ${v.reason}` });
+            summary.verifyError++;
+            continue;
+          }
+          if (!v.is_free) {
+            console.log(`[${progress}] Not free: amount_due=${v.amount_due} ${v.currency}`);
+            this.emitStatus({ email: account.email, status: 'no_promo', phase: 'done', progress, paymentLink: link, reason: `amount_due=${v.amount_due} ${v.currency}` });
+            summary.noPromo++;
+            continue;
+          }
+          console.log(`[${progress}] ✓ Verified $0 + coupons=[${v.coupons.join(',')}]`);
+        }
 
         // Step 3: Payment (fresh Chrome for each account)
         const port = 9222 + i;
