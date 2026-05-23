@@ -17,6 +17,7 @@ const os = require('os');
 const { LogCapture } = require('./logger');
 const { connectGateway, getPaymentLink } = require('./discord-gateway');
 const { fetchCheckoutLink } = require('./chatgpt-checkout');
+const { verifyCheckoutIsFree } = require('./stripe-verify');
 const { launchChrome, waitForCDP, findChrome } = require('./chrome');
 const proxyMgr = require('./proxy');
 
@@ -311,90 +312,133 @@ class PipelineEngine extends EventEmitter {
               }
             }
 
-            if (discord.link) {
+            if (discord.noJpProxy) {
+              // === Phase 2.5 分支 A: JP 不可用 ===
+              console.log(`${p} No JP proxy — skipping account`);
+              finalResult = {
+                email: account.email,
+                status: 'no_jp_proxy',
+                paymentLink: '',
+                reason: 'JP checkout channel unavailable',
+              };
+            } else if (!discord.link) {
+              // === 分支 B: 拿不到 link（现有 no_link 行为）===
+              console.log(`${p} No link: ${discord.raw.slice(0, 150)}`);
+              finalResult = {
+                email: account.email,
+                status: 'no_link',
+                paymentLink: '',
+                reason: discord.raw.slice(0, 200),
+              };
+            } else {
+              // === 分支 C: 拿到 link → Phase 2.5 Stripe 验证 ===
               console.log(`${p} ${discord.title}`);
               console.log(`${p} Link: ${discord.link.slice(0, 80)}...`);
-              finalResult = { email: account.email, status: 'error', paymentLink: discord.link, reason: '' };
+              currentPhase = 'verify';
+              console.log(`${p} Phase 2.5: Verifying $0 via Stripe init...`);
+              this.emitStatus({ email: account.email, status: 'running', phase: 'verify', progress });
+              const v = await verifyCheckoutIsFree(discord.link, discord.pk);
 
-              // Phase 3: Open payment link & auto-fill
-              currentPhase = 'payment';
-              console.log(`${p} Phase 3: Opening payment page...`);
-              this.emitStatus({ email: account.email, status: 'running', phase: 'payment', progress });
-              const ctx = browser.contexts()[0];
-              const pages = ctx.pages();
-              const page = pages.length > 0 ? pages[0] : await ctx.newPage();
-              await page.goto(discord.link, { waitUntil: 'domcontentloaded', timeout: 30000 });
-              await randomDelay(2000, 3000);
-
-              console.log(`${p} Phase 3: Auto-filling payment...`);
-              let paymentOk = false;
-              let paymentReason = '';
-              try {
-                const freshCfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf-8'));
-                const phoneSlot = freshCfg.phoneSlots?.[0] || { phone: freshCfg.phone, smsApiUrl: freshCfg.smsApiUrl };
-                const payResult = await autoPayment(page, { phone: phoneSlot.phone, smsApiUrl: phoneSlot.smsApiUrl }) || {};
-                paymentOk = !!payResult.success;
-                paymentReason = payResult.reason || '';
-              } catch (e) {
-                if (e.code === 'NOT_FREE_TRIAL') {
-                  console.log(`${p} ${e.message}`);
-                  finalResult.status = 'no_link';
-                  finalResult.reason = e.message;
-                  allResults.push(finalResult);
-                  this.emitStatus({ email: account.email, status: 'no_link', phase: 'done', progress, reason: e.message });
-                  summary.noLink = (summary.noLink || 0) + 1;
-                  continue;
-                }
-                console.log(`${p} Auto-fill error: ${e.message}`);
-                paymentReason = e.message?.slice(0, 100) || 'exception';
-              }
-
-              if (paymentOk) {
-                finalResult.status = 'plus_no_rt';
-                console.log(`${p} Payment succeeded (redirect_status=succeeded)`);
+              if (!v.ok) {
+                // C1: Stripe init 失败
+                console.log(`${p} Verify failed: ${v.reason}`);
+                finalResult = {
+                  email: account.email,
+                  status: 'verify_error',
+                  paymentLink: discord.link,
+                  reason: `Stripe init: ${v.reason}`,
+                };
+              } else if (!v.is_free) {
+                // C2: link 不是 $0
+                console.log(`${p} Not free: amount_due=${v.amount_due} ${v.currency}`);
+                finalResult = {
+                  email: account.email,
+                  status: 'no_promo',
+                  paymentLink: discord.link,
+                  reason: `amount_due=${v.amount_due} ${v.currency}`,
+                };
               } else {
-                finalResult.status = 'error';
-                finalResult.reason = paymentReason || 'Payment not completed';
-                console.log(`${p} Payment failed: ${finalResult.reason}, skipping auth file generation`);
-              }
+                // C3: 验证通过 → 进入 Phase 3（原有 Phase 3 + Phase 4 代码块整体放在这里，不变）
+                console.log(`${p} ✓ Verified $0 + coupons=[${v.coupons.join(',')}]`);
+                finalResult = { email: account.email, status: 'error', paymentLink: discord.link, reason: '' };
 
-              // Phase 4: OAuth (PKCE) + CPA (only on payment success)
-              if (paymentOk) {
-                currentPhase = 'oauth';
-                const latestCfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf-8'));
+                // Phase 3: Open payment link & auto-fill
+                currentPhase = 'payment';
+                console.log(`${p} Phase 3: Opening payment page...`);
+                this.emitStatus({ email: account.email, status: 'running', phase: 'payment', progress });
+                const ctx = browser.contexts()[0];
+                const pages = ctx.pages();
+                const page = pages.length > 0 ? pages[0] : await ctx.newPage();
+                await page.goto(discord.link, { waitUntil: 'domcontentloaded', timeout: 30000 });
+                await randomDelay(2000, 3000);
 
-                if (latestCfg.enableOAuth) {
-                  console.log(`${p} Phase 4: PKCE OAuth...`);
-                  this.emitStatus({ email: account.email, status: 'running', phase: 'pkce', progress });
-                  const pkceTokens = await fetchTokensViaPKCE(browser, account, loginResult.lastOtp).catch((e) => { console.log(`  [PKCE] Failed: ${e.message}`); return null; });
-                  if (pkceTokens && !pkceTokens.needsPhone && pkceTokens.refresh_token) {
-                    console.log(`${p} PKCE success, saving with refresh_token`);
-                    saveCPAAuthFile(account.email, pkceTokens.access_token, pkceTokens);
-                    finalResult.status = 'plus';
-                  } else {
-                    if (pkceTokens?.needsPhone) console.log(`${p} PKCE requires phone verification`);
-                    else if (pkceTokens && !pkceTokens.refresh_token) console.log(`${p} PKCE returned no refresh_token`);
-                    else console.log(`${p} PKCE failed, saving without refresh_token`);
-                    saveCPAAuthFile(account.email, pkceTokens?.access_token || loginResult.accessToken, pkceTokens || loginResult.session);
+                console.log(`${p} Phase 3: Auto-filling payment...`);
+                let paymentOk = false;
+                let paymentReason = '';
+                try {
+                  const freshCfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf-8'));
+                  const phoneSlot = freshCfg.phoneSlots?.[0] || { phone: freshCfg.phone, smsApiUrl: freshCfg.smsApiUrl };
+                  const payResult = await autoPayment(page, { phone: phoneSlot.phone, smsApiUrl: phoneSlot.smsApiUrl }) || {};
+                  paymentOk = !!payResult.success;
+                  paymentReason = payResult.reason || '';
+                } catch (e) {
+                  if (e.code === 'NOT_FREE_TRIAL') {
+                    console.log(`${p} ${e.message}`);
+                    finalResult.status = 'no_link';
+                    finalResult.reason = e.message;
+                    allResults.push(finalResult);
+                    this.emitStatus({ email: account.email, status: 'no_link', phase: 'done', progress, reason: e.message });
+                    summary.noLink = (summary.noLink || 0) + 1;
+                    continue;
                   }
+                  console.log(`${p} Auto-fill error: ${e.message}`);
+                  paymentReason = e.message?.slice(0, 100) || 'exception';
+                }
+
+                if (paymentOk) {
+                  finalResult.status = 'plus_no_rt';
+                  console.log(`${p} Payment succeeded (redirect_status=succeeded)`);
                 } else {
-                  saveCPAAuthFile(account.email, loginResult.accessToken, loginResult.session);
+                  finalResult.status = 'error';
+                  finalResult.reason = paymentReason || 'Payment not completed';
+                  console.log(`${p} Payment failed: ${finalResult.reason}, skipping auth file generation`);
                 }
 
-                if (latestCfg.enableCPA) {
-                  console.log(`${p} Phase 4: CPA registration...`);
-                  try {
-                    const cpaOk = await registerToCPA(browser, account.email, account);
-                    if (cpaOk) console.log(`${p} CPA OAuth done.`);
-                    else console.log(`${p} CPA OAuth may have issues, check manually.`);
-                  } catch (e) {
-                    console.log(`${p} CPA error: ${e.message}`);
+                // Phase 4: OAuth (PKCE) + CPA (only on payment success)
+                if (paymentOk) {
+                  currentPhase = 'oauth';
+                  const latestCfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf-8'));
+
+                  if (latestCfg.enableOAuth) {
+                    console.log(`${p} Phase 4: PKCE OAuth...`);
+                    this.emitStatus({ email: account.email, status: 'running', phase: 'pkce', progress });
+                    const pkceTokens = await fetchTokensViaPKCE(browser, account, loginResult.lastOtp).catch((e) => { console.log(`  [PKCE] Failed: ${e.message}`); return null; });
+                    if (pkceTokens && !pkceTokens.needsPhone && pkceTokens.refresh_token) {
+                      console.log(`${p} PKCE success, saving with refresh_token`);
+                      saveCPAAuthFile(account.email, pkceTokens.access_token, pkceTokens);
+                      finalResult.status = 'plus';
+                    } else {
+                      if (pkceTokens?.needsPhone) console.log(`${p} PKCE requires phone verification`);
+                      else if (pkceTokens && !pkceTokens.refresh_token) console.log(`${p} PKCE returned no refresh_token`);
+                      else console.log(`${p} PKCE failed, saving without refresh_token`);
+                      saveCPAAuthFile(account.email, pkceTokens?.access_token || loginResult.accessToken, pkceTokens || loginResult.session);
+                    }
+                  } else {
+                    saveCPAAuthFile(account.email, loginResult.accessToken, loginResult.session);
+                  }
+
+                  if (latestCfg.enableCPA) {
+                    console.log(`${p} Phase 4: CPA registration...`);
+                    try {
+                      const cpaOk = await registerToCPA(browser, account.email, account);
+                      if (cpaOk) console.log(`${p} CPA OAuth done.`);
+                      else console.log(`${p} CPA OAuth may have issues, check manually.`);
+                    } catch (e) {
+                      console.log(`${p} CPA error: ${e.message}`);
+                    }
                   }
                 }
               }
-            } else {
-              console.log(`${p} No link: ${discord.raw.slice(0, 150)}`);
-              finalResult = { email: account.email, status: 'no_link', paymentLink: '', reason: discord.raw.slice(0, 200) };
             }
           }
         } catch (error) {
@@ -448,10 +492,14 @@ class PipelineEngine extends EventEmitter {
         success: allResults.filter((r) => r.status === 'plus' || r.status === 'plus_no_rt').length,
         noLink: allResults.filter((r) => r.status === 'no_link').length,
         error: allResults.filter((r) => r.status === 'error' || r.status === 'deactivated').length,
+        noJpProxy: allResults.filter((r) => r.status === 'no_jp_proxy').length,
+        noPromo: allResults.filter((r) => r.status === 'no_promo').length,
+        verifyError: allResults.filter((r) => r.status === 'verify_error').length,
       };
 
       console.log('========================================');
       console.log(`  Success: ${summary.success}  |  No Link: ${summary.noLink}  |  Error: ${summary.error}`);
+      console.log(`  No-JP: ${summary.noJpProxy}  |  No-Promo: ${summary.noPromo}  |  Verify-Err: ${summary.verifyError}`);
       console.log('========================================');
 
       this.emit('complete', { summary });
