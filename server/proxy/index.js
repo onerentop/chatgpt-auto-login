@@ -27,6 +27,11 @@ function isProxyNetError(msg) {
   return PROXY_NET_ERROR_RE.test(String(msg || ''));
 }
 
+function _ns(channel) {
+  if (channel !== 'main' && channel !== 'jp') throw new Error(`channel must be 'main' or 'jp', got: ${channel}`);
+  return channel === 'jp' ? _state.jp : _state;
+}
+
 let _state = {
   enabled: false,
   subscriptionUrl: '',
@@ -80,14 +85,14 @@ function isBad(tag) {
 function _addToBlacklist(tag, channel, ttlMs, reason, source) {
   const expiresAt = Date.now() + ttlMs;
   const entry = { expiresAt, reason: String(reason).slice(0, 60), source };
-  const ns = channel === 'jp' ? _state.jp : _state;
+  const ns = _ns(channel);
   ns.badNodes.set(tag, entry);
   try { blacklist.add(tag, channel, ttlMs, reason, source); } catch (e) { console.log(`[Proxy] blacklist.add failed: ${e.message?.slice(0, 60)}`); }
 }
 
 function recordBadAttempt(tag, channel, reason = '') {
   if (!tag) return { blacklisted: false, count: 0 };
-  const ns = channel === 'jp' ? _state.jp : _state;
+  const ns = _ns(channel);
   const next = (ns.failCount.get(tag) || 0) + 1;
   ns.failCount.set(tag, next);
   ns.failReasons.set(tag, String(reason).slice(0, 60));
@@ -103,7 +108,7 @@ function recordBadAttempt(tag, channel, reason = '') {
 
 function recordGoodAttempt(tag, channel) {
   if (!tag) return;
-  const ns = channel === 'jp' ? _state.jp : _state;
+  const ns = _ns(channel);
   if (ns.failCount.has(tag)) {
     ns.failCount.delete(tag);
     ns.failReasons.delete(tag);
@@ -113,19 +118,19 @@ function recordGoodAttempt(tag, channel) {
 function blacklistManually(tag, channel, ttlMs = BAD_NODE_TTL_MS, reason = 'manual') {
   if (!tag) throw new Error('tag required');
   _addToBlacklist(tag, channel, ttlMs, reason, 'manual');
-  const ns = channel === 'jp' ? _state.jp : _state;
+  const ns = _ns(channel);
   ns.failCount.delete(tag);
   ns.failReasons.delete(tag);
 }
 
 function removeFromBlacklist(tag, channel) {
-  const ns = channel === 'jp' ? _state.jp : _state;
+  const ns = _ns(channel);
   ns.badNodes.delete(tag);
   try { blacklist.remove(tag, channel); } catch {}
 }
 
 function clearBlacklist(channel) {
-  const ns = channel === 'jp' ? _state.jp : _state;
+  const ns = _ns(channel);
   ns.badNodes.clear();
   try { blacklist.removeAll(channel); } catch {}
 }
@@ -136,17 +141,17 @@ function markJpBad(tag) { return recordBadAttempt(tag, 'jp', 'legacy markJpBad')
 
 function getState() {
   const now = Date.now();
-  const normalize = (map) => {
+  const project = (map) => {
     const out = {};
     for (const [tag, entry] of map.entries()) {
       const obj = typeof entry === 'number' ? { expiresAt: entry, reason: '', source: 'auto' } : entry;
       if (obj.expiresAt > now) out[tag] = obj;
-      else map.delete(tag);
+      // do NOT delete here — isBad/isJpBad/pruneExpired own cleanup paths
     }
     return out;
   };
-  const badNodes = normalize(_state.badNodes);
-  const jpBadNodes = normalize(_state.jp.badNodes);
+  const badNodes = project(_state.badNodes);
+  const jpBadNodes = project(_state.jp.badNodes);
   return {
     ..._state,
     available: _state.nodeTags.length,

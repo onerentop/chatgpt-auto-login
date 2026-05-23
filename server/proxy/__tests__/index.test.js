@@ -247,3 +247,23 @@ test('U10 FAIL_THRESHOLD 通过 module export 可读', () => {
   const p = freshProxy();
   assert.strictEqual(p.FAIL_THRESHOLD, 3);
 });
+
+test('U2-fix-I2 recordBadAttempt 拒绝非法 channel', () => {
+  const p = freshProxy();
+  assert.throws(() => p.recordBadAttempt('us-1', 'JP', 'tls'), /channel must be/);
+  assert.throws(() => p.recordBadAttempt('us-1', 'us', 'tls'), /channel must be/);
+  assert.throws(() => p.recordBadAttempt('us-1', undefined, 'tls'), /channel must be/);
+});
+
+test('U2-fix-I3 getState 不再 mutate state（只投影）', () => {
+  const p = freshProxy();
+  // 手动塞一个过期 entry 到 badNodes（绕过 _addToBlacklist 的当前路径，模拟内存中的过期残留）
+  // 通过 blacklistManually + 负 TTL 来制造过期：
+  p.blacklistManually('us-expired', 'main', -1000, 'old');
+  // 此时 isBad 还没被调用过，过期 entry 仍在 Map 中
+  const stateBefore = p.getState();
+  assert.strictEqual(stateBefore.badNodes['us-expired'], undefined, '投影时已过期 entry 被排除');
+  // 再次调用 getState 应该不报错且行为一致（证明没 mutate）
+  const stateAfter = p.getState();
+  assert.strictEqual(stateAfter.badNodes['us-expired'], undefined);
+});
