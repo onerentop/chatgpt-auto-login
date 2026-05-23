@@ -134,6 +134,75 @@
           </div>
         </div>
       </el-form-item>
+      <el-divider content-position="left">节点黑名单</el-divider>
+      <el-form-item label="主代理黑名单">
+        <div style="width: 700px">
+          <div style="display:flex; gap:8px; margin-bottom:8px; align-items:center">
+            <span style="font-size:12px; color:#909399">
+              共 {{ blacklist.main.length }} 个节点 · 连续 {{ FAIL_THRESHOLD }} 次代理错误自动加入
+            </span>
+            <el-button size="small" :disabled="!blacklist.main.length" @click="clearChannel('main')">
+              清空主代理黑名单
+            </el-button>
+            <el-button size="small" @click="loadBlacklist">刷新</el-button>
+          </div>
+          <el-table :data="blacklist.main" size="small" empty-text="（无）" max-height="260">
+            <el-table-column prop="tag" label="节点" min-width="220" show-overflow-tooltip />
+            <el-table-column label="剩余时间" width="110">
+              <template #default="{ row }">{{ formatTtl(row.ttlRemainingMs) }}</template>
+            </el-table-column>
+            <el-table-column label="来源" width="80">
+              <template #default="{ row }">
+                <el-tag size="small" :type="row.source === 'manual' ? 'warning' : 'info'">
+                  {{ row.source === 'manual' ? '手动' : '自动' }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="reason" label="原因" min-width="140" show-overflow-tooltip />
+            <el-table-column label="操作" width="80">
+              <template #default="{ row }">
+                <el-button size="small" link type="primary" @click="removeNode(row.tag, 'main')">
+                  移除
+                </el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
+      </el-form-item>
+      <el-form-item label="JP 通道黑名单">
+        <div style="width: 700px">
+          <div style="display:flex; gap:8px; margin-bottom:8px; align-items:center">
+            <span style="font-size:12px; color:#909399">
+              共 {{ blacklist.jp.length }} 个节点 · 连续 {{ FAIL_THRESHOLD }} 次代理错误自动加入
+            </span>
+            <el-button size="small" :disabled="!blacklist.jp.length" @click="clearChannel('jp')">
+              清空 JP 黑名单
+            </el-button>
+            <el-button size="small" @click="loadBlacklist">刷新</el-button>
+          </div>
+          <el-table :data="blacklist.jp" size="small" empty-text="（无）" max-height="260">
+            <el-table-column prop="tag" label="节点" min-width="220" show-overflow-tooltip />
+            <el-table-column label="剩余时间" width="110">
+              <template #default="{ row }">{{ formatTtl(row.ttlRemainingMs) }}</template>
+            </el-table-column>
+            <el-table-column label="来源" width="80">
+              <template #default="{ row }">
+                <el-tag size="small" :type="row.source === 'manual' ? 'warning' : 'info'">
+                  {{ row.source === 'manual' ? '手动' : '自动' }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="reason" label="原因" min-width="140" show-overflow-tooltip />
+            <el-table-column label="操作" width="80">
+              <template #default="{ row }">
+                <el-button size="small" link type="primary" @click="removeNode(row.tag, 'jp')">
+                  移除
+                </el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
+      </el-form-item>
       <el-form-item label="代理状态" v-if="proxyStatus">
         <div style="font-size:12px;color:#606266">
           <div>状态：{{ proxyStatus.enabled ? '运行中' : '未运行' }} ({{ proxyStatus.nodeTags?.length || 0 }} 节点)</div>
@@ -147,8 +216,8 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ref, reactive, onMounted, onBeforeUnmount } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '../api'
 
 const formRef = ref(null)
@@ -157,6 +226,10 @@ const refreshingProxy = ref(false)
 const proxyStatus = ref(null)
 const allNodeTags = ref([])
 const jpKddiTagSet = ref(new Set())
+
+const FAIL_THRESHOLD = 3
+const blacklist = ref({ main: [], jp: [] })
+let blacklistTimer = null
 
 const form = reactive({
   protocolMode: false,
@@ -207,6 +280,8 @@ onMounted(async () => {
   }
   await loadProxyStatus()
   await loadAllNodes()
+  await loadBlacklist()
+  blacklistTimer = setInterval(loadBlacklist, 10000)
 })
 
 async function loadProxyStatus() {
@@ -314,4 +389,51 @@ async function rotateJp() {
     ElMessage.error(err.response?.data?.error || '切换失败')
   }
 }
+
+async function loadBlacklist() {
+  try {
+    const { data } = await api.get('/proxy/blacklist')
+    blacklist.value = data
+  } catch {
+    blacklist.value = { main: [], jp: [] }
+  }
+}
+
+async function removeNode(tag, channel) {
+  try {
+    const { data } = await api.post('/proxy/blacklist/remove', { tag, channel })
+    blacklist.value = data
+    ElMessage.success(`已移除 ${tag}`)
+  } catch (err) {
+    ElMessage.error(err.response?.data?.error || '移除失败')
+  }
+}
+
+async function clearChannel(channel) {
+  try {
+    await ElMessageBox.confirm(
+      `确认清空${channel === 'main' ? '主代理' : 'JP 通道'}黑名单？`,
+      '确认操作',
+      { type: 'warning' },
+    )
+  } catch { return }
+  try {
+    const { data } = await api.post('/proxy/blacklist/clear', { channel })
+    blacklist.value = data
+    ElMessage.success('已清空')
+  } catch (err) {
+    ElMessage.error(err.response?.data?.error || '清空失败')
+  }
+}
+
+function formatTtl(ms) {
+  if (ms <= 0) return '已过期'
+  const min = Math.floor(ms / 60000)
+  const sec = Math.floor((ms % 60000) / 1000)
+  return min > 0 ? `${min}m ${sec}s` : `${sec}s`
+}
+
+onBeforeUnmount(() => {
+  if (blacklistTimer) clearInterval(blacklistTimer)
+})
 </script>
