@@ -26,6 +26,7 @@
             </el-dropdown-menu>
           </template>
         </el-dropdown>
+        <el-button :disabled="selectedEmails.length === 0" style="margin-left:8px" @click="clearAllSelection">取消选中</el-button>
         <el-divider direction="vertical" />
         <el-tag :type="running ? 'warning' : 'info'">{{ running ? '运行中' : '空闲' }}</el-tag>
         <el-tag v-if="socketState.connected" type="success" style="margin-left: 8px">WS</el-tag>
@@ -56,7 +57,6 @@
           <el-option label="未生成" value="no" />
         </el-select>
         <el-tag style="margin-left: 12px">{{ filteredRows.length }} / {{ accounts.length }}</el-tag>
-        <el-button size="small" style="margin-left: 8px" @click="clearAllSelection">取消选中</el-button>
       </el-col>
     </el-row>
 
