@@ -33,12 +33,14 @@ except Exception:
 _orig_stdout = sys.stdout
 sys.stdout = sys.stderr
 try:
-    from chatgpt_register.chatgpt_register import build_sentinel_token
-    from chatgpt_register.sentinel_browser import get_sentinel_token_browser
+    # New sentinel pipeline (QuickJS-backed, ported from Gpt-Agreement-Payment).
+    # Three-tier fallback inside: QuickJS (Node runs real sdk.js) → pure-Python
+    # PoW with server challenge → no-challenge stub. Pure PoW alone gets
+    # silent-dropped by OpenAI on OTP dispatch, which is exactly why our prior
+    # protocol-mode registration was hitting registration_disallowed.
+    from chatgpt_register.sentinel import get_sentinel_token
 except Exception:
-    def build_sentinel_token(*args, **kwargs):
-        return ""
-    def get_sentinel_token_browser(*args, **kwargs):
+    def get_sentinel_token(session, device_id, flow="authorize_continue", user_agent=""):
         return ""
 finally:
     sys.stdout = _orig_stdout
@@ -294,7 +296,7 @@ def _do_pkce_flow(session, email, password, ms_client_id, ms_refresh_token):
         # Choose account page — select our account
         elif "/choose-an-account" in final_path:
             _log("PKCE: Choose account page, selecting account...")
-            sentinel = build_sentinel_token(session, device_id, flow="authorize_continue", user_agent=session.headers.get("User-Agent", ""), sec_ch_ua=session.headers.get("sec-ch-ua", "")) or ""
+            sentinel = get_sentinel_token(session, device_id, flow="authorize_continue", user_agent=session.headers.get("User-Agent", "")) or ""
             r = session.post(f"{AUTH}/api/accounts/authorize/continue",
                 json={"username": {"kind": "email", "value": email}},
                 headers={"Accept": "application/json", "Content-Type": "application/json",
@@ -321,7 +323,7 @@ def _do_pkce_flow(session, email, password, ms_client_id, ms_refresh_token):
                         else:
                             _log(f"PKCE: Validating OTP: {otp}")
                             try:
-                                sentinel2 = build_sentinel_token(session, device_id, flow="email_otp_validate", user_agent=session.headers.get("User-Agent", ""), sec_ch_ua=session.headers.get("sec-ch-ua", "")) or ""
+                                sentinel2 = get_sentinel_token(session, device_id, flow="email_otp_validate", user_agent=session.headers.get("User-Agent", "")) or ""
                                 _log(f"PKCE: Sentinel token: {'yes' if sentinel2 else 'no'}")
                             except Exception as se:
                                 sentinel2 = ""
@@ -370,7 +372,7 @@ def _do_pkce_flow(session, email, password, ms_client_id, ms_refresh_token):
         # Need to log in
         elif "/log-in" in final_path:
             _log("PKCE: Need to log in, submitting email...")
-            sentinel = build_sentinel_token(session, device_id, flow="authorize_continue", user_agent=session.headers.get("User-Agent", ""), sec_ch_ua=session.headers.get("sec-ch-ua", "")) or ""
+            sentinel = get_sentinel_token(session, device_id, flow="authorize_continue", user_agent=session.headers.get("User-Agent", "")) or ""
             r = session.post(f"{AUTH}/api/accounts/authorize/continue",
                 json={"username": {"kind": "email", "value": email}},
                 headers={"Accept": "application/json", "Content-Type": "application/json",
@@ -389,7 +391,7 @@ def _do_pkce_flow(session, email, password, ms_client_id, ms_refresh_token):
                 if not otp:
                     return {"error": "OTP not received for PKCE"}
                 try:
-                    sentinel = build_sentinel_token(session, device_id, flow="email_otp_validate", user_agent=session.headers.get("User-Agent", ""), sec_ch_ua=session.headers.get("sec-ch-ua", "")) or ""
+                    sentinel = get_sentinel_token(session, device_id, flow="email_otp_validate", user_agent=session.headers.get("User-Agent", "")) or ""
                 except Exception:
                     sentinel = ""
                 r = session.post(f"{AUTH}/api/accounts/email-otp/validate",
@@ -725,7 +727,7 @@ def main():
             _log("Step 3b: Submit email...")
             sentinel = ""
             try:
-                sentinel = build_sentinel_token(session, device_id, flow="authorize_continue", user_agent=ua, sec_ch_ua=sec_ch_ua) or ""
+                sentinel = get_sentinel_token(session, device_id, flow="authorize_continue", user_agent=ua) or ""
             except Exception: pass
             r = _post_with_h1_fallback(session, f"{AUTH}/api/accounts/authorize/continue",
                 json={"username": {"kind": "email", "value": email}},
@@ -763,7 +765,7 @@ def main():
                 _log(f"Generated password: {password[:3]}***")
             sentinel = ""
             try:
-                sentinel = build_sentinel_token(session, device_id, flow="username_password_create", user_agent=ua, sec_ch_ua=sec_ch_ua) or ""
+                sentinel = get_sentinel_token(session, device_id, flow="username_password_create", user_agent=ua) or ""
             except Exception: pass
             r = session.post(f"{AUTH}/api/accounts/user/register",
                 json={"username": email, "password": password},
@@ -796,7 +798,7 @@ def main():
 
             sentinel = ""
             try:
-                sentinel = build_sentinel_token(session, device_id, flow="email_otp_validate", user_agent=ua, sec_ch_ua=sec_ch_ua) or ""
+                sentinel = get_sentinel_token(session, device_id, flow="email_otp_validate", user_agent=ua) or ""
             except Exception: pass
             r = _post_with_h1_fallback(session, f"{AUTH}/api/accounts/email-otp/validate",
                 json={"code": otp},
@@ -848,47 +850,23 @@ def main():
                 bdate = f"{random.randint(1990, 2002)}-{random.randint(1,12):02d}-{random.randint(1,28):02d}"
                 _log(f"create_account: name={name}, bdate={bdate}")
 
-                # Try 1: browser-based Turnstile sentinel (Playwright → window.SentinelSDK.token)
-                # OpenAI's create_account endpoint rejects PoW-only sentinels with
-                # registration_disallowed in 2026 — a real Turnstile token is required.
-                # When this returns None we want to know *why* (Playwright missing /
-                # SDK not loaded / token() returned empty), so we capture the
-                # sentinel_browser logger output and pipe it through _log.
-                import logging as _logging
-                _sb_logger = _logging.getLogger("sentinel_browser")
-                _sb_records = []
-                class _CaptureHandler(_logging.Handler):
-                    def emit(self, record):
-                        _sb_records.append(f"{record.levelname}: {record.getMessage()}")
-                _capture = _CaptureHandler(level=_logging.DEBUG)
-                _sb_logger.addHandler(_capture)
-                _sb_logger.setLevel(_logging.DEBUG)
-
+                # Refresh sentinel token for the create_account flow. The new
+                # get_sentinel_token pipeline (see chatgpt_register/sentinel.py)
+                # cascades QuickJS (Node runs real sdk.js) → pure-Python PoW with
+                # server challenge → no-challenge stub. QuickJS produces a token
+                # OpenAI server-side can deep-validate; the other tiers may pass
+                # surface validation but get OTP silent-dropped by the server.
                 sentinel = ""
                 sentinel_source = ""
                 try:
-                    sentinel = get_sentinel_token_browser(device_id) or ""
-                    if sentinel:
-                        sentinel_source = "browser"
-                        _log("Sentinel token (Turnstile) obtained")
-                    else:
-                        _log("Turnstile (browser) returned empty — see sentinel_browser logs below")
-                        for rec in _sb_records[-8:]:
-                            _log(f"  sentinel_browser> {rec[:200]}")
+                    sentinel = get_sentinel_token(session, device_id, flow="create_account", user_agent=ua) or ""
                 except Exception as e:
-                    _log(f"Turnstile failed: {str(e)[:120]}")
-                    for rec in _sb_records[-8:]:
-                        _log(f"  sentinel_browser> {rec[:200]}")
-                finally:
-                    _sb_logger.removeHandler(_capture)
-
-                # Try 2: protocol PoW fallback
-                if not sentinel:
-                    try: sentinel = build_sentinel_token(session, device_id, flow="create_account", user_agent=ua, sec_ch_ua=sec_ch_ua) or ""
-                    except Exception: pass
-                    if sentinel:
-                        sentinel_source = "PoW"
-                        _log("Sentinel token (PoW) obtained")
+                    _log(f"Sentinel pipeline raised: {str(e)[:120]}")
+                if sentinel:
+                    sentinel_source = "sentinel_pipeline"
+                    _log("Sentinel token obtained (sentinel_pipeline)")
+                else:
+                    _log("Sentinel pipeline returned empty token — proceeding without sentinel header")
 
                 headers_ca = {"Accept": "application/json", "Content-Type": "application/json",
                     "Origin": AUTH, "Referer": f"{AUTH}/about-you", "oai-device-id": device_id,
