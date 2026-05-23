@@ -7,7 +7,18 @@ import sys, os, json, uuid, time, random, re, string, hashlib, base64, secrets, 
 import email as email_lib
 from urllib.parse import urlparse, parse_qs, urlencode, quote
 
-sys.path.insert(0, r"D:\workspace\projects\cliproxyaccountcleaner")
+# Try common locations for the external chatgpt_register package (sentinel
+# token helper). It's OK if not found — sentinel becomes "" and OpenAI may
+# still let us through; only some risk-controlled flows actually require it.
+for _candidate in (
+    r"E:\workspace\projects\cliproxyaccountcleaner",
+    r"D:\workspace\projects\cliproxyaccountcleaner",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "cliproxyaccountcleaner"),
+    os.environ.get("CHATGPT_REGISTER_PATH", ""),
+):
+    if _candidate and os.path.isdir(_candidate):
+        sys.path.insert(0, _candidate)
+        break
 
 # Chrome fingerprint profiles (local, no external dependency)
 _CHROME_PROFILES = [
@@ -528,7 +539,14 @@ def main():
 
     try:
         from curl_cffi import requests as curl_requests
-        from chatgpt_register.chatgpt_register import build_sentinel_token
+        try:
+            from chatgpt_register.chatgpt_register import build_sentinel_token
+        except ImportError:
+            # chatgpt_register not installed — provide a no-op so the main flow
+            # still runs. Sentinel-required steps will get "" and may degrade
+            # success rate on risk-controlled accounts.
+            def build_sentinel_token(*args, **kwargs):
+                return ""
 
         # HTTP/1.1 constant for TLS-retry fallback (curl_cffi >= 0.5.9).
         # Some unstable proxy paths break HTTP/2 framing mid-handshake — falling back
