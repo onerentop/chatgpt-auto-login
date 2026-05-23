@@ -334,10 +334,18 @@ class PipelineEngine extends EventEmitter {
               // === 分支 C: 拿到 link → Phase 2.5 Stripe 验证 ===
               console.log(`${p} ${discord.title}`);
               console.log(`${p} Link: ${discord.link.slice(0, 80)}...`);
-              currentPhase = 'verify';
-              console.log(`${p} Phase 2.5: Verifying $0 via Stripe init...`);
-              this.emitStatus({ email: account.email, status: 'running', phase: 'verify', progress });
-              const v = await verifyCheckoutIsFree(discord.link, discord.pk);
+              // Discord path: bot is authority for $0 eligibility (it only returns $0 links).
+              // API path: enforce Phase 2.5 verify to fail-fast on non-$0 links.
+              let v;
+              if (linkSource === 'discord') {
+                console.log(`${p} Phase 2.5: skipped (Discord path — bot is eligibility authority)`);
+                v = { ok: true, is_free: true, coupons: [] };
+              } else {
+                currentPhase = 'verify';
+                console.log(`${p} Phase 2.5: Verifying $0 via Stripe init...`);
+                this.emitStatus({ email: account.email, status: 'running', phase: 'verify', progress });
+                v = await verifyCheckoutIsFree(discord.link, discord.pk);
+              }
 
               if (!v.ok) {
                 // C1: Stripe init 失败
