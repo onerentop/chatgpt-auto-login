@@ -334,8 +334,8 @@ async function handlePayPalCheckout(page, phone) {
     }
     log(`Card declined (attempt ${cardAttempt + 1}/3)`);
     if (cardAttempt === 2) {
-      log('All 3 cards declined — throwing card_declined');
-      throw new Error('card_declined');
+      log('All 3 cards declined — throwing paypal_card_declined');
+      throw new Error('paypal_card_declined');
     }
   }
 }
@@ -432,7 +432,7 @@ async function runPayPalFlow(page, opts) {
     let currentUrl;
     try { currentUrl = page.url(); } catch (e) {
       log(`Page closed/crashed: ${e.message?.slice(0, 40)}`);
-      throw new Error('page_closed');
+      throw new Error('paypal_page_closed');
     }
 
     if (currentUrl.includes('paypal.com/pay')) {
@@ -529,10 +529,10 @@ async function runPayPalFlow(page, opts) {
     if (/sms_fetch_fail/.test(msg)) reason = 'sms_fetch_fail';
     else if (/sms verification/i.test(msg)) reason = 'sms_verification_fail';
     else if (/approval_timeout/.test(msg) || /Timeout.*waiting for navigation/i.test(msg) || /Timeout.*waitForURL/i.test(msg)) reason = 'approval_timeout';
-    else if (/card_declined/.test(msg)) reason = 'card_declined';
+    else if (/paypal_card_declined/.test(msg)) reason = 'paypal_card_declined';
     else if (/paypal_checkout_not_reached/.test(msg)) reason = 'paypal_checkout_not_reached';
     else if (/country/i.test(msg)) reason = 'paypal_country_fail';
-    else if (/page_closed/.test(msg)) reason = 'page_closed';
+    else if (/paypal_page_closed/.test(msg)) reason = 'paypal_page_closed';
     log(`ERROR: reason=${reason} detail=${msg.slice(0, 200)}`);
     console.log(JSON.stringify({ status: 'error', reason, detail: msg.slice(0, 200) }));
   } finally {
