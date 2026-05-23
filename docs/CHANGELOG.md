@@ -1,5 +1,26 @@
 # Changelog
 
+## v2.20.0 — 2026-05-24
+
+### Proxy Blacklist Threshold + Rotation Cursor Persistence
+
+之前的代理黑名单是"一次失败立即拉黑 30 min"，对网络偶发抖动过于敏感；运维也没有 UI 入口移除误拉黑的节点；`refresh()` 每次都把 `rotationIndex` 重置为 0，导致顺序轮换模式下头部节点反复使用、尾部节点长期闲置。
+
+**核心改动：**
+
+- **连续 3 次失败计数**（中间任一次成功立刻清零）：新函数 `recordBadAttempt(tag, channel, reason)` / `recordGoodAttempt(tag, channel)`，旧 `markBad` / `markJpBad` 保留作 alias 向后兼容。
+- **黑名单跨重启持久化**：新表 `proxy_blacklist (tag, channel, expires_at, reason, source)`，新模块 `server/proxy/blacklist.js` 封装 CRUD；首次 `refresh()` 时 hydrate 回内存 Map；TTL 30 min 行为保持。计数器仍在内存。
+- **`refresh()` 不重置游标**：仅在节点列表变短时取模到合法范围，`currentNode` 跟随 `rotationIndex` 而非固定 `filtered[0]`。
+- **4 个新 REST endpoint**：`GET /api/proxy/blacklist` / `POST /add` / `POST /remove` / `POST /clear`。
+- **Config.vue 节点黑名单分节**：主代理 + JP 各一个 `el-table`（节点 / 剩余 TTL / 来源 / 原因 / 移除按钮 + 清空），10s 轮询。
+- **触发点扩充**：除现有 3 个点（TLS / payment unreachable / JP checkout 空 link）外，新增 Stripe verify timeout / 协议模式网络类 catch / 浏览器模式 login 网络类 reason 三个。`isProxyNetError` 共享网络错误关键字识别。
+
+**对外契约变化**：`getState().badNodes` 从 `{tag: expiryMs}` 升级为 `{tag: {expiresAt, reason, source}}`。Config.vue 不再读这个字段（专门走 `/api/proxy/blacklist`），无回归。
+
+**单测**：`server/proxy/__tests__/index.test.js` +12（U1-U10 + 2 个 review 修复用例）、`rotation.test.js` 新建 +5 (R1-R5)、`blacklist.test.js` 新建 +6 (B1-B4 + 边界)、`server/__tests__/proxy-route-blacklist.test.js` 新建 +4。共新增 27 用例，60+ 总测试无回归。
+
+**Spec / Plan**：`docs/superpowers/specs/2026-05-24-proxy-blacklist-and-rotation-cursor-design.md` + `docs/superpowers/plans/2026-05-24-proxy-blacklist-and-rotation-cursor.md`。
+
 ## v2.19.1 — 2026-05-23
 
 ### payment.js rolled back to v2.14.0 baseline
