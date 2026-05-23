@@ -17,8 +17,8 @@ function fetchCheckoutLink(accessToken, opts = {}) {
 
     const input = JSON.stringify({
       access_token: accessToken,
-      country: opts.country || 'JP',
-      currency: opts.currency || 'JPY',
+      country: opts.country || 'US',
+      currency: opts.currency || 'USD',
       promo_id: opts.promoCampaignId || 'plus-1-month-free',
       proxy,
     });
