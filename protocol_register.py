@@ -711,6 +711,12 @@ def main():
                 need_otp = True
             elif "create-account" in page_type or "password" in page_type:
                 need_register = True
+        else:
+            # Fall-through diagnostic: authorize didn't redirect to a known user-facing
+            # page (/log-in, /email-verification, /create-account/password). Usually
+            # risk-control rejection, malformed auth_url, or OAuth flow change.
+            body_preview = page_html[:300].replace("\n", " ").replace("\r", "")
+            _log(f"Authorize: unexpected path={final_path} status={r.status_code} body={body_preview!r}")
 
         # Step 4: Register (new accounts only)
         if need_register:
