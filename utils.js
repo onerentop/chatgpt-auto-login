@@ -44,9 +44,32 @@ function generateTOTP(secret) {
   return authenticator.generate(secret);
 }
 
-function randomDelay(minMs, maxMs) {
+// Sleep that can be cancelled by an AbortSignal. Engine.stop() will pull
+// signal.abort() to short-circuit every sleep in flight; without this every
+// randomDelay / setTimeout in the payment flow keeps running for its full
+// duration even after the browser has been closed.
+function abortableSleep(ms, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      const e = new Error('Aborted');
+      e.name = 'AbortError';
+      return reject(e);
+    }
+    const t = setTimeout(resolve, ms);
+    if (signal) {
+      signal.addEventListener('abort', () => {
+        clearTimeout(t);
+        const e = new Error('Aborted');
+        e.name = 'AbortError';
+        reject(e);
+      }, { once: true });
+    }
+  });
+}
+
+function randomDelay(minMs, maxMs, signal) {
   const delay = Math.floor(Math.random() * (maxMs - minMs + 1)) + minMs;
-  return new Promise((resolve) => setTimeout(resolve, delay));
+  return abortableSleep(delay, signal);
 }
 
 function screenshotPath(email) {
@@ -418,4 +441,4 @@ function saveCPAAuthFile(email, accessToken, session) {
   return cpaPath;
 }
 
-module.exports = { loadAccounts, generateTOTP, randomDelay, screenshotPath, saveCPAAuthFile, fetchTokensViaPKCE };
+module.exports = { loadAccounts, generateTOTP, randomDelay, abortableSleep, screenshotPath, saveCPAAuthFile, fetchTokensViaPKCE };
