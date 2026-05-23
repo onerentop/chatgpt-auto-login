@@ -290,13 +290,21 @@ async function refresh() {
 
   _state.outbounds = filtered;
   _state.nodeTags = filtered.map(o => o.tag);
-  _state.rotationIndex = 0;
-  _state.currentNode = filtered[0]?.tag || '';
+  if (filtered.length === 0) {
+    _state.rotationIndex = 0;
+  } else if (_state.rotationIndex >= filtered.length) {
+    _state.rotationIndex = _state.rotationIndex % filtered.length;
+  }
+  _state.currentNode = filtered[_state.rotationIndex]?.tag || '';
 
   _state.jp.outbounds = jpFiltered;
   _state.jp.nodeTags = jpFiltered.map(o => o.tag);
-  _state.jp.rotationIndex = 0;
-  _state.jp.currentNode = jpFiltered[0]?.tag || '';
+  if (jpFiltered.length === 0) {
+    _state.jp.rotationIndex = 0;
+  } else if (_state.jp.rotationIndex >= jpFiltered.length) {
+    _state.jp.rotationIndex = _state.jp.rotationIndex % jpFiltered.length;
+  }
+  _state.jp.currentNode = jpFiltered[_state.jp.rotationIndex]?.tag || '';
   _state.jp.lastError = '';
 
   const sbConfig = buildSingboxConfig(
@@ -330,6 +338,24 @@ async function refresh() {
   }
 
   _state.lastError = '';
+
+  // Hydrate blacklist from DB on first refresh of this process.
+  // Manual or auto entries added at runtime go through _addToBlacklist directly,
+  // so the size === 0 guard only triggers on cold start.
+  if (_state.badNodes.size === 0 && _state.jp.badNodes.size === 0) {
+    try {
+      blacklist.pruneExpired();
+      for (const row of blacklist.loadAll('main')) {
+        _state.badNodes.set(row.tag, { expiresAt: row.expiresAt, reason: row.reason, source: row.source });
+      }
+      for (const row of blacklist.loadAll('jp')) {
+        _state.jp.badNodes.set(row.tag, { expiresAt: row.expiresAt, reason: row.reason, source: row.source });
+      }
+    } catch (e) {
+      console.log(`[Proxy] hydrate blacklist failed: ${e.message?.slice(0, 60)}`);
+    }
+  }
+
   const mainDesc = _state.enabled ? `:${HTTP_PORT}(${filtered.length})` : 'disabled';
   const jpDesc = _state.jp.enabled ? `:${JP_HTTP_PORT}(${jpFiltered.length})` : 'disabled';
   console.log(`[Proxy] sing-box running: main=${mainDesc} jp=${jpDesc}`);
