@@ -392,7 +392,10 @@ async function handlePayPalLogin(page) {
 
 async function handlePayPalCheckout(page, phoneOverride, smsOverride) {
   console.log('    [Pay] PayPal checkout page detected');
-  await randomDelay(2000, 3000);
+  const r = await waitForPageReady(page, PROFILES.paypalCheckout, { log: (m) => console.log('    ' + m) });
+  if (!r.ready) {
+    console.log(`    [Pay] 警告：paypal-checkout 60s 未就绪 missing=[${r.missing.join(',')}]，仍尝试继续`);
+  }
 
   // Set country to US. PayPal uses different element IDs across A/B tests and
   // locale variants (#country, #countryCode, select[name="country"], etc.). We
