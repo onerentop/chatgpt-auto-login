@@ -24,7 +24,21 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const { execSync } = require('child_process');
 const { chromium } = require('playwright-core');
+
+// Detect primary screen size (Windows). Returns { width, height } or fallback.
+function getPrimaryScreenSize() {
+  try {
+    const out = execSync(
+      'powershell -NoProfile -Command "Add-Type -AssemblyName System.Windows.Forms; $b=[System.Windows.Forms.Screen]::PrimaryScreen.Bounds; Write-Output ($b.Width.ToString()+\'x\'+$b.Height.ToString())"',
+      { encoding: 'utf8', timeout: 3000, windowsHide: true }
+    ).trim();
+    const m = out.match(/(\d+)x(\d+)/);
+    if (m) return { width: parseInt(m[1], 10), height: parseInt(m[2], 10) };
+  } catch {}
+  return { width: 1920, height: 1080 };  // sane fallback
+}
 
 function log(msg) {
   console.error(`[PayPalRPA] ${msg}`);
@@ -503,6 +517,12 @@ async function runPayPalFlow(page, opts) {
     process.exit(0);
   }
 
+  // Window: quarter of primary screen, top-left corner.
+  const screen = getPrimaryScreenSize();
+  const winW = Math.floor(screen.width / 2);
+  const winH = Math.floor(screen.height / 2);
+  log(`screen=${screen.width}x${screen.height}, window=${winW}x${winH}@0,0`);
+
   let browser;
   let context;
   try {
@@ -511,10 +531,15 @@ async function runPayPalFlow(page, opts) {
     browser = await chromium.launch({
       headless: false,  // critical: PayPal fraud detection penalizes headless
       proxy: input.proxy ? { server: input.proxy } : undefined,
-      args: ['--incognito', '--disable-blink-features=AutomationControlled'],
+      args: [
+        '--incognito',
+        '--disable-blink-features=AutomationControlled',
+        `--window-size=${winW},${winH}`,
+        '--window-position=0,0',
+      ],
     });
     context = await browser.newContext({
-      viewport: { width: 1280, height: 800 },
+      viewport: { width: winW, height: winH - 80 },  // leave room for browser chrome
     });
     const page = await context.newPage();
 
