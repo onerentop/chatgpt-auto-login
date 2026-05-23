@@ -1,5 +1,42 @@
 # Changelog
 
+## v2.19.0 — 2026-05-23
+
+### Reliable JP-First Checkout
+
+实测推翻了 v2.18.2 阶段的"节点 IP 无关"误判（当时独立测试脚本里 proxyMgr 未初始化导致请求走直连，掩盖了 JP IP 的关键作用）。强制 JP 节点后实测，hprfvxml12008 / ovjvant465198 / osxti6295 等账号能稳定拿到 $0；同时确认 bot 的 Eligibility Check 真实有效——gexi4056685 / qnke4812473 等被 bot 标"无资格"的账号即使强制 JP 仍只拿 $20。
+
+**核心改动**：
+
+- **强制 JP**：`server/chatgpt-checkout.js` 移除 `jpUrl || mainUrl` 静默回退。JP 节点池不可用时立即 resolve `{noJpProxy:true}`，不启动 Python 子进程。
+- **Stripe init 验证**：新增 `server/stripe-verify.js` + `stripe_init.py`，从 cs_live URL 提取 cs_id，经 main proxy (7890 US) 调 Stripe `/v1/payment_pages/{cs}/init`，解析 `invoice.amount_due` 判断是否真 $0。
+- **Phase 2.5 分支**：`server/engine.js` 在 Phase 2 (checkout) 与 Phase 3 (payment.js) 之间插入验证阶段，按结果分流 3 个新状态。
+- **`pk` 字段链路**：`checkout_link.py` 把 OpenAI 响应里的 `publishable_key` 作为 `pk` 输出；`fetchCheckoutLink` 在 result shape 中携带 `pk`；engine.js 将 `discord.pk` 传给 `verifyCheckoutIsFree(link, pk)`。Discord linkSource 路径 (`paymentLinkSource: 'discord'`) 跳过 Phase 2.5 验证（信任 bot 的资格判定）。
+- **spawn error handling**：`chatgpt-checkout.js` 和 `stripe-verify.js` 都加了 `py.on('error', ...)` 处理 Python 二进制缺失/权限拒绝等本地故障，避免挂到 timeout。
+
+**新增 status 状态**：
+
+| status | 触发 | 文案 | 可重试 |
+|---|---|---|---|
+| `no_jp_proxy` | JP 节点池不可用 | JP 节点不可用 | ✅ JP 恢复后 |
+| `no_promo` | invoice.amount_due > 0 | 无 0 元资格 | ❌ 账号资格问题 |
+| `verify_error` | Stripe init 调用失败 | Stripe 验证失败 | ✅ Stripe 恢复后 |
+
+**单测**：`server/__tests__/stripe-verify.test.js` (9 cases) + `server/__tests__/chatgpt-checkout.test.js` (2 cases) 覆盖 pure helpers 与早返回；既有 proxy 测试 (20 cases) 无回归。
+
+**Web Dashboard**：`web/src/status.js` 加 3 个 type/label 映射；`web/src/views/Dashboard.vue` 加 3 个 KPI 卡片；`web/src/views/Accounts.vue` / `Execute.vue` / `Results.vue` 的状态筛选下拉各加 3 个 option。
+
+**对照 v2.18**：
+- v2.18.0: JP-KDDI 双入口
+- v2.18.1: jpCheckout 白名单
+- v2.18.2: `country=US, currency=USD` 1 行改动（解锁 PayPal + USD 计价）
+- **v2.19.0**: fail-fast 与 $0 验证（本次）
+
+**E2E 验证清单**（待运维实际跑，非合并阻塞）：
+- [ ] hprfvxml12008 → 应当 status=plus（Phase 2.5 ✓ 通过，Phase 3 完整跑通）
+- [ ] gexi4056685 → 应当 status=no_promo（Phase 2.5 拦截 $20 link）
+- [ ] 临时 disable jpCheckout → 应当 status=no_jp_proxy（不启动 Python）
+
 ## v2.18.1 — 2026-05-23
 
 ### Added
