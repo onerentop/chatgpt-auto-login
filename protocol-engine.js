@@ -9,6 +9,7 @@ const os = require('os');
 
 const { autoPayment } = require('./payment');
 const { randomDelay, saveCPAAuthFile } = require('./utils');
+const { statusDB } = require('./server/db');
 const { connectGateway, getPaymentLink } = require('./server/discord-gateway');
 const { fetchCheckoutLink } = require('./server/chatgpt-checkout');
 const { verifyCheckoutIsFree } = require('./server/stripe-verify');
@@ -283,6 +284,7 @@ class ProtocolEngine extends EventEmitter {
         // Check if already Plus
         const isPlusOrAbove = ['plus', 'pro', 'team', 'enterprise'].includes((result.planType || 'free').toLowerCase());
         if (isPlusOrAbove) {
+          statusDB.clearPaymentLink(account.email);
           console.log(`[${progress}] Already Plus`);
           if (runtimeCfg.enableOAuth) {
             console.log(`[${progress}] Running PKCE via protocol...`);
@@ -309,43 +311,71 @@ class ProtocolEngine extends EventEmitter {
           console.log(`[${progress}] Gateway reconnected`);
         }
 
-        let linkFetchOk = false;
-        let fetchResult = null;
-        for (let dRetry = 0; dRetry < 3; dRetry++) {
-          try {
-            if (dRetry > 0) console.log(`[${progress}] Link fetch retry ${dRetry + 1}/3...`);
-            if (linkSource === 'discord') {
-              fetchResult = await getPaymentLink(this._gw, result.accessToken);
-            } else {
-              fetchResult = await fetchCheckoutLink(result.accessToken);
+        // Cache check: if this account failed in Phase 3+ on a previous run,
+        // it may have a usable Stripe link still in the DB. Reuse it to skip
+        // Phase 2 (fetch) + Phase 2.5 (verify). Phase 3's NOT_FREE_TRIAL
+        // detector handles stale links by throwing → status='no_link', which
+        // won't be in REUSE_STATUSES on the next retry → forced full refetch.
+        const REUSE_STATUSES = new Set(['error', 'aborted', 'paypal_captcha', 'verify_error']);
+        const cached = statusDB.get(account.email);
+        let usedCachedLink = false;
+        if (cached && cached.payment_link && REUSE_STATUSES.has(cached.status)) {
+          link = cached.payment_link;
+          fetchResult = { link, pk: cached.payment_link_pk || '', title: 'cached', raw: '' };
+          usedCachedLink = true;
+          console.log(`[${progress}] Phase 2: reusing cached payment link (was ${cached.status} at ${cached.payment_link_at})`);
+        }
+
+        let linkFetchOk = usedCachedLink;
+        if (!fetchResult) fetchResult = null;
+        if (!usedCachedLink) {
+          for (let dRetry = 0; dRetry < 3; dRetry++) {
+            try {
+              if (dRetry > 0) console.log(`[${progress}] Link fetch retry ${dRetry + 1}/3...`);
+              if (linkSource === 'discord') {
+                fetchResult = await getPaymentLink(this._gw, result.accessToken);
+              } else {
+                fetchResult = await fetchCheckoutLink(result.accessToken);
+              }
+              link = fetchResult.link;
+              if (link) console.log(`[${progress}] ${fetchResult.title || 'Link obtained'}`);
+              console.log(`[${progress}] Link: ${link || 'none'}`);
+              if (fetchResult.noJpProxy) {
+                console.log(`[${progress}] No JP proxy — skipping account`);
+                this.emitStatus({ email: account.email, status: 'no_jp_proxy', phase: 'done', progress, reason: 'JP checkout channel unavailable' });
+                summary.noJpProxy++;
+              } else if (!link) {
+                console.log(`[${progress}] ${(fetchResult.raw || 'No link').slice(0, 80)}`);
+                this.emitStatus({ email: account.email, status: 'no_link', phase: 'done', progress, reason: fetchResult.raw });
+                summary.noLink++;
+              }
+              linkFetchOk = true;
+              break;
+            } catch (e) {
+              console.log(`[${progress}] Link fetch error: ${e.message?.slice(0, 60)}`);
+              if (dRetry < 2 && (e.message?.includes('Timeout') || e.message?.includes('fetch'))) {
+                await new Promise(r2 => setTimeout(r2, 2000));
+                continue;
+              }
+              this.emitStatus({ email: account.email, status: 'error', phase: phaseTag, progress, reason: e.message });
+              summary.error++;
+              linkFetchOk = true;
+              break;
             }
-            link = fetchResult.link;
-            if (link) console.log(`[${progress}] ${fetchResult.title || 'Link obtained'}`);
-            console.log(`[${progress}] Link: ${link || 'none'}`);
-            if (fetchResult.noJpProxy) {
-              console.log(`[${progress}] No JP proxy — skipping account`);
-              this.emitStatus({ email: account.email, status: 'no_jp_proxy', phase: 'done', progress, reason: 'JP checkout channel unavailable' });
-              summary.noJpProxy++;
-            } else if (!link) {
-              console.log(`[${progress}] ${(fetchResult.raw || 'No link').slice(0, 80)}`);
-              this.emitStatus({ email: account.email, status: 'no_link', phase: 'done', progress, reason: fetchResult.raw });
-              summary.noLink++;
-            }
-            linkFetchOk = true;
-            break;
-          } catch (e) {
-            console.log(`[${progress}] Link fetch error: ${e.message?.slice(0, 60)}`);
-            if (dRetry < 2 && (e.message?.includes('Timeout') || e.message?.includes('fetch'))) {
-              await new Promise(r2 => setTimeout(r2, 2000));
-              continue;
-            }
-            this.emitStatus({ email: account.email, status: 'error', phase: phaseTag, progress, reason: e.message });
-            summary.error++;
-            linkFetchOk = true;
-            break;
           }
         }
         if (!link) continue;
+
+        // Persist link to DB immediately so verify_error / Phase 3 retries
+        // can skip Phase 2 next time. This is intentionally BEFORE verify —
+        // if verify fails, the link is still cached for the next retry to
+        // try (verify_error is one of REUSE_STATUSES).
+        if (link && !usedCachedLink) {
+          statusDB.set(account.email, {
+            status: 'running', phase: 'verify', progress,
+            paymentLink: link, paymentLinkPk: fetchResult.pk || '',
+          });
+        }
 
         // Phase 2.5: Stripe init 验证 (API path only; Discord skips — bot is authority)
         if (linkSource !== 'discord') {
@@ -434,6 +464,7 @@ class ProtocolEngine extends EventEmitter {
           }
 
           if (paymentResult.success) {
+            statusDB.clearPaymentLink(account.email);
             if (runtimeCfg.enableOAuth) {
               console.log(`[${progress}] Running PKCE via protocol...`);
               await this._finalizePkce(account, result, progress);
