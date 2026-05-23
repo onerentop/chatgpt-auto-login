@@ -383,12 +383,14 @@ class PipelineEngine extends EventEmitter {
                 console.log(`${p} Phase 3: Auto-filling payment...`);
                 let paymentOk = false;
                 let paymentReason = '';
+                let paymentStatus = '';
                 try {
                   const freshCfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf-8'));
                   const phoneSlot = freshCfg.phoneSlots?.[0] || { phone: freshCfg.phone, smsApiUrl: freshCfg.smsApiUrl };
                   const payResult = await autoPayment(page, { phone: phoneSlot.phone, smsApiUrl: phoneSlot.smsApiUrl }) || {};
                   paymentOk = !!payResult.success;
                   paymentReason = payResult.reason || '';
+                  paymentStatus = payResult.status || '';
                 } catch (e) {
                   if (e.code === 'NOT_FREE_TRIAL') {
                     console.log(`${p} ${e.message}`);
@@ -407,7 +409,7 @@ class PipelineEngine extends EventEmitter {
                   finalResult.status = 'plus_no_rt';
                   console.log(`${p} Payment succeeded (redirect_status=succeeded)`);
                 } else {
-                  finalResult.status = 'error';
+                  finalResult.status = paymentStatus || 'error';
                   finalResult.reason = paymentReason || 'Payment not completed';
                   console.log(`${p} Payment failed: ${finalResult.reason}, skipping auth file generation`);
                 }
