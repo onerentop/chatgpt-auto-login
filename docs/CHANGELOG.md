@@ -1,5 +1,41 @@
 # Changelog
 
+## v3.0.0 — 2026-05-23
+
+### Protocol Expansion: 99% HTTP + isolated PayPal RPA
+
+参考 `Gpt-Agreement-Payment` 的协议重放范式，把 Stripe billing / manual approval / PKCE OAuth 三个原本走 Playwright 的环节协议化为 HTTP（curl_cffi），同时把 PayPal sub-flow 抽到独立 Node 子进程 (`paypal_rpa.js`) 用 `playwright-core` headed Chromium 跑。
+
+**核心改动**（仅作用于 `protocolMode: true` 路径，PipelineEngine 完全不动）：
+
+- **Phase 3a HTTP Stripe billing**：`stripe_billing.py` + `server/stripe-billing.js` 调用 Stripe 3-POST 链（`/init` → `/v1/payment_methods` → `/confirm`），提取 `next_action.redirect_to_url` 拿 PayPal URL。**消除 Chrome 在 OpenAI Stripe 页 5-10s 启动+填表开销**。
+- **Phase 3b PayPal RPA 隔离**：`paypal_rpa.js` 独立 Node 子进程，自管 headed Chromium 生命周期（`playwright-core` + `launchPersistentContext`）。Server 主进程零 Chrome 接触；子进程崩溃不影响 server。Ported from payment.js v2.14 baseline (sequential field fills).
+- **Phase 3c HTTP manual approval**：`manual_approval.py` + `server/manual-approval.js` GET PayPal 回调 URL + Poll `/backend-api/accounts/check/v4-2023-04-27`，节省 Chrome 等 ChatGPT 激活的 5-15s。
+- **Phase 4 HTTP PKCE OAuth**：`pkce_oauth.py` + `server/pkce-oauth.js` 标准 PKCE code-flow，全 HTTP。⚠ 已知限制：OpenAI Ory Hydra 需要 cookies，Bearer 不够；脚本返回 `pkce_redirect_not_callback` 时 engine 自动降级到 `plus_no_rt`。
+
+**新增 status**：
+
+| status | type | label | retryable |
+|---|---|---|---|
+| `stripe_billing_error` | danger | Stripe 计费失败 | ✅ |
+| `activation_error` | danger | 订阅激活超时 | ✅ |
+
+**单测**：4 个新 JS spawner 模块各 5-6 cases（共 22 新增）；既有 v2.19 测试 31 个无回归。总 53/53 通过。
+
+**对照 v2.x**：
+- v2.18.x: JP-KDDI 双入口 + country=US/USD
+- v2.19.0/.1: Stripe init verify + payment.js v2.14 rollback
+- **v3.0.0**: HTTP-first，主进程零 Chrome（仅 paypal_rpa 子进程）
+
+**架构灵感**：`E:\workspace\projects\Gpt-Agreement-Payment`（9551 行 monolith + PayPal RPA 隔离范本）。
+
+**E2E 验证清单**（待运维实际跑）：
+- [ ] `osxti6295` → `protocolMode=true` → 预期 `plus` 或 `plus_no_rt`（完整链路成功）
+- [ ] `gexi4056685` → 预期 `no_promo`（Phase 2.5 仍正确拦截，未受 v3 影响）
+- [ ] `protocolMode=false` → PipelineEngine 跑 osxti → 行为等同 v2.19.1（验证 engine.js 未被影响）
+- [ ] 故障注入 Stripe 不可达 → `stripe_billing_error`
+- [ ] **首次跑前**需 `npx playwright install chromium` 确保 playwright-core 的 Chromium 版本就位
+
 ## v2.19.1 — 2026-05-23
 
 ### payment.js rolled back to v2.14.0 baseline
