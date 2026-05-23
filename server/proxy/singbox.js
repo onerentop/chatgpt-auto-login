@@ -44,9 +44,42 @@ function download(url, dest) {
   });
 }
 
+async function getBinaryVersion(binPath) {
+  // Spawn `<binary> version` and parse "sing-box version X.Y.Z" from stdout.
+  // Returns the version string on success, null on any failure (binary missing,
+  // crashes, malformed output, or 5s timeout). Used by ensureBinary to detect
+  // a stale local binary so we re-download instead of running e.g. 1.10.7
+  // against a 1.13-schema config.
+  return new Promise((resolve) => {
+    let proc;
+    try {
+      proc = spawn(binPath, ['version'], { stdio: ['ignore', 'pipe', 'pipe'] });
+    } catch {
+      // Windows throws synchronously when the path isn't a runnable exe
+      // (corrupt/truncated file, text instead of binary, etc.) — async
+      // 'error' listeners never fire in that case.
+      return resolve(null);
+    }
+    let out = '';
+    proc.stdout.on('data', (d) => { out += d.toString(); });
+    proc.stderr.on('data', () => {});
+    proc.once('error', () => resolve(null));
+    proc.once('exit', () => {
+      const m = out.match(/sing-box version (\d+\.\d+\.\d+)/);
+      resolve(m ? m[1] : null);
+    });
+    setTimeout(() => { try { proc.kill(); } catch {} resolve(null); }, 5000);
+  });
+}
+
 async function ensureBinary() {
   const binPath = getBinaryPath();
-  if (fs.existsSync(binPath)) return binPath;
+  if (fs.existsSync(binPath)) {
+    const current = await getBinaryVersion(binPath);
+    if (current === SINGBOX_VERSION) return binPath;
+    console.log(`[sing-box] Local binary version=${current || 'unreadable'}, expected ${SINGBOX_VERSION} — removing and re-downloading`);
+    try { fs.unlinkSync(binPath); } catch {}
+  }
 
   fs.mkdirSync(BIN_DIR, { recursive: true });
   const asset = getAssetName();
