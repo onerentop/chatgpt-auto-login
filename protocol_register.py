@@ -869,7 +869,7 @@ def main():
                     "ext-passkey-client-capabilities": "conditional-create,conditional-get"}
                 if sentinel:
                     headers_ca["openai-sentinel-token"] = sentinel
-                r = session.post(f"{AUTH}/api/accounts/create_account",
+                r = _post_with_h1_fallback(session, f"{AUTH}/api/accounts/create_account",
                     json={"name": name, "birthdate": bdate}, headers=headers_ca, timeout=30)
                 _log(f"create_account: {r.status_code} {r.text[:120]}")
                 if r.status_code == 200:
