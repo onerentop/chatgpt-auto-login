@@ -375,14 +375,14 @@ async function handleOpenAIPage(page) {
   console.log('    [Pay] OpenAI page submitted');
 }
 
-async function handlePayPalLogin(page) {
+async function handlePayPalLogin(page, emailOverride) {
   console.log('    [Pay] PayPal login page detected');
   const r = await waitForPageReady(page, PROFILES.paypalLogin, { log: (m) => console.log('    ' + m) });
   if (!r.ready) {
     console.log(`    [Pay] 警告：paypal-login 60s 未就绪 missing=[${r.missing.join(',')}]，仍尝试继续`);
   }
 
-  const email = randEmail();
+  const email = emailOverride || randEmail();
   console.log('    [Pay] Email:', email);
   await fillInput(page, '#email', email);
   await randomDelay(800, 1200);
@@ -390,7 +390,7 @@ async function handlePayPalLogin(page) {
   console.log('    [Pay] PayPal login submitted');
 }
 
-async function handlePayPalCheckout(page, phoneOverride, smsOverride) {
+async function handlePayPalCheckout(page, phoneOverride, smsOverride, emailOverride) {
   console.log('    [Pay] PayPal checkout page detected');
   const r = await waitForPageReady(page, PROFILES.paypalCheckout, { log: (m) => console.log('    ' + m) });
   if (!r.ready) {
@@ -480,7 +480,7 @@ async function handlePayPalCheckout(page, phoneOverride, smsOverride) {
   }
 
   const addr = await fetchAddress();
-  const email = randEmail();
+  const email = emailOverride || randEmail();
   const password = randPass();
   console.log('    [Pay] Email:', email);
   console.log('    [Pay] Address:', JSON.stringify(addr));
@@ -633,9 +633,12 @@ async function waitForCaptchaResolution(page, timeoutMs) {
 }
 
 async function autoPayment(page, phoneConfig) {
-  // phoneConfig: { phone, smsApiUrl } — thread-local override
+  // phoneConfig: { phone, smsApiUrl, email } — thread-local override. `email` is
+  // the GPT-account email; when set, used to fill PayPal login/checkout email
+  // fields so the PayPal account ties to the GPT account being subscribed.
   const PHONE = phoneConfig?.phone || CONFIG.phone;
   const SMS_API = phoneConfig?.smsApiUrl || CONFIG.smsApiUrl;
+  const EMAIL = phoneConfig?.email || '';
   console.log('    [Pay] Starting auto-payment flow...');
 
   // Inject CSS to hide CAPTCHA
@@ -658,9 +661,9 @@ async function autoPayment(page, phoneConfig) {
     try { currentUrl = page.url(); } catch (e) { console.log(`    [Pay] Page closed/crashed: ${e.message?.slice(0, 40)}`); break; }
 
     if (currentUrl.includes('paypal.com/pay')) {
-      await handlePayPalLogin(page);
+      await handlePayPalLogin(page, EMAIL);
     } else if (currentUrl.includes('paypal.com') && (currentUrl.includes('checkoutweb') || currentUrl.includes('signup'))) {
-      await handlePayPalCheckout(page, PHONE, SMS_API);
+      await handlePayPalCheckout(page, PHONE, SMS_API, EMAIL);
       paypalHandled = true;
       break;
     } else if (/paypal\.com\/agreements\/approve/i.test(currentUrl)) {

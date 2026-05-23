@@ -387,7 +387,7 @@ class PipelineEngine extends EventEmitter {
                 try {
                   const freshCfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf-8'));
                   const phoneSlot = freshCfg.phoneSlots?.[0] || { phone: freshCfg.phone, smsApiUrl: freshCfg.smsApiUrl };
-                  const payResult = await autoPayment(page, { phone: phoneSlot.phone, smsApiUrl: phoneSlot.smsApiUrl }) || {};
+                  const payResult = await autoPayment(page, { phone: phoneSlot.phone, smsApiUrl: phoneSlot.smsApiUrl, email: account.email }) || {};
                   paymentOk = !!payResult.success;
                   paymentReason = payResult.reason || '';
                   paymentStatus = payResult.status || '';

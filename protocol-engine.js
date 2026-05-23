@@ -399,7 +399,7 @@ class ProtocolEngine extends EventEmitter {
           let paymentResult = { success: false };
           try {
             const slot = runtimeCfg.phoneSlots?.[0] || { phone: runtimeCfg.phone, smsApiUrl: runtimeCfg.smsApiUrl };
-            paymentResult = await autoPayment(page, { phone: slot.phone, smsApiUrl: slot.smsApiUrl }) || { success: false };
+            paymentResult = await autoPayment(page, { phone: slot.phone, smsApiUrl: slot.smsApiUrl, email: account.email }) || { success: false };
           } catch (e) {
             if (e.code === 'NOT_FREE_TRIAL') {
               // Link is not a $0 trial — treat as no_link (same outcome as Discord
