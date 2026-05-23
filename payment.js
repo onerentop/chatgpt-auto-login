@@ -85,12 +85,6 @@ async function fetchAddress() {
   return { street: '123 Main St', city: 'New York', state: 'New York', zip: '10001' };
 }
 
-async function getAddress(page) {
-  if (page._cachedAddress) return page._cachedAddress;
-  page._cachedAddress = await fetchAddress();
-  return page._cachedAddress;
-}
-
 async function fillInput(page, selector, value) {
   try {
     const el = page.locator(selector).first();
@@ -171,10 +165,7 @@ async function handleOpenAIPage(page) {
   // Strategy: (1) look for a localized "Total due today" label and parse the amount
   // after it; (2) fallback — if no label matched but there ARE USD amounts on the
   // page AND none of them is $0, then there's no "free" anywhere → treat as paid.
-  // Event-driven wait: resolve as soon as a "due today" label or any $ amount renders.
-  // Falls through after 5s if no recognizable label is found (the scan logic itself handles that case).
-  await page.locator('text=/Total due|应付总额|應付總額|Today.s total/i').first()
-    .waitFor({ timeout: 5000 }).catch(() => {});
+  await randomDelay(1500, 2500);  // let Stripe render the prices
   const scan = await page.evaluate(() => {
     const raw = document.body.innerText || '';
     // Normalize: NBSP → space, collapse whitespace
@@ -240,9 +231,8 @@ async function handleOpenAIPage(page) {
   console.log('    [Pay] PayPal clicked:', ppClicked || 'FAILED');
   // Wait for accordion to expand (no double click — it would collapse it)
 
-  // Verify billing form appears — event-driven instead of fixed delay.
-  // The polling loop below remains as a secondary check (handles slow renders).
-  await page.locator('#billingAddressLine1').waitFor({ timeout: 8000 }).catch(() => {});
+  // Verify billing form appears
+  await randomDelay(2000, 3000);
   let formFound = false;
   for (let w = 0; w < 10; w++) {
     const hasForm = await page.locator('#billingAddressLine1').isVisible({ timeout: 1000 }).catch(() => false);
@@ -258,7 +248,7 @@ async function handleOpenAIPage(page) {
     await randomDelay(2000, 3000);
   }
 
-  const addr = await getAddress(page);
+  const addr = await fetchAddress();
   console.log('    [Pay] Address:', JSON.stringify(addr));
 
   // Wait for billing address form to appear after PayPal selection
@@ -377,9 +367,7 @@ async function handlePayPalLogin(page) {
 
 async function handlePayPalCheckout(page, phoneOverride, smsOverride) {
   console.log('    [Pay] PayPal checkout page detected');
-  // Event-driven: continue as soon as either the country select or the email input renders.
-  await page.locator('#country, #countryCode, #email').first()
-    .waitFor({ timeout: 8000 }).catch(() => {});
+  await randomDelay(2000, 3000);
 
   // Set country to US. PayPal uses different element IDs across A/B tests and
   // locale variants (#country, #countryCode, select[name="country"], etc.). We
@@ -455,7 +443,7 @@ async function handlePayPalCheckout(page, phoneOverride, smsOverride) {
     throw new Error(`Country reverted to "${finalCountry}" before fill`);
   }
 
-  const addr = await getAddress(page);
+  const addr = await fetchAddress();
   const email = randEmail();
   const password = randPass();
   console.log('    [Pay] Email:', email);
@@ -496,23 +484,24 @@ async function handlePayPalCheckout(page, phoneOverride, smsOverride) {
     if (!ppSubmitted) console.log('    [Pay] Submit button not found/clickable');
     console.log('    [Pay] PayPal checkout submitted');
 
-    // Race three possible outcomes — return as soon as ANY is detected.
-    // 'declined'  → retry with a fresh card on the next loop iteration.
-    // 'sms'       → break out; handleSmsVerification (called after the loop) will handle it.
-    // 'redirect'  → success or near-success URL change; break out.
-    // null        → all three signals timed out; break out and let downstream code decide.
-    const outcome = await Promise.race([
-      page.locator('text=/unable to add this card|weren.?t able to add this card|card was declined|card has been declined|try a different card|could not process|transaction cannot be completed/i')
-        .first().waitFor({ timeout: 8000 }).then(() => 'declined').catch(() => null),
-      page.locator('text=/Enter your code|输入验证码|输入你的验证码/i')
-        .first().waitFor({ timeout: 8000 }).then(() => 'sms').catch(() => null),
-      page.waitForURL(/pay\.openai\.com|chatgpt\.com/, { timeout: 8000 })
-        .then(() => 'redirect').catch(() => null),
-    ]);
+    // Wait for error banner or page transition
+    await randomDelay(3000, 5000);
+    const declined = await page.evaluate(() => {
+      const text = (document.body.innerText || '').toLowerCase();
+      const patterns = [
+        "weren't able to add this card",
+        'unable to add this card',
+        'card was declined',
+        'card has been declined',
+        'try a different card',
+        'could not process',
+        'transaction cannot be completed',
+      ];
+      return patterns.some(p => text.includes(p));
+    }).catch(() => false);
 
-    if (outcome !== 'declined') {
-      if (outcome === null) console.log('    [Pay] No outcome detected within 8s, proceeding');
-      else console.log(`    [Pay] Post-submit outcome: ${outcome}`);
+    if (!declined) {
+      console.log('    [Pay] No card decline detected, proceeding');
       break;
     }
     console.log(`    [Pay] Card declined (attempt ${cardAttempt + 1}/3)`);
@@ -609,74 +598,54 @@ async function autoPayment(page, phoneConfig) {
     await handleOpenAIPage(page);
   }
 
-  // Wait for redirect to any PayPal flow (login or checkout). Event-driven —
-  // resolves on the navigation event rather than polling. 30s budget matches
-  // the previous worst-case (15 rounds × 2s) but exits immediately on arrival.
+  // Wait and handle PayPal pages as they come
+  // After OpenAI submit, PayPal redirect can take 5-15 seconds
   let paypalHandled = false;
-  try {
-    await page.waitForURL(
-      (url) => /paypal\.com\/(?:pay|checkoutweb|signup)/.test(String(url)),
-      { timeout: 30000 }
-    );
-  } catch {
-    console.log('    [Pay] PayPal redirect not detected in 30s');
-    return { success: false, reason: 'PayPal not reached' };
-  }
+  for (let round = 0; round < 15; round++) {
+    await randomDelay(2000, 3000);
+    let currentUrl;
+    try { currentUrl = page.url(); } catch (e) { console.log(`    [Pay] Page closed/crashed: ${e.message?.slice(0, 40)}`); break; }
 
-  let currentUrl;
-  try { currentUrl = page.url(); } catch (e) {
-    console.log(`    [Pay] Page closed/crashed: ${e.message?.slice(0, 40)}`);
-    return { success: false, reason: 'Page closed before PayPal handler' };
-  }
-
-  if (currentUrl.includes('paypal.com/pay')) {
-    await handlePayPalLogin(page);
-    // After login submit, the next page is the checkout/signup form.
-    try {
-      await page.waitForURL(
-        (url) => /paypal\.com\/(?:checkoutweb|signup)/.test(String(url)),
-        { timeout: 15000 }
-      );
-      currentUrl = page.url();
-    } catch {
-      console.log('    [Pay] PayPal login did not advance to checkout in 15s');
+    if (currentUrl.includes('paypal.com/pay')) {
+      await handlePayPalLogin(page);
+    } else if (currentUrl.includes('paypal.com') && (currentUrl.includes('checkoutweb') || currentUrl.includes('signup'))) {
+      await handlePayPalCheckout(page, PHONE, SMS_API);
+      paypalHandled = true;
+      break;
+    } else if (currentUrl.includes('pay.openai.com') || currentUrl.includes('checkout.stripe.com')) {
+      // Still on OpenAI/Stripe, waiting for redirect
+      if (round % 3 === 2) console.log('    [Pay] Waiting for PayPal redirect...');
+      continue;
+    } else {
+      // Unknown URL — might be mid-redirect, keep waiting
+      if (round % 3 === 2) console.log('    [Pay] Page: ' + currentUrl.slice(0, 60) + '...');
+      continue;
     }
   }
-
-  if (/paypal\.com\/(?:checkoutweb|signup)/.test(currentUrl)) {
-    await handlePayPalCheckout(page, PHONE, SMS_API);
-    paypalHandled = true;
-  }
-
   if (!paypalHandled) {
     console.log('    [Pay] PayPal flow not detected, continuing...');
     console.log('    [Pay] Auto-payment flow completed');
     return { success: false, reason: 'PayPal not reached' };
   }
 
-  // Wait for PayPal to finish processing and redirect back. Resolves on whichever
-  // navigation event arrives first — pay.openai.com with succeeded status, or
-  // chatgpt.com (some success paths skip the explicit success URL).
+  // Wait for PayPal to finish processing and redirect back to pay.openai.com
   console.log('    [Pay] Waiting for payment redirect...');
   let paymentSuccess = false;
-  try {
-    await page.waitForURL(
-      (url) => {
-        const s = String(url);
-        return (s.includes('pay.openai.com') && s.includes('redirect_status=succeeded'))
-            || s.includes('chatgpt.com');
-      },
-      { timeout: 30000 }
-    );
-    const finalUrl = page.url();
-    if (finalUrl.includes('redirect_status=succeeded')) {
+  for (let w = 0; w < 15; w++) {
+    await new Promise(r => setTimeout(r, 2000));
+    let currentUrl;
+    try { currentUrl = page.url(); } catch { break; }
+    if (currentUrl.includes('pay.openai.com') && currentUrl.includes('redirect_status=succeeded')) {
       console.log('    [Pay] Payment succeeded! (redirect_status=succeeded)');
-    } else {
-      console.log('    [Pay] Redirected to chatgpt.com — payment likely succeeded');
+      paymentSuccess = true;
+      break;
     }
-    paymentSuccess = true;
-  } catch {
-    console.log('    [Pay] Payment redirect not detected in 30s');
+    if (currentUrl.includes('chatgpt.com')) {
+      console.log('    [Pay] Redirected to chatgpt.com — payment likely succeeded');
+      paymentSuccess = true;
+      break;
+    }
+    if (w % 3 === 2) console.log(`    [Pay] Waiting... (${currentUrl.slice(0, 50)})`);
   }
 
   console.log('    [Pay] Auto-payment flow completed');
