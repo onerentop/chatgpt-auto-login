@@ -543,10 +543,11 @@ class PipelineEngine extends EventEmitter {
         noJpProxy: allResults.filter((r) => r.status === 'no_jp_proxy').length,
         noPromo: allResults.filter((r) => r.status === 'no_promo').length,
         verifyError: allResults.filter((r) => r.status === 'verify_error').length,
+        aborted: allResults.filter((r) => r.status === 'aborted').length,
       };
 
       console.log('========================================');
-      console.log(`  Success: ${summary.success}  |  No Link: ${summary.noLink}  |  Error: ${summary.error}`);
+      console.log(`  Success: ${summary.success}  |  No Link: ${summary.noLink}  |  Error: ${summary.error}  |  Aborted: ${summary.aborted}`);
       console.log(`  No-JP: ${summary.noJpProxy}  |  No-Promo: ${summary.noPromo}  |  Verify-Err: ${summary.verifyError}`);
       console.log('========================================');
 
