@@ -1,5 +1,26 @@
 # Changelog
 
+## v2.21.0 — 2026-05-24
+
+### Main Proxy Node Whitelist
+
+主代理通道之前只有 `regionFilter` 关键字筛选（默认 `'US'`，走大型正则）。用户想精确指定几个节点只能祈祷它们 tag 共享同一关键字。复刻 JP-Checkout 通道（v2.18.1）的成熟白名单模式，主通道获得对称能力。
+
+**核心改动：**
+
+- **新字段** `cfg.proxy.whitelist: string[]` —— 精确 tag 列表。
+- **新决策函数** `pickMainNodes(all, mainCfg)` —— 与 `pickJpNodes` 同构：whitelist 非空时精确匹配（`filterByWhitelist`），空时回退 `regionFilter` 关键字（`filterByRegion`），**双空** 时（regionFilter 为空字符串/未设）返回全部节点。
+- **`refresh()` 集成** —— 主通道筛选块改用 `pickMainNodes`，按 `usedWhitelist` 分流日志格式；全不命中订阅时 throw 不静默退化（与 JP 同）。
+- **`regionFilter` 默认 `'US'` 仅当字段缺失**：显式空字符串现在被识别为"不过滤"，统一规则用 `??` 替原 `||`。
+- **`GET /api/proxy/nodes` 加 `usTags`** —— UI 主白名单下拉据此高亮匹配 regionFilter 的节点。
+- **Config.vue 节点白名单分节** —— `el-select multiple filterable` + US 节点绿色加粗 + 'US' 标签；区域过滤输入框在白名单非空时灰显 + "已被白名单覆盖" 提示；代理状态卡加 whitelist 计数 + misses 黄色行。
+
+**对外契约扩展（无破坏）**：`getState()` 返回多两个字段 `whitelist` / `whitelistMisses`（与 `_state.jp.whitelist` 同语义）。Config.vue 是唯一消费者，新增渲染逻辑兼容旧响应（undefined 时不渲染）。
+
+**单测**：`server/proxy/__tests__/index.test.js` +7（W1-W7：5 个仿 pickJpNodes 同号 + W6 双空边界 + W7 字段缺失边界）。proxy 套件总 45→52 用例，无回归。
+
+**Spec / Plan**：`docs/superpowers/specs/2026-05-24-main-proxy-whitelist-design.md` + `docs/superpowers/plans/2026-05-24-main-proxy-whitelist.md`。
+
 ## v2.20.0 — 2026-05-24
 
 ### Proxy Blacklist Threshold + Rotation Cursor Persistence
