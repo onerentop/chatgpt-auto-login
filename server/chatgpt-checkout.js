@@ -41,7 +41,7 @@ function fetchCheckoutLink(accessToken, opts = {}) {
       settled = true;
       py.kill();
       if (currentJpNode) {
-        try { proxyMgr.markJpBad(currentJpNode); } catch {}
+        try { proxyMgr.recordBadAttempt(currentJpNode, 'jp', 'checkout_timeout'); } catch {}
       }
       resolve({ link: '', title: '', raw: 'ERROR: Python timeout (60s)', pk: '' });
     }, 60000);
@@ -74,12 +74,19 @@ function fetchCheckoutLink(accessToken, opts = {}) {
         const r = JSON.parse(stdout);
         const link = r.link || '';
         const raw = r.raw || r.error || '';
-        if (link === '' && currentJpNode) {
-          proxyMgr.markJpBad(currentJpNode);
+        if (currentJpNode) {
+          if (link === '') {
+            try { proxyMgr.recordBadAttempt(currentJpNode, 'jp', 'checkout_empty_link'); } catch {}
+          } else {
+            // G4: 拿到非空 link 算成功
+            try { proxyMgr.recordGoodAttempt(currentJpNode, 'jp'); } catch {}
+          }
         }
         resolve({ link, title: '', raw, pk: r.pk || '' });
       } catch {
-        if (currentJpNode) proxyMgr.markJpBad(currentJpNode);
+        if (currentJpNode) {
+          try { proxyMgr.recordBadAttempt(currentJpNode, 'jp', 'checkout_parse_failed'); } catch {}
+        }
         resolve({ link: '', title: '', raw: `ERROR: ${stderr.slice(-200) || 'Python parse failed'}`, pk: '' });
       }
     });
