@@ -67,9 +67,42 @@ const PROFILES = {
   },
 };
 
+async function waitForDomStable(page, windowMs, deadline) {
+  const remainingMs = deadline - Date.now();
+  if (remainingMs <= 0) return false;
+  const inject = async function injectedDomStable(_windowMs, _maxMs) {
+    return await new Promise((resolve) => {
+      let timer = null;
+      let observer = null;
+      const finish = (ok) => {
+        if (timer) clearTimeout(timer);
+        if (observer) try { observer.disconnect(); } catch (e) {}
+        resolve(ok);
+      };
+      // Hard cap so observer never lingers past maxMs.
+      const cap = setTimeout(() => finish(false), _maxMs);
+      const reset = () => {
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(() => { clearTimeout(cap); finish(true); }, _windowMs);
+      };
+      try {
+        observer = new MutationObserver(reset);
+        observer.observe(document.body, { childList: true, subtree: true, attributes: true, characterData: true });
+        reset();
+      } catch (e) { clearTimeout(cap); resolve(true); }
+    });
+  };
+  inject.__readinessRole = 'domStable';
+  try {
+    return await page.evaluate(inject, windowMs, remainingMs);
+  } catch (e) {
+    return false;
+  }
+}
+
 async function waitForPageReady(page, profile, opts = {}) {
   // Will be implemented in Task 4.
   return { ready: false, waitedMs: 0, missing: [] };
 }
 
-module.exports = { PROFILES, waitForPageReady };
+module.exports = { PROFILES, waitForPageReady, _internal: { waitForDomStable } };

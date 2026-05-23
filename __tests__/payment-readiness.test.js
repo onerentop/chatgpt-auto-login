@@ -30,3 +30,34 @@ test('PROFILES: 必须包含全部 6 个具名 profile', () => {
 test('waitForPageReady: 导出存在且为函数', () => {
   assert.strictEqual(typeof waitForPageReady, 'function');
 });
+
+const { _internal } = require('../payment-readiness');
+
+// Build a mock page whose page.evaluate(fn) returns whatever fn returns (synchronously).
+function mockPage({ stableReturns = true, stableDelayMs = 0 } = {}) {
+  return {
+    async evaluate(fn, ...args) {
+      // For waitForDomStable, the injected fn returns a Promise that resolves true/false.
+      // We simulate by waiting stableDelayMs then resolving stableReturns.
+      if (fn.__readinessRole === 'domStable') {
+        await new Promise(r => setTimeout(r, stableDelayMs));
+        return stableReturns;
+      }
+      return fn(...args);
+    },
+  };
+}
+
+test('waitForDomStable: 立即返回 true 时 ready=true', async () => {
+  const page = mockPage({ stableReturns: true, stableDelayMs: 0 });
+  const deadline = Date.now() + 5000;
+  const ok = await _internal.waitForDomStable(page, 500, deadline);
+  assert.strictEqual(ok, true);
+});
+
+test('waitForDomStable: deadline 已过返回 false', async () => {
+  const page = mockPage({ stableReturns: false, stableDelayMs: 0 });
+  const deadline = Date.now() - 1;
+  const ok = await _internal.waitForDomStable(page, 500, deadline);
+  assert.strictEqual(ok, false);
+});
