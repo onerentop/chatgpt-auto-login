@@ -5,8 +5,14 @@ const path = require('path');
 const proxyMgr = require('./proxy');
 
 const SCRIPT = path.join(__dirname, '..', 'stripe_billing.py');
+// 3-POST chain (init → payment_methods → confirm); 25s covers worst-case Stripe latency.
 const TIMEOUT_MS = 25000;
 
+/**
+ * Validate billing input shape. Used both by submitStripeBilling (defensive,
+ * after payLink regex already extracts a valid cs_id) and by unit tests for
+ * direct input validation.
+ */
 function validateBillingInput(input) {
   if (!input || typeof input !== 'object') return 'invalid_link';
   const cs = input.cs_id;
@@ -18,7 +24,7 @@ function validateBillingInput(input) {
 
 function parseStripeResponse(parsed) {
   if (!parsed || typeof parsed !== 'object' || !parsed.status) {
-    return { ok: false, reason: 'unparsable' };
+    return { ok: false, reason: 'stripe_billing_unparsable' };
   }
   if (parsed.status === 'success') {
     const data = parsed.data || {};
@@ -66,7 +72,7 @@ function submitStripeBilling(payLink, pk, billing) {
       if (settled) return;
       settled = true;
       py.kill();
-      resolve({ ok: false, reason: 'timeout' });
+      resolve({ ok: false, reason: 'stripe_billing_timeout' });
     }, TIMEOUT_MS);
 
     py.stdout.on('data', (d) => {
@@ -92,7 +98,7 @@ function submitStripeBilling(payLink, pk, billing) {
       if (settled) return;
       settled = true;
       try { resolve(parseStripeResponse(JSON.parse(stdout))); }
-      catch { resolve({ ok: false, reason: 'unparsable', raw: stderr.slice(-200) }); }
+      catch { resolve({ ok: false, reason: 'stripe_billing_unparsable', raw: stderr.slice(-200) }); }
     });
     py.stdin.write(JSON.stringify(input));
     py.stdin.end();

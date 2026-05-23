@@ -31,5 +31,5 @@ test('parseStripeResponse: error 透传 reason', () => {
 test('parseStripeResponse: 缺 status 字段返回 ok=false reason=unparsable', () => {
   const r = parseStripeResponse({ data: { paypal_redirect_url: 'x' } });
   assert.strictEqual(r.ok, false);
-  assert.strictEqual(r.reason, 'unparsable');
+  assert.strictEqual(r.reason, 'stripe_billing_unparsable');
 });
