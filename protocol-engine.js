@@ -235,14 +235,11 @@ class ProtocolEngine extends EventEmitter {
         let result;
         try {
           result = await runProtocolRegister(account, this);
-          // tls_failure means the homepage step exhausted its 5 retries with TLS errors —
-          // a network-layer (node) problem, not an account problem. Blacklist the current
-          // node, rotate to a fresh one, and retry the same account once.
           if (result.status === 'tls_failure') {
             const badNode = proxyMgr.getState().currentNode;
-            console.log(`[${progress}] TLS errors persisted on ${badNode}; blacklisting + rotating + retrying once`);
+            console.log(`[${progress}] TLS errors persisted on ${badNode}; counting + rotating + retrying once`);
             if (proxyMgr.getState().enabled) {
-              try { proxyMgr.markBad(badNode); } catch {}
+              try { proxyMgr.recordBadAttempt(badNode, 'main', 'tls_failure'); } catch {}
               try {
                 const newNode = await proxyMgr.rotate();
                 console.log(`[${progress}] Retrying on ${newNode}`);
@@ -250,16 +247,17 @@ class ProtocolEngine extends EventEmitter {
                 console.log(`[${progress}] Rotate failed: ${e.message?.slice(0, 60)}`);
               }
             }
-            // Single retry on a fresh route. If this also fails, surface the original
-            // tls_failure as a normal error so cooldown/summary handling stays consistent.
             result = await runProtocolRegister(account, this);
             if (result.status === 'tls_failure') {
               console.log(`[${progress}] TLS still failing after rotation — giving up on this account`);
+              try { proxyMgr.recordBadAttempt(proxyMgr.getState().currentNode, 'main', 'tls_failure'); } catch {}
               this.emitStatus({ email: account.email, status: 'error', phase: 'protocol-login', progress, reason: result.error });
               summary.error++;
               continue;
             }
           }
+          // G1: 任何"业务返回"（success / deactivated 等）都代表节点工作正常
+          try { proxyMgr.recordGoodAttempt(proxyMgr.getState().currentNode, 'main'); } catch {}
           if (result.status === 'deactivated') {
             console.log(`[${progress}] Account deactivated/deleted by OpenAI`);
             this.emitStatus({ email: account.email, status: 'deactivated', phase: 'done', progress, reason: 'account_deactivated' });
@@ -269,6 +267,10 @@ class ProtocolEngine extends EventEmitter {
           console.log(`[${progress}] Protocol login OK: ${result.accessToken}`);
         } catch (e) {
           console.log(`[${progress}] Protocol login failed: ${e.message?.slice(0, 80)}`);
+          // T8: 网络类异常算节点失败；业务异常不算
+          if (proxyMgr.isProxyNetError(e.message)) {
+            try { proxyMgr.recordBadAttempt(proxyMgr.getState().currentNode, 'main', 'protocol_net_error'); } catch {}
+          }
           this.emitStatus({ email: account.email, status: 'error', phase: 'protocol-login', progress, reason: e.message });
           summary.error++;
           continue;
@@ -384,16 +386,22 @@ class ProtocolEngine extends EventEmitter {
           let pageUrl = page.url();
           if (pageUrl.startsWith('chrome-error://') || pageUrl === 'about:blank') {
             const badNode = proxyMgr.getState().currentNode;
-            console.log(`[${progress}] Payment page unreachable via ${badNode} (${pageUrl.slice(0, 40)}); rotating + retrying`);
+            console.log(`[${progress}] Payment page unreachable via ${badNode} (${pageUrl.slice(0, 40)}); counting + rotating + retrying`);
             if (proxyMgr.getState().enabled) {
-              try { proxyMgr.markBad(badNode); } catch {}
+              try { proxyMgr.recordBadAttempt(badNode, 'main', 'payment_unreachable'); } catch {}
               try { const n = await proxyMgr.rotate(); console.log(`[${progress}] Retrying payment on ${n}`); } catch {}
             }
             await page.goto(link, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
             pageUrl = page.url();
             if (pageUrl.startsWith('chrome-error://') || pageUrl === 'about:blank') {
+              try { proxyMgr.recordBadAttempt(proxyMgr.getState().currentNode, 'main', 'payment_unreachable'); } catch {}
               throw new Error(`Payment page unreachable after node rotation (${pageUrl.slice(0, 40)})`);
             }
+            // 重试后真实页面打开 → 算 G3 成功
+            try { proxyMgr.recordGoodAttempt(proxyMgr.getState().currentNode, 'main'); } catch {}
+          } else {
+            // G3: 一次到位也算成功
+            try { proxyMgr.recordGoodAttempt(proxyMgr.getState().currentNode, 'main'); } catch {}
           }
 
           try { await page.locator('text=PayPal').first().waitFor({ state: 'visible', timeout: 15000 }); } catch {}

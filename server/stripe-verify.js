@@ -45,6 +45,17 @@ function verifyCheckoutIsFree(link, pk) {
       return;
     }
     const proxy = proxyMgr.getProxyUrl() || '';
+    const currentNode = proxyMgr.getState().currentNode || '';
+    const reportFail = (reason) => {
+      if (currentNode && proxyMgr.getState().enabled) {
+        try { proxyMgr.recordBadAttempt(currentNode, 'main', reason); } catch {}
+      }
+    };
+    const reportOk = () => {
+      if (currentNode && proxyMgr.getState().enabled) {
+        try { proxyMgr.recordGoodAttempt(currentNode, 'main'); } catch {}
+      }
+    };
     const py = spawn('py', ['-3', SCRIPT], { stdio: ['pipe', 'pipe', 'pipe'] });
     let settled = false;
     let stdout = '';
@@ -54,6 +65,7 @@ function verifyCheckoutIsFree(link, pk) {
       if (settled) return;
       settled = true;
       py.kill();
+      reportFail('stripe_init_timeout');
       resolve({ ok: false, reason: 'stripe_init_timeout' });
     }, TIMEOUT_MS);
 
@@ -73,6 +85,7 @@ function verifyCheckoutIsFree(link, pk) {
       clearTimeout(timer);
       if (settled) return;
       settled = true;
+      // spawn_error = 本地 Python 问题，不是节点问题，不调 reportFail
       resolve({ ok: false, reason: 'spawn_error', raw: e.message?.slice(0, 200) });
     });
     py.on('close', () => {
@@ -82,12 +95,13 @@ function verifyCheckoutIsFree(link, pk) {
       let parsed;
       try { parsed = JSON.parse(stdout); }
       catch {
+        reportFail('stripe_init_unparsable');
         resolve({ ok: false, reason: 'stripe_init_unparsable', raw: stderr.slice(-200) });
         return;
       }
       if (parsed.status !== 'success') {
         const reason = parsed.reason || 'stripe_init_error';
-        // Map common Stripe HTTP failures to canonical reasons per design spec.
+        reportFail(reason);
         if (/init_http_40[13]/.test(reason)) {
           resolve({ ok: false, reason: 'stripe_init_403' });
           return;
@@ -95,6 +109,8 @@ function verifyCheckoutIsFree(link, pk) {
         resolve({ ok: false, reason });
         return;
       }
+      // G5: 节点可达 + Stripe 响应解析成功
+      reportOk();
       resolve(parseInitResponse(parsed.data));
     });
     py.stdin.write(JSON.stringify({ cs_id: csId, pk, proxy }));
