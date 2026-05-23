@@ -453,10 +453,18 @@ async function handlePayPalCheckout(page, phoneOverride, smsOverride) {
       console.log(`    [Pay] WARNING: country still "${stuck}" after switch attempt; aborting fill`);
       throw new Error(`Failed to switch country to US (stuck at "${stuck}")`);
     }
-    // Give the dependent fields (state options, address schema) a beat to repaint.
-    await randomDelay(1500, 2500);
+    // Wait for billing schema to repaint (state options, addressLine1, zip) after country switch.
+    const rAfter = await waitForPageReady(page, PROFILES.paypalCheckoutAfterCountry, { log: (m) => console.log('    ' + m) });
+    if (!rAfter.ready) {
+      console.log(`    [Pay] 警告：切换国家后 billing schema 未就绪 missing=[${rAfter.missing.join(',')}]，仍尝试继续`);
+    }
   } else if (initial === 'US') {
     console.log('    [Pay] Country already US');
+    // Even when no switch happened, the billing form may not have rendered yet.
+    const rAfter = await waitForPageReady(page, PROFILES.paypalCheckoutAfterCountry, { log: (m) => console.log('    ' + m) });
+    if (!rAfter.ready) {
+      console.log(`    [Pay] 警告：billing schema 未就绪 missing=[${rAfter.missing.join(',')}]，仍尝试继续`);
+    }
   }
 
   // Final guard: double-check country is US before filling. Catches any race where
