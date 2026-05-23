@@ -26,6 +26,7 @@ const {
   fetchTokensViaPKCE,
   randomDelay,
 } = require('../utils');
+const { statusDB } = require('./db');
 const { loginAccount } = require('../login');
 const { autoPayment } = require('../payment');
 const { registerToCPA } = require('../cpa');
@@ -276,6 +277,7 @@ class PipelineEngine extends EventEmitter {
           console.log(`${p} Plan: ${planType} (${isPlusOrAbove ? 'Plus member' : 'Not Plus'})`);
 
           if (isPlusOrAbove) {
+            statusDB.clearPaymentLink(account.email);
             console.log(`${p} Already Plus!`);
             finalResult = { email: account.email, status: 'plus_no_rt', paymentLink: '', reason: '' };
 
@@ -312,24 +314,40 @@ class PipelineEngine extends EventEmitter {
             // Phase 2: payment link fetch (retry up to 3 times on transient errors)
             currentPhase = linkSource === 'discord' ? 'discord' : 'checkout';
             console.log(`${p} Phase 2: payment link via ${linkSource}...`);
+            // Cache check: skip Phase 2 fetch + Phase 2.5 verify when this
+            // account previously failed in Phase 3+ and has a usable Stripe
+            // link in the DB. Phase 3's NOT_FREE_TRIAL detector handles
+            // stale links (becomes status='no_link', which is not in
+            // REUSE_STATUSES → next retry forces full refetch).
+            const REUSE_STATUSES = new Set(['error', 'aborted', 'paypal_captcha', 'verify_error']);
+            const cached = statusDB.get(account.email);
+            let usedCachedLink = false;
+
             this.emitStatus({ email: account.email, status: 'running', phase: currentPhase, progress });
             let discord;  // keep variable name to minimize downstream diff
-            for (let dRetry = 0; dRetry < 3; dRetry++) {
-              try {
-                if (dRetry > 0) console.log(`${p} Link fetch retry ${dRetry + 1}/3...`);
-                if (linkSource === 'discord') {
-                  discord = await getPaymentLink(gw, loginResult.accessToken);
-                } else {
-                  discord = await fetchCheckoutLink(loginResult.accessToken);
+            if (cached && cached.payment_link && REUSE_STATUSES.has(cached.status)) {
+              discord = { link: cached.payment_link, pk: cached.payment_link_pk || '', title: 'cached', raw: '' };
+              usedCachedLink = true;
+              console.log(`${p} Phase 2: reusing cached payment link (was ${cached.status} at ${cached.payment_link_at})`);
+            }
+            if (!usedCachedLink) {
+              for (let dRetry = 0; dRetry < 3; dRetry++) {
+                try {
+                  if (dRetry > 0) console.log(`${p} Link fetch retry ${dRetry + 1}/3...`);
+                  if (linkSource === 'discord') {
+                    discord = await getPaymentLink(gw, loginResult.accessToken);
+                  } else {
+                    discord = await fetchCheckoutLink(loginResult.accessToken);
+                  }
+                  break;
+                } catch (de) {
+                  console.log(`${p} Link fetch error: ${de.message?.slice(0, 60)}`);
+                  if (dRetry < 2 && (de.message?.includes('Timeout') || de.message?.includes('fetch'))) {
+                    await new Promise(r => setTimeout(r, 2000));
+                    continue;
+                  }
+                  throw de;
                 }
-                break;
-              } catch (de) {
-                console.log(`${p} Link fetch error: ${de.message?.slice(0, 60)}`);
-                if (dRetry < 2 && (de.message?.includes('Timeout') || de.message?.includes('fetch'))) {
-                  await new Promise(r => setTimeout(r, 2000));
-                  continue;
-                }
-                throw de;
               }
             }
 
@@ -355,6 +373,15 @@ class PipelineEngine extends EventEmitter {
               // === 分支 C: 拿到 link → Phase 2.5 Stripe 验证 ===
               console.log(`${p} ${discord.title}`);
               console.log(`${p} Link: ${discord.link.slice(0, 80)}...`);
+              // Persist link to DB immediately so verify_error / Phase 3 retries
+              // can skip Phase 2 next time. Guard with !usedCachedLink so a
+              // cached-link rerun doesn't refresh payment_link_at.
+              if (!usedCachedLink) {
+                statusDB.set(account.email, {
+                  status: 'running', phase: 'verify', progress,
+                  paymentLink: discord.link, paymentLinkPk: discord.pk || '',
+                });
+              }
               // Discord path: bot is authority for $0 eligibility (it only returns $0 links).
               // API path: enforce Phase 2.5 verify to fail-fast on non-$0 links.
               let v;
@@ -464,6 +491,7 @@ class PipelineEngine extends EventEmitter {
                 }
 
                 if (paymentOk) {
+                  statusDB.clearPaymentLink(account.email);
                   finalResult.status = 'plus_no_rt';
                   console.log(`${p} Payment succeeded (redirect_status=succeeded)`);
                 } else if (paymentStatus === 'aborted') {
