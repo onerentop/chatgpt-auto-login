@@ -9,7 +9,7 @@ const PROFILES = {
     requiredElements: [
       { name: 'priceRendered', kind: 'js',
         check: () => /\$\s*[0-9]/.test(document.body.innerText || '') },
-      { name: 'paymentAccordion', kind: 'visible',
+      { name: 'paymentAccordion', kind: 'attached',
         selector: '[data-testid="paypal-accordion-item-button"], [data-testid="card-accordion-item-button"], #payment-method-accordion-item-title-paypal' },
       { name: 'submitBtn', kind: 'attached',
         selector: 'button[data-testid="hosted-payment-submit-button"], button[data-testid="submit-button"]' },
