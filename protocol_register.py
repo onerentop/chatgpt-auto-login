@@ -7,6 +7,15 @@ import sys, os, json, uuid, time, random, re, string, hashlib, base64, secrets, 
 import email as email_lib
 from urllib.parse import urlparse, parse_qs, urlencode, quote
 
+# HTTP/1.1 constant for HTTP/2 fallback retries (curl_cffi >= 0.5.9). Module-level
+# so _post_with_h1_fallback (defined below) and protocol_login can both use it.
+# Falls back to None if curl_cffi missing / older version — fallback then no-ops.
+try:
+    from curl_cffi import CurlHttpVersion
+    HTTP11 = CurlHttpVersion.V1_1
+except Exception:
+    HTTP11 = None
+
 # Force stdout/stderr UTF-8 — prevents GBK terminals from crashing on emoji /
 # CJK strings printed by vendored chatgpt_register at import time.
 try:
@@ -86,6 +95,36 @@ class _RetrySession:
                     time.sleep(wait)
                     continue
                 raise
+
+
+def _post_with_h1_fallback(session, url, *, json=None, headers=None, timeout=30):
+    """POST that retries once with HTTP/1.1 on transient HTTP/2 errors or 400
+    risk-control responses. Returns the final Response.
+
+    Triggers HTTP/1.1 retry on:
+      (1) HTTP/2 raises a TLS/curl exception
+      (2) HTTP/2 returns 400 with 'invalid_r' in body (sentinel-token / frame
+          corruption marker observed with sing-box mixed inbound, ref:
+          SagerNet/sing-box#3945)
+
+    No retry on success or other non-400 status. If HTTP11 sentinel is None
+    (older curl_cffi without CurlHttpVersion), no fallback happens — original
+    behavior preserved.
+    """
+    try:
+        r = session.post(url, json=json, headers=headers, timeout=timeout)
+    except Exception as e:
+        if HTTP11 is not None:
+            _log(f"POST {url.rsplit('/', 1)[-1]} HTTP/2 raise: {str(e)[:60]} — retry HTTP/1.1")
+            return session.post(url, json=json, headers=headers, timeout=timeout, http_version=HTTP11)
+        raise
+
+    if r.status_code == 400 and 'invalid_r' in (r.text or '') and HTTP11 is not None:
+        _log(f"POST {url.rsplit('/', 1)[-1]} got 400 invalid_r on HTTP/2 — retry HTTP/1.1")
+        return session.post(url, json=json, headers=headers, timeout=timeout, http_version=HTTP11)
+
+    return r
+
 
 def _generate_password(length=14):
     lower = string.ascii_lowercase
@@ -545,16 +584,6 @@ def main():
 
     try:
         from curl_cffi import requests as curl_requests
-
-        # HTTP/1.1 constant for TLS-retry fallback (curl_cffi >= 0.5.9).
-        # Some unstable proxy paths break HTTP/2 framing mid-handshake — falling back
-        # to HTTP/1.1 on retry often unblocks the request when the same node would
-        # otherwise produce repeated "TLS connect error: invalid library" failures.
-        try:
-            from curl_cffi import CurlHttpVersion
-            HTTP11 = CurlHttpVersion.V1_1
-        except Exception:
-            HTTP11 = None
 
         proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
         if proxy_url:
