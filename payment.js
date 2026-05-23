@@ -1,7 +1,17 @@
 const fs = require('fs');
 const path = require('path');
-const { randomDelay } = require('./utils');
+const { randomDelay, abortableSleep } = require('./utils');
 const { waitForPageReady, PROFILES } = require('./payment-readiness');
+
+// Build an AbortError consistent with what abortableSleep emits, so all
+// throw sites in this module produce the same shape (e.name === 'AbortError').
+// Used by the long for-loops below — they peek at signal.aborted between
+// iterations and synthesize this error to bail out of the loop early.
+function _abortError() {
+  const e = new Error('Aborted');
+  e.name = 'AbortError';
+  return e;
+}
 
 const CONFIG_PATH = path.join(__dirname, 'config.json');
 
@@ -61,7 +71,7 @@ function randPass() {
   return p.split('').sort(() => Math.random() - 0.5).join('');
 }
 
-async function fetchAddress() {
+async function fetchAddress(signal) {
   // Retry up to 3 times (multi-thread may hit rate limit)
   for (let retry = 0; retry < 3; retry++) {
     try {
@@ -80,7 +90,7 @@ async function fetchAddress() {
       };
     } catch (e) {
       console.log(`    [Pay] Address fetch: ${e.message?.slice(0, 60)}`);
-      if (retry < 2) await new Promise(r => setTimeout(r, 2000));
+      if (retry < 2) await abortableSleep(2000, signal);
     }
   }
   return { street: '123 Main St', city: 'New York', state: 'New York', zip: '10001' };
@@ -137,8 +147,9 @@ async function selectOption(page, selector, text) {
   }
 }
 
-async function clickSubmit(page) {
+async function clickSubmit(page, signal) {
   for (let retry = 0; retry < 10; retry++) {
+    if (signal?.aborted) throw _abortError();
     const selectors = [
       'button[data-testid="submit-button"]',
       'button[data-testid="hosted-payment-submit-button"]',
@@ -162,14 +173,14 @@ async function clickSubmit(page) {
         }
       } catch (e) { console.log(`    [Pay] Submit text btn: ${e.message?.slice(0, 60)}`); }
     }
-    await new Promise((r) => setTimeout(r, 1000));
+    await abortableSleep(1000, signal);
   }
   return false;
 }
 
 // ========== Page Handlers ==========
 
-async function handleOpenAIPage(page) {
+async function handleOpenAIPage(page, signal) {
   console.log('    [Pay] OpenAI/Stripe page detected');
 
   const r0 = await waitForPageReady(page, PROFILES.openai, { log: (m) => console.log('    ' + m) });
@@ -264,7 +275,7 @@ async function handleOpenAIPage(page) {
     if (!r1b.ready) console.log(`    [Pay] 警告：retry 后 accordion 未就绪 missing=[${r1b.missing.join(',')}]`);
   }
 
-  const addr = await fetchAddress();
+  const addr = await fetchAddress(signal);
   console.log('    [Pay] Address:', JSON.stringify(addr));
 
   // Step 2: Fill address fields (after PayPal form has loaded)
@@ -369,13 +380,13 @@ async function handleOpenAIPage(page) {
   console.log('    [Pay] Inject step 2:', fillResult.log.join(', '));
 
   // Step 3: Wait a bit then click submit
-  await randomDelay(1500, 2000);
-  const submitted = await clickSubmit(page);
+  await randomDelay(1500, 2000, signal);
+  const submitted = await clickSubmit(page, signal);
   if (!submitted) console.log('    [Pay] Submit button not found/clickable');
   console.log('    [Pay] OpenAI page submitted');
 }
 
-async function handlePayPalLogin(page, emailOverride) {
+async function handlePayPalLogin(page, emailOverride, signal) {
   console.log('    [Pay] PayPal login page detected');
   const r = await waitForPageReady(page, PROFILES.paypalLogin, { log: (m) => console.log('    ' + m) });
   if (!r.ready) {
@@ -385,12 +396,12 @@ async function handlePayPalLogin(page, emailOverride) {
   const email = emailOverride || randEmail();
   console.log('    [Pay] Email:', email);
   await fillInput(page, '#email', email);
-  await randomDelay(800, 1200);
-  await clickSubmit(page);
+  await randomDelay(800, 1200, signal);
+  await clickSubmit(page, signal);
   console.log('    [Pay] PayPal login submitted');
 }
 
-async function handlePayPalCheckout(page, phoneOverride, smsOverride, emailOverride) {
+async function handlePayPalCheckout(page, phoneOverride, smsOverride, emailOverride, signal) {
   console.log('    [Pay] PayPal checkout page detected');
   const r = await waitForPageReady(page, PROFILES.paypalCheckout, { log: (m) => console.log('    ' + m) });
   if (!r.ready) {
@@ -479,7 +490,7 @@ async function handlePayPalCheckout(page, phoneOverride, smsOverride, emailOverr
     throw new Error(`Country reverted to "${finalCountry}" before fill`);
   }
 
-  const addr = await fetchAddress();
+  const addr = await fetchAddress(signal);
   const email = emailOverride || randEmail();
   const password = randPass();
   console.log('    [Pay] Email:', email);
@@ -513,15 +524,15 @@ async function handlePayPalCheckout(page, phoneOverride, smsOverride, emailOverr
       await fillInput(page, '#cardNumber', newCard.number);
       await fillInput(page, '#cardExpiry', newCard.expiry);
       await fillInput(page, '#cardCvv', newCard.cvv);
-      await randomDelay(500, 1000);
+      await randomDelay(500, 1000, signal);
     }
-    await randomDelay(500, 1000);
-    const ppSubmitted = await clickSubmit(page);
+    await randomDelay(500, 1000, signal);
+    const ppSubmitted = await clickSubmit(page, signal);
     if (!ppSubmitted) console.log('    [Pay] Submit button not found/clickable');
     console.log('    [Pay] PayPal checkout submitted');
 
     // Wait for error banner or page transition
-    await randomDelay(3000, 5000);
+    await randomDelay(3000, 5000, signal);
     const declined = await page.evaluate(() => {
       const text = (document.body.innerText || '').toLowerCase();
       const patterns = [
@@ -545,17 +556,17 @@ async function handlePayPalCheckout(page, phoneOverride, smsOverride, emailOverr
   }
 
   // Handle SMS verification code dialog
-  await handleSmsVerification(page, smsOverride);
+  await handleSmsVerification(page, smsOverride, signal);
 }
 
-async function handleSmsVerification(page, smsOverride) {
+async function handleSmsVerification(page, smsOverride, signal) {
   const SMS_URL = smsOverride || CONFIG.smsApiUrl;
   if (!SMS_URL) return;
 
   // SMS dialog is optional — readiness returning ready:false means no dialog
   // surfaced within the timeout; treat same as "no dialog detected".
   const rSms = await waitForPageReady(page, PROFILES.smsDialog,
-    { totalTimeoutMs: 15000, log: (m) => console.log('    ' + m) });
+    { totalTimeoutMs: 15000, log: (m) => console.log('    ' + m), signal });
   if (!rSms.ready) {
     console.log('    [Pay] No SMS verification dialog detected');
     return false;
@@ -566,12 +577,12 @@ async function handleSmsVerification(page, smsOverride) {
   // Poll SMS API for the verification code (retry up to 30 times, every 3s = ~90s)
   let smsCode = null;
   for (let attempt = 0; attempt < 30; attempt++) {
+    if (signal?.aborted) throw _abortError();
     try {
-      const res = await fetch(SMS_URL, { signal: AbortSignal.timeout(10000) });
+      const res = await fetch(SMS_URL, { signal, timeout: 10000 });
       const text = await res.text();
       console.log(`    [Pay] SMS API attempt ${attempt + 1}: ${text.slice(0, 100)}`);
 
-      // Extract 6-digit code from response
       let data;
       try { data = JSON.parse(text); } catch (e) { data = text; }
       const dataStr = typeof data === 'string' ? data : JSON.stringify(data);
@@ -582,9 +593,10 @@ async function handleSmsVerification(page, smsOverride) {
         break;
       }
     } catch (e) {
+      if (e?.name === 'AbortError') throw e;
       console.log(`    [Pay] SMS API error: ${e.message}`);
     }
-    await new Promise((r) => setTimeout(r, 3000));
+    await abortableSleep(3000, signal);
   }
 
   if (!smsCode) {
@@ -597,21 +609,19 @@ async function handleSmsVerification(page, smsOverride) {
   const codeCount = await codeInputs.count().catch(() => 0);
 
   if (codeCount >= 6) {
-    // Individual digit boxes
     for (let i = 0; i < 6; i++) {
+      if (signal?.aborted) throw _abortError();
       await codeInputs.nth(i).fill(smsCode[i]);
-      await randomDelay(100, 200);
+      await randomDelay(100, 200, signal);
     }
     console.log('    [Pay] SMS code filled (individual boxes)');
   } else {
-    // Try typing the code directly (focused input)
     await page.keyboard.type(smsCode, { delay: 100 });
     console.log('    [Pay] SMS code typed');
   }
 
-  await randomDelay(2000, 3000);
-  // Code might auto-submit, or we need to click a button
-  await clickSubmit(page);
+  await randomDelay(2000, 3000, signal);
+  await clickSubmit(page, signal);
   console.log('    [Pay] SMS verification submitted');
   return true;
 }
@@ -621,10 +631,11 @@ async function handleSmsVerification(page, smsOverride) {
 // Poll the page URL while the user manually drags the PayPal slider CAPTCHA.
 // Returns true if the URL leaves paypal.com/agreements/approve before timeoutMs
 // (user dragged slider, PayPal redirected onward), false otherwise.
-async function waitForCaptchaResolution(page, timeoutMs) {
+async function waitForCaptchaResolution(page, timeoutMs, signal) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    await new Promise(r => setTimeout(r, 2000));
+    if (signal?.aborted) throw _abortError();
+    await abortableSleep(2000, signal);
     let url;
     try { url = page.url(); } catch { return false; }
     if (!/paypal\.com\/agreements\/approve/i.test(url)) return true;
@@ -632,49 +643,54 @@ async function waitForCaptchaResolution(page, timeoutMs) {
   return false;
 }
 
-async function autoPayment(page, phoneConfig) {
-  // phoneConfig: { phone, smsApiUrl, email } — thread-local override. `email` is
-  // the GPT-account email; when set, used to fill PayPal login/checkout email
-  // fields so the PayPal account ties to the GPT account being subscribed.
+async function autoPayment(page, phoneConfig, opts = {}) {
+  const signal = opts.signal;
+  try {
+    return await _doAutoPayment(page, phoneConfig, signal);
+  } catch (e) {
+    if (e?.name === 'AbortError') {
+      console.log('    [Pay] Aborted by user');
+      return { success: false, status: 'aborted', reason: 'Stopped by user' };
+    }
+    throw e;
+  }
+}
+
+async function _doAutoPayment(page, phoneConfig, signal) {
   const PHONE = phoneConfig?.phone || CONFIG.phone;
   const SMS_API = phoneConfig?.smsApiUrl || CONFIG.smsApiUrl;
   const EMAIL = phoneConfig?.email || '';
   console.log('    [Pay] Starting auto-payment flow...');
 
-  // Inject CSS to hide CAPTCHA
   await page.addStyleTag({ content: '#captcha-standalone,.captcha-overlay,.captcha-container,.AddressAutocomplete-results{display:none!important;height:0!important;overflow:hidden!important}' }).catch(() => {});
 
-  // Handle current page
   const url = page.url();
   if (url.includes('pay.openai.com') || url.includes('checkout.stripe.com')) {
-    await handleOpenAIPage(page);
+    await handleOpenAIPage(page, signal);
   }
 
-  // Wait and handle PayPal pages as they come
-  // After OpenAI submit, PayPal redirect can take 5-15 seconds
   let paypalHandled = false;
   let captchaFirstSeenAt = 0;
   let captchaHandled = false;
   for (let round = 0; round < 15; round++) {
-    await randomDelay(2000, 3000);
+    if (signal?.aborted) throw _abortError();
+    await randomDelay(2000, 3000, signal);
     let currentUrl;
     try { currentUrl = page.url(); } catch (e) { console.log(`    [Pay] Page closed/crashed: ${e.message?.slice(0, 40)}`); break; }
 
     if (currentUrl.includes('paypal.com/pay')) {
-      await handlePayPalLogin(page, EMAIL);
+      await handlePayPalLogin(page, EMAIL, signal);
     } else if (currentUrl.includes('paypal.com') && (currentUrl.includes('checkoutweb') || currentUrl.includes('signup'))) {
-      await handlePayPalCheckout(page, PHONE, SMS_API, EMAIL);
+      await handlePayPalCheckout(page, PHONE, SMS_API, EMAIL, signal);
       paypalHandled = true;
       break;
     } else if (/paypal\.com\/agreements\/approve/i.test(currentUrl)) {
-      // agreements/approve is normally a 1-3s pass-through URL. If we are still
-      // here after 4s, Akamai slider CAPTCHA was almost certainly shown.
       if (!captchaFirstSeenAt) {
         captchaFirstSeenAt = Date.now();
       } else if (Date.now() - captchaFirstSeenAt > 4000 && !captchaHandled) {
         captchaHandled = true;
         console.log('    [Pay] PayPal slider CAPTCHA detected — please drag manually (90s timeout)');
-        const cleared = await waitForCaptchaResolution(page, 90000);
+        const cleared = await waitForCaptchaResolution(page, 90000, signal);
         if (!cleared) {
           return { success: false, status: 'paypal_captcha', reason: 'PayPal slider CAPTCHA timeout (90s)' };
         }
@@ -682,11 +698,9 @@ async function autoPayment(page, phoneConfig) {
       }
       continue;
     } else if (currentUrl.includes('pay.openai.com') || currentUrl.includes('checkout.stripe.com')) {
-      // Still on OpenAI/Stripe, waiting for redirect
       if (round % 3 === 2) console.log('    [Pay] Waiting for PayPal redirect...');
       continue;
     } else {
-      // Unknown URL — might be mid-redirect, keep waiting
       if (round % 3 === 2) console.log('    [Pay] Page: ' + currentUrl.slice(0, 60) + '...');
       continue;
     }
@@ -697,14 +711,12 @@ async function autoPayment(page, phoneConfig) {
     return { success: false, reason: 'PayPal not reached' };
   }
 
-  // Wait for PayPal to finish processing and redirect back to pay.openai.com.
-  // Also fail-fast on paypal.com/checkoutweb/genericError (risk-control rejection)
-  // — saves ~30s vs waiting for the full 30s loop.
   console.log('    [Pay] Waiting for payment redirect...');
   let paymentSuccess = false;
   let genericError = false;
   for (let w = 0; w < 15; w++) {
-    await new Promise(r => setTimeout(r, 2000));
+    if (signal?.aborted) throw _abortError();
+    await abortableSleep(2000, signal);
     let currentUrl;
     try { currentUrl = page.url(); } catch { break; }
     if (currentUrl.includes('pay.openai.com') && currentUrl.includes('redirect_status=succeeded')) {
