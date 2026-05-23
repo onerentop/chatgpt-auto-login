@@ -11,6 +11,7 @@ const TYPE_MAP = {
   no_jp_proxy: 'warning',
   no_promo: 'info',
   verify_error: 'danger',
+  paypal_captcha: 'warning',
 }
 
 const LABEL_MAP = {
@@ -24,6 +25,7 @@ const LABEL_MAP = {
   no_jp_proxy: 'JP节点不可用',
   no_promo: '无0元资格',
   verify_error: 'Stripe验证失败',
+  paypal_captcha: 'PayPal人机验证',
 }
 
 export function statusType(s) {
