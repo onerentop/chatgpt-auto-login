@@ -43,6 +43,9 @@ class PipelineEngine extends EventEmitter {
     this.stopFlag = false;
     this.logCapture = new LogCapture();
     this._runId = '';
+    this._chromeProc = null;
+    this._browser = null;
+    this._abortController = null;
   }
 
   emitStatus(data) {
@@ -63,6 +66,7 @@ class PipelineEngine extends EventEmitter {
   stop() {
     if (this.status !== 'idle') {
       this.stopFlag = true;
+      if (this._abortController) try { this._abortController.abort(); } catch {}
       this.status = 'stopping';
       console.log('Force stopping pipeline...');
 
@@ -76,6 +80,7 @@ class PipelineEngine extends EventEmitter {
         try { this._browser.close(); } catch {}
         this._browser = null;
       }
+      this._abortController = null;
       // Close Discord Gateway
       if (this._gw) {
         try { this._gw.cleanup(); } catch {}
@@ -110,6 +115,7 @@ class PipelineEngine extends EventEmitter {
 
     this.status = 'running';
     this.stopFlag = false;
+    this._abortController = new AbortController();
     this._runId = `run_${Date.now()}`;
 
     let currentEmail = '';
@@ -414,7 +420,7 @@ class PipelineEngine extends EventEmitter {
                 try {
                   const freshCfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf-8'));
                   const phoneSlot = freshCfg.phoneSlots?.[0] || { phone: freshCfg.phone, smsApiUrl: freshCfg.smsApiUrl };
-                  const payResult = await autoPayment(page, { phone: phoneSlot.phone, smsApiUrl: phoneSlot.smsApiUrl, email: account.email }) || {};
+                  const payResult = await autoPayment(page, { phone: phoneSlot.phone, smsApiUrl: phoneSlot.smsApiUrl, email: account.email }, { signal: this._abortController.signal }) || {};
                   paymentOk = !!payResult.success;
                   paymentReason = payResult.reason || '';
                   paymentStatus = payResult.status || '';
@@ -435,6 +441,11 @@ class PipelineEngine extends EventEmitter {
                 if (paymentOk) {
                   finalResult.status = 'plus_no_rt';
                   console.log(`${p} Payment succeeded (redirect_status=succeeded)`);
+                } else if (paymentStatus === 'aborted') {
+                  finalResult.status = 'aborted';
+                  finalResult.reason = 'Stopped by user';
+                  console.log(`${p} Payment aborted by user`);
+                  this.emitStatus({ email: account.email, status: 'aborted', phase: 'payment', progress, reason: 'Stopped by user' });
                 } else {
                   finalResult.status = paymentStatus || 'error';
                   finalResult.reason = paymentReason || 'Payment not completed';
