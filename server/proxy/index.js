@@ -262,8 +262,9 @@ function buildSingboxConfig(us /* nullable */, jp /* nullable */) {
 async function refresh() {
   const cfg = readCfg().proxy || {};
   _state.subscriptionUrl = cfg.subscriptionUrl || '';
-  _state.rotationKeyword = cfg.regionFilter || 'US';
+  _state.rotationKeyword = cfg.regionFilter ?? 'US';
   _state.rotationStrategy = cfg.rotationStrategy || 'sequential';
+  _state.whitelist = Array.isArray(cfg.whitelist) ? cfg.whitelist : [];
 
   // Default true keeps backward-compat for configs without an explicit `enabled` field.
   const mainEnabledByConfig = cfg.enabled !== false;
@@ -286,13 +287,25 @@ async function refresh() {
 
   // Main channel filtering — strict only when enabled by config.
   let filtered = [];
+  let mainPick = { filtered: [], misses: [], usedWhitelist: false };
   if (mainEnabledByConfig) {
-    filtered = filterByRegion(all, _state.rotationKeyword);
-    console.log(`[Proxy] After region filter (${_state.rotationKeyword}): ${filtered.length}`);
-    if (filtered.length === 0) throw new Error(`没有匹配地区 "${_state.rotationKeyword}" 的节点`);
+    mainPick = pickMainNodes(all, cfg);
+    filtered = mainPick.filtered;
+    if (mainPick.usedWhitelist) {
+      console.log(`[Proxy] Main whitelist: ${filtered.length}/${_state.whitelist.length} matched (${mainPick.misses.length} missing${mainPick.misses.length > 0 ? ': ' + mainPick.misses.join(', ') : ''})`);
+    } else {
+      console.log(`[Proxy] After region filter (${_state.rotationKeyword}): ${filtered.length}`);
+    }
+    if (mainPick.usedWhitelist && filtered.length === 0) {
+      throw new Error(`主代理白名单 [${_state.whitelist.join(', ')}] 在订阅中无任何匹配`);
+    }
+    if (!mainPick.usedWhitelist && filtered.length === 0) {
+      throw new Error(`没有匹配地区 "${_state.rotationKeyword}" 的节点`);
+    }
   } else {
     console.log(`[Proxy] Main channel disabled by config`);
   }
+  _state.whitelistMisses = mainPick.misses;
 
   // JP channel filtering — strict only when enabled by config.
   let jpFiltered = [];
