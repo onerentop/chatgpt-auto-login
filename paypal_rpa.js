@@ -289,27 +289,43 @@ async function handlePayPalCheckout(page, phone) {
   const password = randPass();
   log(`Email: ${email}`);
   log(`Address: ${JSON.stringify(addr)}`);
-
-  // === Sequential 12-field fill (v2.14 baseline — DO NOT parallelize) ===
-  const results = {};
-  results.email = await fillInput(page, '#email', email);
-  results.phone = await fillInput(page, '#phone', phone);
   const card = randCard();
   log(`Card: ${card.number.slice(0, 4)}****${card.number.slice(-4)}`);
-  results.cardNumber = await fillInput(page, '#cardNumber', card.number);
-  results.cardExpiry = await fillInput(page, '#cardExpiry', card.expiry);
-  results.cardCvv = await fillInput(page, '#cardCvv', card.cvv);
-  results.password = await fillInput(page, '#password', password);
-  results.firstName = await fillInput(page, '#firstName', 'James');
-  results.lastName = await fillInput(page, '#lastName', 'Smith');
-  results.billingLine1 = await fillInput(page, '#billingLine1', addr.street);
-  results.billingCity = await fillInput(page, '#billingCity', addr.city);
-  results.billingZip = await fillInput(page, '#billingPostalCode', addr.zip);
-  results.billingState = await selectOption(page, '#billingState', addr.state);
-  const filled = Object.entries(results).filter(([, v]) => v).map(([k]) => k);
+
+  // === Sequential 12-field fill (v2.14 baseline — DO NOT parallelize) ===
+  // Sometimes PayPal's React re-renders the form mid-fill so the first attempt
+  // reports Filled:none. Retry once after 3s if that happens.
+  async function fillAllFields() {
+    const r = {};
+    r.email = await fillInput(page, '#email', email);
+    r.phone = await fillInput(page, '#phone', phone);
+    r.cardNumber = await fillInput(page, '#cardNumber', card.number);
+    r.cardExpiry = await fillInput(page, '#cardExpiry', card.expiry);
+    r.cardCvv = await fillInput(page, '#cardCvv', card.cvv);
+    r.password = await fillInput(page, '#password', password);
+    r.firstName = await fillInput(page, '#firstName', 'James');
+    r.lastName = await fillInput(page, '#lastName', 'Smith');
+    r.billingLine1 = await fillInput(page, '#billingLine1', addr.street);
+    r.billingCity = await fillInput(page, '#billingCity', addr.city);
+    r.billingZip = await fillInput(page, '#billingPostalCode', addr.zip);
+    r.billingState = await selectOption(page, '#billingState', addr.state);
+    return r;
+  }
+
+  let results = await fillAllFields();
+  let filled = Object.entries(results).filter(([, v]) => v).map(([k]) => k);
+  if (filled.length === 0) {
+    log('Filled: none on first attempt — waiting 3s for DOM and retrying once');
+    await new Promise((r) => setTimeout(r, 3000));
+    results = await fillAllFields();
+    filled = Object.entries(results).filter(([, v]) => v).map(([k]) => k);
+  }
   const missed = Object.entries(results).filter(([, v]) => !v).map(([k]) => k);
   log(`Filled: ${filled.join(', ') || 'none'}`);
   if (missed.length) log(`MISSED: ${missed.join(', ')}`);
+  if (filled.length === 0) {
+    throw new Error('paypal_form_unresponsive');
+  }
 
   // Submit with card-decline retry (up to 3 different cards)
   for (let cardAttempt = 0; cardAttempt < 3; cardAttempt++) {
@@ -562,6 +578,7 @@ async function runPayPalFlow(page, opts) {
     if (/sms_fetch_fail/.test(msg)) reason = 'sms_fetch_fail';
     else if (/sms verification/i.test(msg)) reason = 'sms_verification_fail';
     else if (/paypal_generic_error/.test(msg)) reason = 'paypal_generic_error';
+    else if (/paypal_form_unresponsive/.test(msg)) reason = 'paypal_form_unresponsive';
     else if (/approval_timeout/.test(msg) || /Timeout.*waiting for navigation/i.test(msg) || /Timeout.*waitForURL/i.test(msg)) reason = 'approval_timeout';
     else if (/paypal_card_declined/.test(msg)) reason = 'paypal_card_declined';
     else if (/paypal_checkout_not_reached/.test(msg)) reason = 'paypal_checkout_not_reached';
