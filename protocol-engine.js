@@ -423,6 +423,11 @@ class ProtocolEngine extends EventEmitter {
           } else if (paymentResult.notFreeTrial) {
             this.emitStatus({ email: account.email, status: 'no_link', phase: 'done', progress, reason: paymentResult.reason });
             summary.noLink++;
+          } else if (paymentResult.status) {
+            const reason = paymentResult.reason || 'Payment not completed';
+            console.log(`[${progress}] Payment incomplete: ${reason}`);
+            this.emitStatus({ email: account.email, status: paymentResult.status, phase: 'payment', progress, reason });
+            summary.error++;
           } else {
             const reason = paymentResult.reason || 'Payment not completed';
             console.log(`[${progress}] Payment incomplete: ${reason}`);
