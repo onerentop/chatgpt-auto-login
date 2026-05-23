@@ -41,7 +41,20 @@ async function initDB() {
       timestamp TEXT DEFAULT (datetime('now')),
       run_id TEXT DEFAULT ''
     );
+    CREATE TABLE IF NOT EXISTS proxy_blacklist (
+      tag        TEXT NOT NULL,
+      channel    TEXT NOT NULL,
+      added_at   TEXT NOT NULL DEFAULT (datetime('now')),
+      expires_at INTEGER NOT NULL,
+      reason     TEXT DEFAULT '',
+      source     TEXT NOT NULL DEFAULT 'auto',
+      PRIMARY KEY (tag, channel)
+    );
+    CREATE INDEX IF NOT EXISTS idx_proxy_blacklist_expires ON proxy_blacklist(expires_at);
   `);
+
+  // Wire blacklist persistence module to the live DB
+  try { require('./proxy/blacklist').__setDb(db, save); } catch {}
 
   // One-time migration of old status values
   const hasOld = db.exec("SELECT COUNT(*) FROM account_status WHERE status IN ('needs_phone','oauth_failed','success','already_plus','failed','pending')");
