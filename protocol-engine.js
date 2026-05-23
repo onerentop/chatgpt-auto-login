@@ -365,10 +365,10 @@ class ProtocolEngine extends EventEmitter {
         // === Phase 3a: Stripe billing (HTTP) ===
         this.emitStatus({ email: account.email, status: 'running', phase: 'stripe-billing', progress });
         console.log(`[${progress}] Phase 3a: Stripe billing (HTTP)...`);
-        const billing = fetchAddress();  // reuse payment.js random US address
+        const billing = await fetchAddress();  // reuse payment.js random US address (async — must await)
         const b = await submitStripeBilling(link, fetchResult.pk, billing);
         if (!b.ok) {
-          console.log(`[${progress}] Stripe billing failed: ${b.reason}`);
+          console.log(`[${progress}] Stripe billing failed: ${b.reason} | body=${(b.raw || '').slice(0, 300)}`);
           this.emitStatus({ email: account.email, status: 'stripe_billing_error', phase: 'done', progress, reason: b.reason });
           summary.stripeBillingError++;
           continue;
@@ -385,7 +385,7 @@ class ProtocolEngine extends EventEmitter {
           sms_api_url: phoneSlot.smsApiUrl,
           proxy: proxyMgr.getProxyUrl(),
           worker_id: `wk-${Date.now()}-${i}`,
-          approval_url_pattern: 'chatgpt\\.com/agreements/approve',
+          approval_url_pattern: 'chatgpt\\.com/agreements/approve|pay\\.openai\\.com.*redirect_status=succeeded',
         });
         if (!payResult.ok) {
           console.log(`[${progress}] PayPal RPA failed: ${payResult.reason}`);

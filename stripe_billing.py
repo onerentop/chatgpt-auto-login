@@ -82,6 +82,23 @@ def main():
     city = inp.get('city', '')
     state = inp.get('state', '')
     zip_code = inp.get('zip', '')
+    # Normalize US state full names → 2-letter codes (Stripe rejects full names → "Invalid ZIP code.")
+    _US_STATES = {
+        "alabama":"AL","alaska":"AK","arizona":"AZ","arkansas":"AR","california":"CA",
+        "colorado":"CO","connecticut":"CT","delaware":"DE","florida":"FL","georgia":"GA",
+        "hawaii":"HI","idaho":"ID","illinois":"IL","indiana":"IN","iowa":"IA","kansas":"KS",
+        "kentucky":"KY","louisiana":"LA","maine":"ME","maryland":"MD","massachusetts":"MA",
+        "michigan":"MI","minnesota":"MN","mississippi":"MS","missouri":"MO","montana":"MT",
+        "nebraska":"NE","nevada":"NV","new hampshire":"NH","new jersey":"NJ","new mexico":"NM",
+        "new york":"NY","north carolina":"NC","north dakota":"ND","ohio":"OH","oklahoma":"OK",
+        "oregon":"OR","pennsylvania":"PA","rhode island":"RI","south carolina":"SC",
+        "south dakota":"SD","tennessee":"TN","texas":"TX","utah":"UT","vermont":"VT",
+        "virginia":"VA","washington":"WA","west virginia":"WV","wisconsin":"WI","wyoming":"WY",
+        "district of columbia":"DC",
+    }
+    if country == 'US' and state:
+        state = _US_STATES.get(state.strip().lower(), state)
+    _log(f"billing: country={country} state={state} city={city!r} zip={zip_code!r}")
     name = inp.get('name', 'Stripe Customer')
     email = inp.get('email', 'customer@example.com')
     proxy = inp.get('proxy') or None
@@ -156,8 +173,9 @@ def main():
     needs_tos = consent_collection.get("terms_of_service") not in (None, "", "none")
     top_checkout_config_id = init_payload.get("config_id", "")
     return_url_from_init = init_payload.get("return_url") or init_payload.get("url") or ""
+    pm_types_init = init_payload.get("payment_method_types") or []
     _log(f"      init_checksum={init_checksum[:12]}... amount={expected_amount} "
-         f"needs_tos={needs_tos}")
+         f"needs_tos={needs_tos} pm_types={pm_types_init}")
 
     # ─────────────────────────────────────────────────────────────
     # Step 2: POST /v1/payment_methods   (type=paypal)
