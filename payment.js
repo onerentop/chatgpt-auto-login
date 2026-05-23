@@ -652,4 +652,4 @@ async function autoPayment(page, phoneConfig) {
   return { success: paymentSuccess, reason: paymentSuccess ? '' : 'Payment redirect not detected' };
 }
 
-module.exports = { autoPayment, CONFIG, fetchAddress };
+module.exports = { autoPayment, CONFIG };

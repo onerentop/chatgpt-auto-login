@@ -11,8 +11,6 @@ const TYPE_MAP = {
   no_jp_proxy: 'warning',
   no_promo: 'info',
   verify_error: 'danger',
-  stripe_billing_error: 'danger',
-  activation_error: 'danger',
 }
 
 const LABEL_MAP = {
@@ -26,8 +24,6 @@ const LABEL_MAP = {
   no_jp_proxy: 'JP节点不可用',
   no_promo: '无0元资格',
   verify_error: 'Stripe验证失败',
-  stripe_billing_error: 'Stripe计费失败',
-  activation_error: '订阅激活超时',
 }
 
 export function statusType(s) {
