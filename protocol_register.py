@@ -585,6 +585,14 @@ def main():
     try:
         from curl_cffi import requests as curl_requests
 
+        # Convert http://... → socks5h://... since sing-box's mixed inbound serves
+        # both HTTP CONNECT and SOCKS5 on the same port. SOCKS5 has less framing
+        # overhead than HTTP CONNECT and avoids HTTP/2-over-CONNECT-tunnel issues
+        # with sing-box mixed inbound (SagerNet/sing-box#3945). 'socks5h' offloads
+        # DNS to the proxy, matching TUN-mode behavior so hostname and IP origin
+        # stay consistent (no IP/DNS mismatch as a risk-control signal).
+        if proxy_url and proxy_url.startswith('http://'):
+            proxy_url = 'socks5h://' + proxy_url[len('http://'):]
         proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
         if proxy_url:
             _log(f"Using proxy: {proxy_url}")
