@@ -10,7 +10,7 @@ const StreamZip = require('node-stream-zip');
 
 const ROOT = path.join(__dirname, '..', '..');
 const BIN_DIR = path.join(ROOT, 'bin');
-const SINGBOX_VERSION = '1.13.12';
+const SINGBOX_VERSION = '1.10.7';
 
 function getBinaryPath() {
   return process.platform === 'win32'
