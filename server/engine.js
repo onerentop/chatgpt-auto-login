@@ -377,7 +377,34 @@ class PipelineEngine extends EventEmitter {
                 const ctx = browser.contexts()[0];
                 const pages = ctx.pages();
                 const page = pages.length > 0 ? pages[0] : await ctx.newPage();
-                await page.goto(discord.link, { waitUntil: 'domcontentloaded', timeout: 30000 });
+                await page.goto(discord.link, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
+
+                // Node-level connectivity failure: if the page landed on
+                // chrome-error (ERR_CONNECTION_CLOSED, ERR_TIMED_OUT, etc.)
+                // or stayed on about:blank, the current sing-box node can't
+                // reach pay.openai.com. Blacklist it, rotate, and retry once
+                // before giving up. Mirrors protocol-engine.js so browser
+                // mode doesn't burn an account on a single bad node.
+                let pageUrl = page.url();
+                if (pageUrl.startsWith('chrome-error://') || pageUrl === 'about:blank') {
+                  const badNode = proxyMgr.getState().currentNode;
+                  console.log(`${p} Payment page unreachable via ${badNode} (${pageUrl.slice(0, 40)}); rotating + retrying`);
+                  if (proxyMgr.getState().enabled) {
+                    try { proxyMgr.markBad(badNode); } catch {}
+                    try { const n = await proxyMgr.rotate(); console.log(`${p} Retrying payment on ${n}`); } catch {}
+                  }
+                  await page.goto(discord.link, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
+                  pageUrl = page.url();
+                  if (pageUrl.startsWith('chrome-error://') || pageUrl === 'about:blank') {
+                    throw new Error(`Payment page unreachable after node rotation (${pageUrl.slice(0, 40)})`);
+                  }
+                }
+
+                // Pre-warm: let Stripe paint the PayPal accordion before
+                // autoPayment's readiness checks run. Soft timeout — failure
+                // just means slow load; autoPayment's waitForPageReady will
+                // still wait on the actual required elements.
+                try { await page.locator('text=PayPal').first().waitFor({ state: 'visible', timeout: 15000 }); } catch {}
                 await randomDelay(2000, 3000);
 
                 console.log(`${p} Phase 3: Auto-filling payment...`);
