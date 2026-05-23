@@ -281,3 +281,62 @@ test('U11 clearBlacklist syncs DB (no resurrection on restart)', () => {
   assert.strictEqual(p.isBad('node-a'), false);
   assert.deepStrictEqual(removeAllCalls, ['main']);
 });
+
+// ============== W1-W7: pickMainNodes — main-channel whitelist ==============
+
+test('W1 pickMainNodes: whitelist 非空时优先使用白名单', () => {
+  const all = [{ tag: 'nodeA' }, { tag: 'us-LA-1' }, { tag: 'us-NY-2' }];
+  const r = proxy.pickMainNodes(all, { regionFilter: 'US', whitelist: ['nodeA'] });
+  assert.strictEqual(r.usedWhitelist, true);
+  assert.strictEqual(r.filtered.length, 1);
+  assert.strictEqual(r.filtered[0].tag, 'nodeA');
+  assert.deepStrictEqual(r.misses, []);
+});
+
+test('W2 pickMainNodes: whitelist 空 → regionFilter 关键字分支', () => {
+  const all = [{ tag: 'nodeA' }, { tag: 'us-LA-1' }, { tag: 'us-NY-2' }];
+  const r = proxy.pickMainNodes(all, { regionFilter: 'US', whitelist: [] });
+  assert.strictEqual(r.usedWhitelist, false);
+  assert.strictEqual(r.filtered.length, 2);  // us-LA-1, us-NY-2 命中 US_PATTERNS
+  assert.deepStrictEqual(r.misses, []);
+});
+
+test('W3 pickMainNodes: cfg null/undefined 返回空', () => {
+  assert.deepStrictEqual(proxy.pickMainNodes([{ tag: 'x' }], null),
+    { filtered: [], misses: [], usedWhitelist: false });
+  assert.deepStrictEqual(proxy.pickMainNodes([{ tag: 'x' }], undefined),
+    { filtered: [], misses: [], usedWhitelist: false });
+});
+
+test('W4 pickMainNodes: whitelist 含不存在 tag 时收集 misses', () => {
+  const all = [{ tag: 'nodeA' }];
+  const r = proxy.pickMainNodes(all, { regionFilter: 'US', whitelist: ['nodeA', 'gone-1', 'gone-2'] });
+  assert.strictEqual(r.usedWhitelist, true);
+  assert.strictEqual(r.filtered.length, 1);
+  assert.strictEqual(r.filtered[0].tag, 'nodeA');
+  assert.deepStrictEqual(r.misses, ['gone-1', 'gone-2']);
+});
+
+test('W5 pickMainNodes: whitelist 非数组（字符串误填）视为空 → fallback regionFilter', () => {
+  const all = [{ tag: 'nodeA' }, { tag: 'us-LA-1' }];
+  const r = proxy.pickMainNodes(all, { regionFilter: 'US', whitelist: 'US' });
+  assert.strictEqual(r.usedWhitelist, false);
+  assert.strictEqual(r.filtered.length, 1);
+  assert.strictEqual(r.filtered[0].tag, 'us-LA-1');
+});
+
+test("W6 pickMainNodes: 双空 (whitelist=[], regionFilter='') → 全部节点", () => {
+  const all = [{ tag: 'nodeA' }, { tag: 'us-LA-1' }, { tag: 'jp-1' }];
+  const r = proxy.pickMainNodes(all, { regionFilter: '', whitelist: [] });
+  assert.strictEqual(r.usedWhitelist, false);
+  assert.strictEqual(r.filtered.length, 3);  // 全部通过
+  assert.deepStrictEqual(r.misses, []);
+});
+
+test('W7 pickMainNodes: regionFilter 字段缺失 → 默认 US', () => {
+  const all = [{ tag: 'nodeA' }, { tag: 'us-LA-1' }];
+  const r = proxy.pickMainNodes(all, { whitelist: [] });  // regionFilter undefined
+  assert.strictEqual(r.usedWhitelist, false);
+  assert.strictEqual(r.filtered.length, 1);  // 默认 US 过滤
+  assert.strictEqual(r.filtered[0].tag, 'us-LA-1');
+});

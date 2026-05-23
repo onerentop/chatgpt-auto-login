@@ -2,7 +2,7 @@
 const fs = require('fs');
 const path = require('path');
 const singbox = require('./singbox');
-const { fetchAndParse, filterByRegion, filterByJpKddi, filterByWhitelist } = require('./subscription');
+const { fetchAndParse, filterByRegion, filterByJpKddi, filterByWhitelist, US_PATTERNS } = require('./subscription');
 const clashApi = require('./clash-api');
 
 const ROOT = path.join(__dirname, '..', '..');
@@ -46,6 +46,8 @@ let _state = {
   badNodes: new Map(),   // tag → { expiresAt, reason, source }. Nodes that produced repeated TLS/network errors.
   failCount: new Map(),     // tag → 0..2
   failReasons: new Map(),   // tag → 最近一次原因 (60 字截断)
+  whitelist: [],          // 用户配置的 tag 数组（与 _state.jp.whitelist 同语义）
+  whitelistMisses: [],    // 订阅中缺失的 tag（UI 黄色提示）
   allTags: [],   // 订阅里全部节点 tag (refresh 时缓存，供 /api/proxy/nodes 用)
   jp: {
     enabled: false,
@@ -162,6 +164,32 @@ function getState() {
       badNodes: jpBadNodes,
     },
   };
+}
+
+/**
+ * Decide main-channel node pool.
+ * 与 pickJpNodes 同构：whitelist 非空时优先精确 tag 匹配；空时回退 regionFilter 关键字；
+ * 双空时（regionFilter 为空字符串/未设）返回全部节点。
+ *
+ * @param {Array} all                 — 订阅解析后的全部节点
+ * @param {Object} mainCfg            — cfg.proxy 子对象
+ * @param {Array<string>} mainCfg.whitelist
+ * @param {string} mainCfg.regionFilter
+ * @returns {{ filtered: Array, misses: string[], usedWhitelist: boolean }}
+ */
+function pickMainNodes(all, mainCfg) {
+  if (!mainCfg) return { filtered: [], misses: [], usedWhitelist: false };
+  const whitelist = Array.isArray(mainCfg.whitelist) ? mainCfg.whitelist : [];
+  if (whitelist.length > 0) {
+    const filtered = filterByWhitelist(all, whitelist);
+    const presentTags = new Set(all.map(o => o.tag));
+    const misses = whitelist.filter(t => typeof t === 'string' && t && !presentTags.has(t));
+    return { filtered, misses, usedWhitelist: true };
+  }
+  // ?? 而不是 ||：仅在 regionFilter 字段缺失（undefined/null）时默认 'US'；
+  // 显式空字符串透传给 filterByRegion，触发其 "不过滤" 分支（subscription.js:174）。
+  const filtered = filterByRegion(all, mainCfg.regionFilter ?? 'US');
+  return { filtered, misses: [], usedWhitelist: false };
 }
 
 function pickJpNodes(all, jpCfg) {
@@ -568,6 +596,8 @@ module.exports = {
   getProxyUrl,
   buildSingboxConfig,
   pickJpNodes,
+  pickMainNodes,
+  US_PATTERNS,
   // JP-Checkout channel
   getJpProxyUrl,
   rotateJp,
