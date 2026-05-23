@@ -727,7 +727,7 @@ def main():
             try:
                 sentinel = build_sentinel_token(session, device_id, flow="authorize_continue", user_agent=ua, sec_ch_ua=sec_ch_ua) or ""
             except Exception: pass
-            r = session.post(f"{AUTH}/api/accounts/authorize/continue",
+            r = _post_with_h1_fallback(session, f"{AUTH}/api/accounts/authorize/continue",
                 json={"username": {"kind": "email", "value": email}},
                 headers={"Accept": "application/json", "Content-Type": "application/json",
                     "Origin": AUTH, "Referer": final_url, "oai-device-id": device_id,
