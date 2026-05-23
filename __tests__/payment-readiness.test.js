@@ -61,3 +61,76 @@ test('waitForDomStable: deadline 已过返回 false', async () => {
   const ok = await _internal.waitForDomStable(page, 500, deadline);
   assert.strictEqual(ok, false);
 });
+
+// Mock a Playwright locator. callbackMap maps method-name → return value (sync or async).
+function mockLocator({ waitForOutcome = 'ok', isEnabledReturn = true } = {}) {
+  return {
+    first: function () { return this; },
+    async waitFor(_opts) { if (waitForOutcome === 'throw') throw new Error('timeout'); },
+    async isEnabled() { return isEnabledReturn; },
+    async count() { return 1; },
+  };
+}
+
+function mockPageForLocator(locatorBuilder, { evalReturn = true } = {}) {
+  return {
+    locator(_sel) { return locatorBuilder(_sel); },
+    async evaluate(fn, ...args) {
+      if (typeof fn === 'function') {
+        try { return fn(...args); } catch (e) { return evalReturn; }
+      }
+      return evalReturn;
+    },
+  };
+}
+
+test('checkElement kind=visible: locator OK + enabled → ok:true', async () => {
+  const page = mockPageForLocator(() => mockLocator({ waitForOutcome: 'ok', isEnabledReturn: true }));
+  const r = await _internal.checkElement(page, { name: 'foo', kind: 'visible', selector: '#x' }, 1000);
+  assert.deepStrictEqual(r, { name: 'foo', ok: true });
+});
+
+test('checkElement kind=visible: locator throw → ok:false', async () => {
+  const page = mockPageForLocator(() => mockLocator({ waitForOutcome: 'throw' }));
+  const r = await _internal.checkElement(page, { name: 'foo', kind: 'visible', selector: '#x' }, 1000);
+  assert.deepStrictEqual(r, { name: 'foo', ok: false });
+});
+
+test('checkElement kind=js: check 函数返回 true → ok:true', async () => {
+  const page = { async evaluate(fn) { return fn(); } };
+  const r = await _internal.checkElement(page, { name: 'price', kind: 'js', check: () => true }, 1000);
+  assert.deepStrictEqual(r, { name: 'price', ok: true });
+});
+
+test('checkElement kind=js: check 函数返回 false → ok:false', async () => {
+  const page = { async evaluate(fn) { return fn(); } };
+  const r = await _internal.checkElement(page, { name: 'price', kind: 'js', check: () => false }, 1000);
+  assert.deepStrictEqual(r, { name: 'price', ok: false });
+});
+
+test('checkElement kind=selectAny: 第一个 selector 命中即 ok', async () => {
+  let calls = 0;
+  const page = {
+    locator: (sel) => mockLocator({ waitForOutcome: 'ok' }),
+    async evaluate(fn, sel) {
+      calls++;
+      return { hasOptions: true };
+    },
+  };
+  const r = await _internal.checkElement(page,
+    { name: 'country', kind: 'selectAny', selectors: ['#a', '#b'] }, 1000);
+  assert.strictEqual(r.ok, true);
+});
+
+test('checkElement kind=text: anyOf 中任一可见 → ok', async () => {
+  const page = mockPageForLocator(() => mockLocator({ waitForOutcome: 'ok' }));
+  const r = await _internal.checkElement(page,
+    { name: 'dialog', kind: 'text', anyOf: ['Enter your code', '输入验证码'] }, 1000);
+  assert.deepStrictEqual(r, { name: 'dialog', ok: true });
+});
+
+test('checkElement: unknown kind → ok:false', async () => {
+  const page = mockPageForLocator(() => mockLocator());
+  const r = await _internal.checkElement(page, { name: 'foo', kind: 'unknown' }, 1000);
+  assert.deepStrictEqual(r, { name: 'foo', ok: false });
+});

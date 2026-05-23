@@ -105,4 +105,74 @@ async function waitForPageReady(page, profile, opts = {}) {
   return { ready: false, waitedMs: 0, missing: [] };
 }
 
-module.exports = { PROFILES, waitForPageReady, _internal: { waitForDomStable } };
+async function checkElement(page, spec, timeoutMs) {
+  const fail = { name: spec.name, ok: false };
+  const ok = { name: spec.name, ok: true };
+  try {
+    switch (spec.kind) {
+      case 'visible': {
+        const loc = page.locator(spec.selector).first();
+        await loc.waitFor({ state: 'visible', timeout: timeoutMs });
+        const enabled = await loc.isEnabled().catch(() => true);
+        return enabled ? ok : fail;
+      }
+      case 'attached': {
+        const loc = page.locator(spec.selector).first();
+        await loc.waitFor({ state: 'attached', timeout: timeoutMs });
+        return ok;
+      }
+      case 'select': {
+        const loc = page.locator(spec.selector).first();
+        await loc.waitFor({ state: 'visible', timeout: timeoutMs });
+        const hasOptions = await page.evaluate((sel) => {
+          const el = document.querySelector(sel);
+          return !!(el && el.tagName === 'SELECT' && el.options && el.options.length > 1);
+        }, spec.selector);
+        return hasOptions ? ok : fail;
+      }
+      case 'selectAny': {
+        for (const sel of (spec.selectors || [])) {
+          try {
+            const loc = page.locator(sel).first();
+            await loc.waitFor({ state: 'visible', timeout: Math.min(2000, timeoutMs) });
+            const hasOptions = await page.evaluate((s) => {
+              const el = document.querySelector(s);
+              return !!(el && el.tagName === 'SELECT' && el.options && el.options.length > 1);
+            }, sel);
+            if (hasOptions) return ok;
+          } catch (e) { /* try next */ }
+        }
+        return fail;
+      }
+      case 'visibleAny': {
+        for (const sel of (spec.selectors || [])) {
+          try {
+            const loc = page.locator(sel).first();
+            await loc.waitFor({ state: 'visible', timeout: Math.min(2000, timeoutMs) });
+            return ok;
+          } catch (e) { /* try next */ }
+        }
+        return fail;
+      }
+      case 'text': {
+        for (const t of (spec.anyOf || [])) {
+          try {
+            await page.locator(`text=${t}`).first().waitFor({ state: 'visible', timeout: Math.min(2000, timeoutMs) });
+            return ok;
+          } catch (e) { /* try next */ }
+        }
+        return fail;
+      }
+      case 'js': {
+        const result = await page.evaluate(spec.check).catch(() => false);
+        return result ? ok : fail;
+      }
+      default:
+        return fail;
+    }
+  } catch (e) {
+    return fail;
+  }
+}
+
+module.exports = { PROFILES, waitForPageReady, _internal: { waitForDomStable, checkElement } };
