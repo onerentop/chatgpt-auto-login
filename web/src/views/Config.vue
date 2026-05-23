@@ -390,19 +390,28 @@ async function rotateJp() {
   }
 }
 
+function normalizeBlacklist(data) {
+  return {
+    main: Array.isArray(data?.main) ? data.main : [],
+    jp: Array.isArray(data?.jp) ? data.jp : [],
+  }
+}
+
 async function loadBlacklist() {
   try {
     const { data } = await api.get('/proxy/blacklist')
-    blacklist.value = data
-  } catch {
-    blacklist.value = { main: [], jp: [] }
+    blacklist.value = normalizeBlacklist(data)
+  } catch (err) {
+    // Polling: keep last successful state to avoid table flicker on transient errors.
+    // Only log in dev so silent failures are still diagnosable.
+    if (import.meta.env.DEV) console.warn('[blacklist] poll failed:', err?.message)
   }
 }
 
 async function removeNode(tag, channel) {
   try {
     const { data } = await api.post('/proxy/blacklist/remove', { tag, channel })
-    blacklist.value = data
+    blacklist.value = normalizeBlacklist(data)
     ElMessage.success(`已移除 ${tag}`)
   } catch (err) {
     ElMessage.error(err.response?.data?.error || '移除失败')
@@ -419,7 +428,7 @@ async function clearChannel(channel) {
   } catch { return }
   try {
     const { data } = await api.post('/proxy/blacklist/clear', { channel })
-    blacklist.value = data
+    blacklist.value = normalizeBlacklist(data)
     ElMessage.success('已清空')
   } catch (err) {
     ElMessage.error(err.response?.data?.error || '清空失败')
@@ -427,7 +436,7 @@ async function clearChannel(channel) {
 }
 
 function formatTtl(ms) {
-  if (ms <= 0) return '已过期'
+  if (typeof ms !== 'number' || !Number.isFinite(ms) || ms <= 0) return '已过期'
   const min = Math.floor(ms / 60000)
   const sec = Math.floor((ms % 60000) / 1000)
   return min > 0 ? `${min}m ${sec}s` : `${sec}s`
