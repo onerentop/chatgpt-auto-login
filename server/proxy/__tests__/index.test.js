@@ -113,3 +113,137 @@ test('pickJpNodes: whitelist 非数组（字符串误填）视为空 → fallbac
   assert.strictEqual(r.filtered.length, 1);
   assert.strictEqual(r.filtered[0].tag, 'KDDI-1');
 });
+
+// ============== U1-U10: blacklist counter API ==============
+// Use a fresh require for the proxy module (it caches state internally) plus
+// mock blacklist module so persistence calls don't blow up in unit tests.
+
+const Module = require('module');
+
+function freshProxy({ blacklistMock } = {}) {
+  const origRequire = Module.prototype.require;
+  const blMock = blacklistMock || { add: () => {}, remove: () => {}, removeAll: () => {}, loadAll: () => [], pruneExpired: () => {}, __setDb: () => {} };
+  Module.prototype.require = function (id) {
+    if (id === './blacklist') return blMock;
+    return origRequire.apply(this, arguments);
+  };
+  delete require.cache[require.resolve('../index')];
+  delete require.cache[require.resolve('../blacklist')];
+  const p = require('../index');
+  Module.prototype.require = origRequire;
+  return p;
+}
+
+test('U1 recordBadAttempt 第 1、2 次不入黑名单', () => {
+  const p = freshProxy();
+  const r1 = p.recordBadAttempt('us-1', 'main', 'tls');
+  assert.strictEqual(r1.blacklisted, false);
+  assert.strictEqual(r1.count, 1);
+  const r2 = p.recordBadAttempt('us-1', 'main', 'tls');
+  assert.strictEqual(r2.blacklisted, false);
+  assert.strictEqual(r2.count, 2);
+  assert.strictEqual(p.isBad('us-1'), false);
+});
+
+test('U2 recordBadAttempt 连续 3 次：入黑名单，failCount 清零', () => {
+  const calls = [];
+  const blMock = { add: (tag, ch, ttl, reason, src) => calls.push({ tag, ch, ttl, reason, src }), remove: () => {}, removeAll: () => {}, loadAll: () => [], pruneExpired: () => {}, __setDb: () => {} };
+  const p = freshProxy({ blacklistMock: blMock });
+  p.recordBadAttempt('us-1', 'main', 'tls');
+  p.recordBadAttempt('us-1', 'main', 'tls');
+  const r3 = p.recordBadAttempt('us-1', 'main', 'tls');
+  assert.strictEqual(r3.blacklisted, true);
+  assert.strictEqual(r3.count, 3);
+  assert.strictEqual(p.isBad('us-1'), true);
+  assert.strictEqual(calls.length, 1, '应调一次 blacklist.add');
+  assert.strictEqual(calls[0].src, 'auto');
+  const r4 = p.recordBadAttempt('us-1', 'main', 'tls');
+  assert.strictEqual(r4.count, 1, '入黑名单后 failCount 已清零');
+});
+
+test('U3 2 次 bad + 1 次 good + 1 次 bad：不入黑名单', () => {
+  const p = freshProxy();
+  p.recordBadAttempt('us-1', 'main', 'tls');
+  p.recordBadAttempt('us-1', 'main', 'tls');
+  p.recordGoodAttempt('us-1', 'main');
+  const r = p.recordBadAttempt('us-1', 'main', 'tls');
+  assert.strictEqual(r.blacklisted, false);
+  assert.strictEqual(r.count, 1, 'good 之后 bad 计数从 1 重新开始');
+});
+
+test('U4 main 与 jp 通道独立计数（同 tag）', () => {
+  const p = freshProxy();
+  p.recordBadAttempt('node-X', 'main', 'a');
+  p.recordBadAttempt('node-X', 'main', 'a');
+  p.recordBadAttempt('node-X', 'jp', 'b');
+  assert.strictEqual(p.isBad('node-X'), false);
+  assert.strictEqual(p.isJpBad('node-X'), false);
+  p.recordBadAttempt('node-X', 'main', 'a');
+  assert.strictEqual(p.isBad('node-X'), true);
+  assert.strictEqual(p.isJpBad('node-X'), false, 'jp 通道独立');
+});
+
+test('U5 blacklistManually 立即入黑名单且清掉计数器', () => {
+  const calls = [];
+  const blMock = { add: (tag, ch, ttl, reason, src) => calls.push({ tag, ch, ttl, reason, src }), remove: () => {}, removeAll: () => {}, loadAll: () => [], pruneExpired: () => {}, __setDb: () => {} };
+  const p = freshProxy({ blacklistMock: blMock });
+  p.recordBadAttempt('us-1', 'main', 'tls');
+  p.blacklistManually('us-1', 'main', 60000, 'manual disable');
+  assert.strictEqual(p.isBad('us-1'), true);
+  assert.strictEqual(calls.length, 1);
+  assert.strictEqual(calls[0].src, 'manual');
+  p.removeFromBlacklist('us-1', 'main');
+  const r = p.recordBadAttempt('us-1', 'main', 'tls');
+  assert.strictEqual(r.count, 1, 'manual 入黑名单时也应清 failCount');
+});
+
+test('U6 removeFromBlacklist 联动持久化层', () => {
+  const removes = [];
+  const blMock = { add: () => {}, remove: (tag, ch) => removes.push({ tag, ch }), removeAll: () => {}, loadAll: () => [], pruneExpired: () => {}, __setDb: () => {} };
+  const p = freshProxy({ blacklistMock: blMock });
+  p.blacklistManually('us-1', 'main', 60000, 'm');
+  p.removeFromBlacklist('us-1', 'main');
+  assert.strictEqual(p.isBad('us-1'), false);
+  assert.deepStrictEqual(removes, [{ tag: 'us-1', ch: 'main' }]);
+});
+
+test('U7 isBad 对过期 entry：删除内存 + 调 blacklist.remove，返回 false', () => {
+  const removes = [];
+  const blMock = { add: () => {}, remove: (tag, ch) => removes.push({ tag, ch }), removeAll: () => {}, loadAll: () => [], pruneExpired: () => {}, __setDb: () => {} };
+  const p = freshProxy({ blacklistMock: blMock });
+  p.blacklistManually('us-1', 'main', -1000, 'expired');
+  const v = p.isBad('us-1');
+  assert.strictEqual(v, false);
+  assert.deepStrictEqual(removes, [{ tag: 'us-1', ch: 'main' }]);
+});
+
+test('U8 getState().badNodes shape 为 {tag: {expiresAt, reason, source}}', () => {
+  const p = freshProxy();
+  p.blacklistManually('us-1', 'main', 60000, 'm', 'manual');
+  const state = p.getState();
+  const entry = state.badNodes['us-1'];
+  assert.strictEqual(typeof entry, 'object');
+  assert.strictEqual(typeof entry.expiresAt, 'number');
+  assert.strictEqual(entry.reason, 'm');
+  assert.strictEqual(entry.source, 'manual');
+});
+
+test('U9 isProxyNetError 命中 / 不命中', () => {
+  const p = freshProxy();
+  assert.ok(p.isProxyNetError('ECONNRESET'));
+  assert.ok(p.isProxyNetError('connect ETIMEDOUT 1.2.3.4:443'));
+  assert.ok(p.isProxyNetError('socket hang up'));
+  assert.ok(p.isProxyNetError('getaddrinfo ENOTFOUND foo'));
+  assert.ok(p.isProxyNetError('ECONNREFUSED'));
+  assert.ok(p.isProxyNetError('net::ERR_TUNNEL_CONNECTION_FAILED'));
+  assert.ok(p.isProxyNetError('net::ERR_PROXY_CONNECTION_FAILED'));
+  assert.strictEqual(p.isProxyNetError('account_deactivated'), false);
+  assert.strictEqual(p.isProxyNetError('invalid password'), false);
+  assert.strictEqual(p.isProxyNetError(''), false);
+  assert.strictEqual(p.isProxyNetError(null), false);
+});
+
+test('U10 FAIL_THRESHOLD 通过 module export 可读', () => {
+  const p = freshProxy();
+  assert.strictEqual(p.FAIL_THRESHOLD, 3);
+});

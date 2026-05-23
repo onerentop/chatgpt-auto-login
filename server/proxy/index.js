@@ -18,6 +18,15 @@ const JP_DEFAULT_KEYWORD = 'KDDI';
 
 const BAD_NODE_TTL_MS = 30 * 60 * 1000;  // 30 min — nodes recover eventually
 
+const FAIL_THRESHOLD = 3;
+const blacklist = require('./blacklist');
+
+const PROXY_NET_ERROR_RE = /ECONNRESET|ETIMEDOUT|socket hang up|getaddrinfo|ECONNREFUSED|tunneling socket|net::ERR_(PROXY|TUNNEL|CONNECTION_RESET|TIMED_OUT|EMPTY_RESPONSE)/i;
+
+function isProxyNetError(msg) {
+  return PROXY_NET_ERROR_RE.test(String(msg || ''));
+}
+
 let _state = {
   enabled: false,
   subscriptionUrl: '',
@@ -29,7 +38,9 @@ let _state = {
   rotationKeyword: 'US', // region filter
   lastError: '',
   exitIp: '',
-  badNodes: new Map(),   // tag → expiry timestamp (ms). Nodes that produced repeated TLS/network errors.
+  badNodes: new Map(),   // tag → { expiresAt, reason, source }. Nodes that produced repeated TLS/network errors.
+  failCount: new Map(),     // tag → 0..2
+  failReasons: new Map(),   // tag → 最近一次原因 (60 字截断)
   allTags: [],   // 订阅里全部节点 tag (refresh 时缓存，供 /api/proxy/nodes 用)
   jp: {
     enabled: false,
@@ -42,6 +53,8 @@ let _state = {
     rotationStrategy: 'sequential',
     rotationIndex: 0,
     badNodes: new Map(),
+    failCount: new Map(),
+    failReasons: new Map(),
     exitIp: '',
     lastError: '',
   },
@@ -52,30 +65,88 @@ function readCfg() {
 }
 
 function isBad(tag) {
-  const expiry = _state.badNodes.get(tag);
-  if (!expiry) return false;
-  if (Date.now() > expiry) { _state.badNodes.delete(tag); return false; }
+  const entry = _state.badNodes.get(tag);
+  if (!entry) return false;
+  // Support legacy number value (defensive); new value is { expiresAt, reason, source }
+  const expiresAt = typeof entry === 'number' ? entry : entry.expiresAt;
+  if (Date.now() > expiresAt) {
+    _state.badNodes.delete(tag);
+    try { blacklist.remove(tag, 'main'); } catch {}
+    return false;
+  }
   return true;
 }
 
-function markBad(tag, ttlMs = BAD_NODE_TTL_MS) {
-  if (!tag) return;
-  _state.badNodes.set(tag, Date.now() + ttlMs);
-  console.log(`[Proxy] Marked bad: ${tag} (TTL ${Math.round(ttlMs/60000)}min)`);
+function _addToBlacklist(tag, channel, ttlMs, reason, source) {
+  const expiresAt = Date.now() + ttlMs;
+  const entry = { expiresAt, reason: String(reason).slice(0, 60), source };
+  const ns = channel === 'jp' ? _state.jp : _state;
+  ns.badNodes.set(tag, entry);
+  try { blacklist.add(tag, channel, ttlMs, reason, source); } catch (e) { console.log(`[Proxy] blacklist.add failed: ${e.message?.slice(0, 60)}`); }
 }
+
+function recordBadAttempt(tag, channel, reason = '') {
+  if (!tag) return { blacklisted: false, count: 0 };
+  const ns = channel === 'jp' ? _state.jp : _state;
+  const next = (ns.failCount.get(tag) || 0) + 1;
+  ns.failCount.set(tag, next);
+  ns.failReasons.set(tag, String(reason).slice(0, 60));
+  console.log(`[Proxy${channel === 'jp' ? ':JP' : ''}] Bad attempt ${next}/${FAIL_THRESHOLD} on ${tag} (${String(reason).slice(0, 40)})`);
+  if (next >= FAIL_THRESHOLD) {
+    _addToBlacklist(tag, channel, BAD_NODE_TTL_MS, reason, 'auto');
+    ns.failCount.delete(tag);
+    ns.failReasons.delete(tag);
+    return { blacklisted: true, count: next };
+  }
+  return { blacklisted: false, count: next };
+}
+
+function recordGoodAttempt(tag, channel) {
+  if (!tag) return;
+  const ns = channel === 'jp' ? _state.jp : _state;
+  if (ns.failCount.has(tag)) {
+    ns.failCount.delete(tag);
+    ns.failReasons.delete(tag);
+  }
+}
+
+function blacklistManually(tag, channel, ttlMs = BAD_NODE_TTL_MS, reason = 'manual') {
+  if (!tag) throw new Error('tag required');
+  _addToBlacklist(tag, channel, ttlMs, reason, 'manual');
+  const ns = channel === 'jp' ? _state.jp : _state;
+  ns.failCount.delete(tag);
+  ns.failReasons.delete(tag);
+}
+
+function removeFromBlacklist(tag, channel) {
+  const ns = channel === 'jp' ? _state.jp : _state;
+  ns.badNodes.delete(tag);
+  try { blacklist.remove(tag, channel); } catch {}
+}
+
+function clearBlacklist(channel) {
+  const ns = channel === 'jp' ? _state.jp : _state;
+  ns.badNodes.clear();
+  try { blacklist.removeAll(channel); } catch {}
+}
+
+// Legacy aliases — preserve existing call sites in engine / chatgpt-checkout
+function markBad(tag) { return recordBadAttempt(tag, 'main', 'legacy markBad'); }
+function markJpBad(tag) { return recordBadAttempt(tag, 'jp', 'legacy markJpBad'); }
 
 function getState() {
   const now = Date.now();
-  const badNodes = {};
-  for (const [tag, expiry] of _state.badNodes.entries()) {
-    if (expiry > now) badNodes[tag] = expiry;
-    else _state.badNodes.delete(tag);
-  }
-  const jpBadNodes = {};
-  for (const [tag, expiry] of _state.jp.badNodes.entries()) {
-    if (expiry > now) jpBadNodes[tag] = expiry;
-    else _state.jp.badNodes.delete(tag);
-  }
+  const normalize = (map) => {
+    const out = {};
+    for (const [tag, entry] of map.entries()) {
+      const obj = typeof entry === 'number' ? { expiresAt: entry, reason: '', source: 'auto' } : entry;
+      if (obj.expiresAt > now) out[tag] = obj;
+      else map.delete(tag);
+    }
+    return out;
+  };
+  const badNodes = normalize(_state.badNodes);
+  const jpBadNodes = normalize(_state.jp.badNodes);
   return {
     ..._state,
     available: _state.nodeTags.length,
@@ -440,16 +511,15 @@ function getJpProxyUrl() {
 }
 
 function isJpBad(tag) {
-  const expiry = _state.jp.badNodes.get(tag);
-  if (!expiry) return false;
-  if (Date.now() > expiry) { _state.jp.badNodes.delete(tag); return false; }
+  const entry = _state.jp.badNodes.get(tag);
+  if (!entry) return false;
+  const expiresAt = typeof entry === 'number' ? entry : entry.expiresAt;
+  if (Date.now() > expiresAt) {
+    _state.jp.badNodes.delete(tag);
+    try { blacklist.remove(tag, 'jp'); } catch {}
+    return false;
+  }
   return true;
-}
-
-function markJpBad(tag, ttlMs = BAD_NODE_TTL_MS) {
-  if (!tag) return;
-  _state.jp.badNodes.set(tag, Date.now() + ttlMs);
-  console.log(`[Proxy:JP] Marked bad: ${tag} (TTL ${Math.round(ttlMs / 60000)}min)`);
 }
 
 module.exports = {
@@ -470,6 +540,14 @@ module.exports = {
   detectJpExit,
   markJpBad,
   isJpBad,
+  // blacklist + counter API
+  recordBadAttempt,
+  recordGoodAttempt,
+  blacklistManually,
+  removeFromBlacklist,
+  clearBlacklist,
+  isProxyNetError,
+  FAIL_THRESHOLD,
   // constants
   SELECTOR_TAG,
   JP_SELECTOR_TAG,
