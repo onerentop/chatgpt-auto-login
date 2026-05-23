@@ -503,18 +503,20 @@ async function runPayPalFlow(page, opts) {
     process.exit(0);
   }
 
-  const workerSlug = String(input.worker_id || '').replace(/[^A-Za-z0-9_-]/g, '') || String(Date.now());
-  const tempDir = path.join(os.tmpdir(), `paypal-rpa-${workerSlug}`);
-
+  let browser;
   let context;
   try {
-    context = await chromium.launchPersistentContext(tempDir, {
+    // True incognito: chromium.launch() + newContext() — memory-only, no disk profile.
+    // Matches server/chrome.js convention of passing --incognito to PipelineEngine's Chrome.
+    browser = await chromium.launch({
       headless: false,  // critical: PayPal fraud detection penalizes headless
       proxy: input.proxy ? { server: input.proxy } : undefined,
-      viewport: { width: 1280, height: 800 },
-      args: ['--disable-blink-features=AutomationControlled'],
+      args: ['--incognito', '--disable-blink-features=AutomationControlled'],
     });
-    const page = context.pages()[0] || (await context.newPage());
+    context = await browser.newContext({
+      viewport: { width: 1280, height: 800 },
+    });
+    const page = await context.newPage();
 
     // Inject CSS to hide CAPTCHA / autocomplete overlays
     await page.addStyleTag({
@@ -537,6 +539,6 @@ async function runPayPalFlow(page, opts) {
     console.log(JSON.stringify({ status: 'error', reason, detail: msg.slice(0, 200) }));
   } finally {
     if (context) await context.close().catch(() => {});
-    try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {}
+    if (browser) await browser.close().catch(() => {});
   }
 })();
