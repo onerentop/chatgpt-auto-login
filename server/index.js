@@ -49,7 +49,7 @@ initDB().then(() => {
     try {
       const fs = require('fs');
       const cfg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'config.json'), 'utf-8'));
-      if (cfg.proxy?.enabled) {
+      if (cfg.proxy?.enabled || cfg.proxy?.jpCheckout?.enabled) {
         const proxyMgr = require('./proxy');
         proxyMgr.refresh().then((n) => {
           console.log(`[Proxy] Auto-started: ${n} nodes, current: ${proxyMgr.getState().currentNode}`);

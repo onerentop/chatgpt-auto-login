@@ -103,17 +103,24 @@ function pickJpNodes(all, jpCfg) {
   return { filtered, misses: [], usedWhitelist: false };
 }
 
-function buildSingboxConfig(us, jp /* nullable */) {
-  const inbounds = [
-    { type: 'mixed', tag: 'in-mixed', listen: '127.0.0.1', listen_port: HTTP_PORT, sniff: true },
-  ];
-  const outbounds = [
-    { type: 'selector', tag: SELECTOR_TAG, outbounds: us.map(o => o.tag), default: us[0]?.tag },
-    ...us,
-  ];
+function buildSingboxConfig(us /* nullable */, jp /* nullable */) {
+  const hasUs = Array.isArray(us) && us.length > 0;
+  const hasJp = Array.isArray(jp) && jp.length > 0;
+  if (!hasUs && !hasJp) {
+    throw new Error('buildSingboxConfig: 主代理与 JP 通道至少需要一个有节点');
+  }
+
+  const inbounds = [];
+  const outbounds = [];
   const rules = [];
 
-  if (Array.isArray(jp) && jp.length > 0) {
+  if (hasUs) {
+    inbounds.push({ type: 'mixed', tag: 'in-mixed', listen: '127.0.0.1', listen_port: HTTP_PORT, sniff: true });
+    outbounds.push({ type: 'selector', tag: SELECTOR_TAG, outbounds: us.map(o => o.tag), default: us[0].tag });
+    outbounds.push(...us);
+  }
+
+  if (hasJp) {
     inbounds.push({ type: 'mixed', tag: 'in-jp', listen: '127.0.0.1', listen_port: JP_HTTP_PORT, sniff: true });
     outbounds.push({ type: 'selector', tag: JP_SELECTOR_TAG, outbounds: jp.map(o => o.tag), default: jp[0].tag });
     outbounds.push(...jp);
@@ -133,18 +140,24 @@ function buildSingboxConfig(us, jp /* nullable */) {
       },
     },
     route: {
-      final: SELECTOR_TAG,
+      final: hasUs ? SELECTOR_TAG : JP_SELECTOR_TAG,
       rules,
     },
   };
 }
 
-/** Refresh subscription and (re)start sing-box. Returns the number of nodes loaded. */
+/** Refresh subscription and (re)start sing-box. Returns the number of US-channel nodes loaded.
+ *  Main channel (US) and JP-Checkout channel are independently enabled via
+ *  config.proxy.enabled and config.proxy.jpCheckout.enabled. At least one must be true.
+ */
 async function refresh() {
   const cfg = readCfg().proxy || {};
   _state.subscriptionUrl = cfg.subscriptionUrl || '';
   _state.rotationKeyword = cfg.regionFilter || 'US';
   _state.rotationStrategy = cfg.rotationStrategy || 'sequential';
+
+  // Default true keeps backward-compat for configs without an explicit `enabled` field.
+  const mainEnabledByConfig = cfg.enabled !== false;
 
   const jpCfg = cfg.jpCheckout || {};
   const jpEnabledByConfig = jpCfg.enabled !== false;
@@ -152,6 +165,9 @@ async function refresh() {
   _state.jp.rotationStrategy = jpCfg.rotationStrategy || 'sequential';
   _state.jp.whitelist = Array.isArray(jpCfg.whitelist) ? jpCfg.whitelist : [];
 
+  if (!mainEnabledByConfig && !jpEnabledByConfig) {
+    throw new Error('主代理与 JP 通道均未启用，至少需启用一个');
+  }
   if (!_state.subscriptionUrl) throw new Error('未配置机场订阅 URL');
 
   console.log(`[Proxy] Fetching subscription...`);
@@ -159,61 +175,78 @@ async function refresh() {
   console.log(`[Proxy] Total nodes parsed: ${all.length}`);
   _state.allTags = all.map(o => o.tag);
 
-  const filtered = filterByRegion(all, _state.rotationKeyword);
-  console.log(`[Proxy] After region filter (${_state.rotationKeyword}): ${filtered.length}`);
-  if (filtered.length === 0) throw new Error(`没有匹配地区 "${_state.rotationKeyword}" 的节点`);
+  // Main channel filtering — strict only when enabled by config.
+  let filtered = [];
+  if (mainEnabledByConfig) {
+    filtered = filterByRegion(all, _state.rotationKeyword);
+    console.log(`[Proxy] After region filter (${_state.rotationKeyword}): ${filtered.length}`);
+    if (filtered.length === 0) throw new Error(`没有匹配地区 "${_state.rotationKeyword}" 的节点`);
+  } else {
+    console.log(`[Proxy] Main channel disabled by config`);
+  }
 
-  const jpPick = pickJpNodes(all, { ...jpCfg, enabled: jpEnabledByConfig });
-  const jpFiltered = jpPick.filtered;
-  _state.jp.whitelistMisses = jpPick.misses;
-  if (jpPick.usedWhitelist) {
-    console.log(`[Proxy] JP whitelist: ${jpFiltered.length}/${_state.jp.whitelist.length} matched (${jpPick.misses.length} missing${jpPick.misses.length > 0 ? ': ' + jpPick.misses.join(', ') : ''})`);
-  } else if (jpEnabledByConfig) {
-    console.log(`[Proxy] JP-KDDI filter (keyword=${_state.jp.keyword}): ${jpFiltered.length}`);
+  // JP channel filtering — strict only when enabled by config.
+  let jpFiltered = [];
+  let jpPick = { filtered: [], misses: [], usedWhitelist: false };
+  if (jpEnabledByConfig) {
+    jpPick = pickJpNodes(all, jpCfg);
+    jpFiltered = jpPick.filtered;
+    if (jpPick.usedWhitelist) {
+      console.log(`[Proxy] JP whitelist: ${jpFiltered.length}/${_state.jp.whitelist.length} matched (${jpPick.misses.length} missing${jpPick.misses.length > 0 ? ': ' + jpPick.misses.join(', ') : ''})`);
+    } else {
+      console.log(`[Proxy] JP-KDDI filter (keyword=${_state.jp.keyword}): ${jpFiltered.length}`);
+    }
+    if (jpPick.usedWhitelist && jpFiltered.length === 0) {
+      throw new Error(`JP 白名单 [${_state.jp.whitelist.join(', ')}] 在订阅中无任何匹配`);
+    }
+    if (!jpPick.usedWhitelist && jpFiltered.length === 0) {
+      throw new Error(`JP 通道：订阅中未找到关键字 "${_state.jp.keyword}" 的节点`);
+    }
   } else {
     console.log(`[Proxy] JP-Checkout channel disabled by config`);
   }
+  _state.jp.whitelistMisses = jpPick.misses;
 
   _state.outbounds = filtered;
   _state.nodeTags = filtered.map(o => o.tag);
   _state.rotationIndex = 0;
+  _state.currentNode = filtered[0]?.tag || '';
 
   _state.jp.outbounds = jpFiltered;
   _state.jp.nodeTags = jpFiltered.map(o => o.tag);
   _state.jp.rotationIndex = 0;
   _state.jp.currentNode = jpFiltered[0]?.tag || '';
-  _state.jp.enabled = false;
   _state.jp.lastError = '';
-  if (!jpEnabledByConfig) {
-    _state.jp.lastError = 'JP 通道已被 config.jpCheckout.enabled=false 禁用';
-  } else if (jpPick.usedWhitelist && jpFiltered.length === 0) {
-    _state.jp.lastError = `白名单 [${_state.jp.whitelist.join(', ')}] 在订阅中无任何匹配`;
-  } else if (!jpPick.usedWhitelist && jpFiltered.length === 0) {
-    _state.jp.lastError = `订阅中未找到关键字 "${_state.jp.keyword}" 的节点`;
-  }
 
-  const useJp = jpEnabledByConfig && jpFiltered.length > 0;
-  const sbConfig = buildSingboxConfig(filtered, useJp ? jpFiltered : null);
+  const sbConfig = buildSingboxConfig(
+    mainEnabledByConfig ? filtered : null,
+    jpEnabledByConfig ? jpFiltered : null,
+  );
 
   try {
     await singbox.start(sbConfig);
-    _state.jp.enabled = useJp;
+    _state.enabled = mainEnabledByConfig;
+    _state.jp.enabled = jpEnabledByConfig;
   } catch (err) {
-    if (useJp && /7891|address already in use|bind/i.test(err.message || '')) {
+    // 7891 collision: degrade only when main channel is also enabled (otherwise we'd start nothing).
+    if (mainEnabledByConfig && jpEnabledByConfig && /7891|address already in use|bind/i.test(err.message || '')) {
       console.log(`[Proxy] 7891 端口被占用或绑定失败，降级关闭 JP 通道: ${err.message}`);
-      _state.jp.enabled = false;
       _state.jp.lastError = `端口 7891 被占用，JP 通道已禁用: ${(err.message || '').slice(0, 120)}`;
       const fallbackConfig = buildSingboxConfig(filtered, null);
       await singbox.start(fallbackConfig);
+      _state.enabled = true;
+      _state.jp.enabled = false;
     } else {
+      _state.enabled = false;
+      _state.jp.enabled = false;
       throw err;
     }
   }
 
-  _state.enabled = true;
-  _state.currentNode = filtered[0].tag;
   _state.lastError = '';
-  console.log(`[Proxy] sing-box running: main=:${HTTP_PORT}(${filtered.length}) jp=${_state.jp.enabled ? `:${JP_HTTP_PORT}(${jpFiltered.length})` : 'disabled'}`);
+  const mainDesc = _state.enabled ? `:${HTTP_PORT}(${filtered.length})` : 'disabled';
+  const jpDesc = _state.jp.enabled ? `:${JP_HTTP_PORT}(${jpFiltered.length})` : 'disabled';
+  console.log(`[Proxy] sing-box running: main=${mainDesc} jp=${jpDesc}`);
   return filtered.length;
 }
 

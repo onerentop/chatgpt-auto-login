@@ -43,6 +43,24 @@ test('buildSingboxConfig: outbounds 含 direct + block 兜底', () => {
   assert.ok(tags.includes('block'));
 });
 
+test('buildSingboxConfig: 仅 JP 池（主代理 off）不监听 7890，final 切到 jp-checkout', () => {
+  const jp = [{ type: 'shadowsocks', tag: 'jp-KDDI-01' }, { type: 'shadowsocks', tag: 'jp-KDDI-02' }];
+  const cfg = proxy.buildSingboxConfig(null, jp);
+  assert.strictEqual(cfg.inbounds.length, 1);
+  assert.strictEqual(cfg.inbounds[0].tag, 'in-jp');
+  assert.strictEqual(cfg.inbounds[0].listen_port, 7891);
+  const selectorTags = cfg.outbounds.filter(o => o.type === 'selector').map(o => o.tag);
+  assert.deepStrictEqual(selectorTags, ['jp-checkout']);
+  assert.strictEqual(cfg.route.final, 'jp-checkout');
+  assert.strictEqual(cfg.route.rules.length, 1);
+  assert.deepStrictEqual(cfg.route.rules[0], { inbound: 'in-jp', outbound: 'jp-checkout' });
+});
+
+test('buildSingboxConfig: us=[] + jp=[] 抛错（无意义启动）', () => {
+  assert.throws(() => proxy.buildSingboxConfig(null, null), /至少需要一个有节点/);
+  assert.throws(() => proxy.buildSingboxConfig([], []), /至少需要一个有节点/);
+});
+
 test('pickJpNodes: whitelist 非空时优先使用白名单', () => {
   const all = [{ tag: 'nodeA' }, { tag: 'KDDI-1' }, { tag: 'KDDI-2' }];
   const r = proxy.pickJpNodes(all, { enabled: true, keyword: 'KDDI', whitelist: ['nodeA'] });
