@@ -12,6 +12,11 @@ const { randomDelay, saveCPAAuthFile } = require('./utils');
 const { connectGateway, getPaymentLink } = require('./server/discord-gateway');
 const { fetchCheckoutLink } = require('./server/chatgpt-checkout');
 const { verifyCheckoutIsFree } = require('./server/stripe-verify');
+const { submitStripeBilling } = require('./server/stripe-billing');
+const { runPayPalRpa } = require('./server/paypal-rpa');
+const { confirmSubscriptionActivation } = require('./server/manual-approval');
+const { fetchPkceTokensProtocol } = require('./server/pkce-oauth');
+const { fetchAddress } = require('./payment');
 const { launchChrome, waitForCDP } = require('./server/chrome');
 const proxyMgr = require('./server/proxy');
 
@@ -184,7 +189,7 @@ class ProtocolEngine extends EventEmitter {
     if (accounts.length === 0) throw new Error('No accounts');
 
     const runtimeCfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf-8'));
-    const summary = { total: accounts.length, success: 0, noLink: 0, error: 0, noJpProxy: 0, noPromo: 0, verifyError: 0 };
+    const summary = { total: accounts.length, success: 0, noLink: 0, error: 0, noJpProxy: 0, noPromo: 0, verifyError: 0, stripeBillingError: 0, activationError: 0 };
 
     // Rate-limit / anti-bot cooldown configuration
     const COOLDOWN_THRESHOLD = 3;          // N consecutive failures triggers cooldown
@@ -357,88 +362,71 @@ class ProtocolEngine extends EventEmitter {
           console.log(`[${progress}] ✓ Verified $0 + coupons=[${v.coupons.join(',')}]`);
         }
 
-        // Step 3: Payment (fresh Chrome for each account)
-        const port = 9222 + i;
-        const tempDir = path.join(os.tmpdir(), `proto-pay-${Date.now()}-${i}`);
-        let chromeProc = null, browser = null;
-        try {
-          this.emitStatus({ email: account.email, status: 'running', phase: 'payment', progress });
-          console.log(`[${progress}] Opening payment: ${link}`);
-          chromeProc = launchChrome(port, tempDir, { proxyServer: proxyMgr.getProxyUrl() || undefined });
-          browser = await waitForCDP(port);
-          this._chromeProc = chromeProc;
-          this._browser = browser;
-          this._tempDir = tempDir;
-
-          const ctx = browser.contexts()[0];
-          const page = ctx.pages()[0] || await ctx.newPage();
-          await page.goto(link, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
-
-          // If the page landed on chrome-error (ERR_CONNECTION_CLOSED, etc.) the
-          // current proxy node can't reach pay.openai.com. Blacklist it, rotate,
-          // and retry once on a fresh route before giving up.
-          let pageUrl = page.url();
-          if (pageUrl.startsWith('chrome-error://') || pageUrl === 'about:blank') {
-            const badNode = proxyMgr.getState().currentNode;
-            console.log(`[${progress}] Payment page unreachable via ${badNode} (${pageUrl.slice(0, 40)}); rotating + retrying`);
-            if (proxyMgr.getState().enabled) {
-              try { proxyMgr.markBad(badNode); } catch {}
-              try { const n = await proxyMgr.rotate(); console.log(`[${progress}] Retrying payment on ${n}`); } catch {}
-            }
-            await page.goto(link, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
-            pageUrl = page.url();
-            if (pageUrl.startsWith('chrome-error://') || pageUrl === 'about:blank') {
-              throw new Error(`Payment page unreachable after node rotation (${pageUrl.slice(0, 40)})`);
-            }
-          }
-
-          try { await page.locator('text=PayPal').first().waitFor({ state: 'visible', timeout: 15000 }); } catch {}
-          await randomDelay(2000, 3000);
-
-          console.log(`[${progress}] Auto-filling payment...`);
-          let paymentResult = { success: false };
-          try {
-            const slot = runtimeCfg.phoneSlots?.[0] || { phone: runtimeCfg.phone, smsApiUrl: runtimeCfg.smsApiUrl };
-            paymentResult = await autoPayment(page, { phone: slot.phone, smsApiUrl: slot.smsApiUrl }) || { success: false };
-          } catch (e) {
-            if (e.code === 'NOT_FREE_TRIAL') {
-              // Link is not a $0 trial — treat as no_link (same outcome as Discord
-              // failing to produce a link). Don't fill cards on a paid subscription page.
-              console.log(`[${progress}] ${e.message}`);
-              paymentResult = { success: false, notFreeTrial: true, reason: e.message };
-            } else {
-              console.log(`[${progress}] Payment error: ${e.message?.slice(0, 60)}`);
-            }
-          }
-
-          if (paymentResult.success) {
-            if (runtimeCfg.enableOAuth) {
-              console.log(`[${progress}] Running PKCE via protocol...`);
-              await this._finalizePkce(account, result, progress);
-            } else {
-              saveCPAAuthFile(account.email, result.accessToken, result.session);
-              this.emitStatus({ email: account.email, status: 'plus_no_rt', phase: 'done', progress });
-            }
-            summary.success++;
-          } else if (paymentResult.notFreeTrial) {
-            this.emitStatus({ email: account.email, status: 'no_link', phase: 'done', progress, reason: paymentResult.reason });
-            summary.noLink++;
-          } else {
-            const reason = paymentResult.reason || 'Payment not completed';
-            console.log(`[${progress}] Payment incomplete: ${reason}`);
-            this.emitStatus({ email: account.email, status: 'error', phase: 'payment', progress, reason });
-            summary.error++;
-          }
-        } catch (e) {
-          console.log(`[${progress}] ${account.email} error: ${e.message?.slice(0, 80)}`);
-          this.emitStatus({ email: account.email, status: 'error', phase: 'payment', progress, reason: e.message });
-          summary.error++;
-        } finally {
-          if (browser) try { await browser.close(); } catch {}
-          if (chromeProc) try { chromeProc.kill(); } catch {}
-          try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {}
-          this._browser = null; this._chromeProc = null; this._tempDir = null;
+        // === Phase 3a: Stripe billing (HTTP) ===
+        this.emitStatus({ email: account.email, status: 'running', phase: 'stripe-billing', progress });
+        console.log(`[${progress}] Phase 3a: Stripe billing (HTTP)...`);
+        const billing = fetchAddress();  // reuse payment.js random US address
+        const b = await submitStripeBilling(link, fetchResult.pk, billing);
+        if (!b.ok) {
+          console.log(`[${progress}] Stripe billing failed: ${b.reason}`);
+          this.emitStatus({ email: account.email, status: 'stripe_billing_error', phase: 'done', progress, reason: b.reason });
+          summary.stripeBillingError++;
+          continue;
         }
+        console.log(`[${progress}] PayPal URL obtained: ${b.paypal_redirect_url.slice(0, 60)}...`);
+
+        // === Phase 3b: PayPal RPA (isolated Node subprocess) ===
+        this.emitStatus({ email: account.email, status: 'running', phase: 'paypal-rpa', progress });
+        console.log(`[${progress}] Phase 3b: PayPal RPA...`);
+        const phoneSlot = runtimeCfg.phoneSlots?.[0] || { phone: runtimeCfg.phone, smsApiUrl: runtimeCfg.smsApiUrl };
+        const payResult = await runPayPalRpa({
+          paypal_url: b.paypal_redirect_url,
+          phone: phoneSlot.phone,
+          sms_api_url: phoneSlot.smsApiUrl,
+          proxy: proxyMgr.getProxyUrl(),
+          worker_id: `wk-${Date.now()}-${i}`,
+          approval_url_pattern: 'chatgpt\\.com/agreements/approve',
+        });
+        if (!payResult.ok) {
+          console.log(`[${progress}] PayPal RPA failed: ${payResult.reason}`);
+          this.emitStatus({ email: account.email, status: 'error', phase: 'paypal-rpa', progress, reason: payResult.reason });
+          summary.error++;
+          continue;
+        }
+        console.log(`[${progress}] PayPal approved, got approval URL`);
+
+        // === Phase 3c: HTTP manual approval ===
+        this.emitStatus({ email: account.email, status: 'running', phase: 'activation', progress });
+        console.log(`[${progress}] Phase 3c: Confirming subscription activation (HTTP)...`);
+        const c = await confirmSubscriptionActivation(result.accessToken, payResult.chatgpt_approval_url);
+        if (!c.ok || (c.plan_type || '').toLowerCase() !== 'plus') {
+          console.log(`[${progress}] Activation failed: ${c.reason || ('plan_type=' + c.plan_type)}`);
+          this.emitStatus({ email: account.email, status: 'activation_error', phase: 'done', progress, reason: c.reason });
+          summary.activationError++;
+          continue;
+        }
+        console.log(`[${progress}] ✓ Subscription activated: plan_type=${c.plan_type}`);
+
+        // === Phase 4: HTTP PKCE OAuth ===
+        let finalStatus = 'plus_no_rt';
+        if (runtimeCfg.enableOAuth) {
+          this.emitStatus({ email: account.email, status: 'running', phase: 'pkce', progress });
+          console.log(`[${progress}] Phase 4: PKCE OAuth (HTTP)...`);
+          const pkceTokens = await fetchPkceTokensProtocol(result.accessToken, account);
+          if (pkceTokens.ok && pkceTokens.refresh_token) {
+            saveCPAAuthFile(account.email, pkceTokens.access_token, pkceTokens);
+            finalStatus = 'plus';
+            console.log(`[${progress}] PKCE success with refresh_token`);
+          } else {
+            saveCPAAuthFile(account.email, result.accessToken, result.session);
+            console.log(`[${progress}] PKCE no refresh_token (${pkceTokens.reason || 'unknown'}), saved without`);
+          }
+        } else {
+          saveCPAAuthFile(account.email, result.accessToken, result.session);
+        }
+
+        this.emitStatus({ email: account.email, status: finalStatus, phase: 'done', progress });
+        summary.success++;
 
         // Track consecutive failures for rate-limit cooldown
         if (summary.error > errorsBefore) {
