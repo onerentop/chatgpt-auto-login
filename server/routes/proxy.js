@@ -70,7 +70,8 @@ router.get('/nodes', (req, res) => {
   const state = proxy.getState();
   const allTags = state.allTags || [];
   const jpKddiTags = allTags.filter(t => /KDDI/i.test(t));
-  res.json({ nodeTags: allTags, total: allTags.length, jpKddiTags });
+  const usTags = allTags.filter(t => proxy.US_PATTERNS.test(t));
+  res.json({ nodeTags: allTags, total: allTags.length, jpKddiTags, usTags });
 });
 
 function buildBlacklistView(state) {
