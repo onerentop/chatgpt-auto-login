@@ -476,6 +476,8 @@ async function runPayPalFlow(page, opts) {
 
   // Use a wait loop rather than waitForURL alone — PayPal often goes through
   // pay.openai.com with redirect_status=succeeded as an intermediate step.
+  // Also fail-fast on PayPal genericError (risk control rejection) — saves
+  // ~2 min vs waiting for the full 120s approval_timeout.
   let approvalUrl = null;
   const deadline = Date.now() + 120000;
   while (Date.now() < deadline) {
@@ -486,6 +488,10 @@ async function runPayPalFlow(page, opts) {
       approvalUrl = currentUrl;
       log(`Got approval URL: ${approvalUrl.slice(0, 100)}`);
       break;
+    }
+    if (/paypal\.com\/checkoutweb\/genericError/i.test(currentUrl)) {
+      log(`PayPal risk-control rejected the transaction (genericError): ${currentUrl.slice(0, 100)}`);
+      throw new Error('paypal_generic_error');
     }
     if (currentUrl.includes('pay.openai.com') && currentUrl.includes('redirect_status=succeeded')) {
       log(`Saw pay.openai.com redirect_status=succeeded, continuing to chatgpt.com...`);
@@ -555,6 +561,7 @@ async function runPayPalFlow(page, opts) {
     const msg = e.message || '';
     if (/sms_fetch_fail/.test(msg)) reason = 'sms_fetch_fail';
     else if (/sms verification/i.test(msg)) reason = 'sms_verification_fail';
+    else if (/paypal_generic_error/.test(msg)) reason = 'paypal_generic_error';
     else if (/approval_timeout/.test(msg) || /Timeout.*waiting for navigation/i.test(msg) || /Timeout.*waitForURL/i.test(msg)) reason = 'approval_timeout';
     else if (/paypal_card_declined/.test(msg)) reason = 'paypal_card_declined';
     else if (/paypal_checkout_not_reached/.test(msg)) reason = 'paypal_checkout_not_reached';
