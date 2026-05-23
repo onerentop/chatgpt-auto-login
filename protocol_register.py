@@ -7,18 +7,16 @@ import sys, os, json, uuid, time, random, re, string, hashlib, base64, secrets, 
 import email as email_lib
 from urllib.parse import urlparse, parse_qs, urlencode, quote
 
-# Try common locations for the external chatgpt_register package (sentinel
-# token helper). It's OK if not found — sentinel becomes "" and OpenAI may
-# still let us through; only some risk-controlled flows actually require it.
-for _candidate in (
-    r"E:\workspace\projects\cliproxyaccountcleaner",
-    r"D:\workspace\projects\cliproxyaccountcleaner",
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "cliproxyaccountcleaner"),
-    os.environ.get("CHATGPT_REGISTER_PATH", ""),
-):
-    if _candidate and os.path.isdir(_candidate):
-        sys.path.insert(0, _candidate)
-        break
+# In-project no-op stubs for sentinel token generation. The original code
+# imported from an external 'chatgpt_register' package (Turnstile token
+# minter) but we deliberately keep this project self-contained — sentinel
+# becomes "" everywhere, which works for most accounts. Risk-controlled
+# accounts may see slightly lower success rate.
+def build_sentinel_token(*args, **kwargs):
+    return ""
+
+def get_sentinel_token_browser(*args, **kwargs):
+    return ""
 
 # Chrome fingerprint profiles (local, no external dependency)
 _CHROME_PROFILES = [
@@ -241,11 +239,7 @@ def _do_pkce_flow(session, email, password, ms_client_id, ms_refresh_token):
         # Choose account page — select our account
         elif "/choose-an-account" in final_path:
             _log("PKCE: Choose account page, selecting account...")
-            try:
-                from chatgpt_register.chatgpt_register import build_sentinel_token
-                sentinel = build_sentinel_token(session, device_id, flow="authorize_continue", user_agent=session.headers.get("User-Agent", ""), sec_ch_ua=session.headers.get("sec-ch-ua", "")) or ""
-            except Exception:
-                sentinel = ""
+            sentinel = build_sentinel_token(session, device_id, flow="authorize_continue", user_agent=session.headers.get("User-Agent", ""), sec_ch_ua=session.headers.get("sec-ch-ua", "")) or ""
             r = session.post(f"{AUTH}/api/accounts/authorize/continue",
                 json={"username": {"kind": "email", "value": email}},
                 headers={"Accept": "application/json", "Content-Type": "application/json",
@@ -321,11 +315,7 @@ def _do_pkce_flow(session, email, password, ms_client_id, ms_refresh_token):
         # Need to log in
         elif "/log-in" in final_path:
             _log("PKCE: Need to log in, submitting email...")
-            try:
-                from chatgpt_register.chatgpt_register import build_sentinel_token
-                sentinel = build_sentinel_token(session, device_id, flow="authorize_continue", user_agent=session.headers.get("User-Agent", ""), sec_ch_ua=session.headers.get("sec-ch-ua", "")) or ""
-            except Exception:
-                sentinel = ""
+            sentinel = build_sentinel_token(session, device_id, flow="authorize_continue", user_agent=session.headers.get("User-Agent", ""), sec_ch_ua=session.headers.get("sec-ch-ua", "")) or ""
             r = session.post(f"{AUTH}/api/accounts/authorize/continue",
                 json={"username": {"kind": "email", "value": email}},
                 headers={"Accept": "application/json", "Content-Type": "application/json",
@@ -539,14 +529,6 @@ def main():
 
     try:
         from curl_cffi import requests as curl_requests
-        try:
-            from chatgpt_register.chatgpt_register import build_sentinel_token
-        except ImportError:
-            # chatgpt_register not installed — provide a no-op so the main flow
-            # still runs. Sentinel-required steps will get "" and may degrade
-            # success rate on risk-controlled accounts.
-            def build_sentinel_token(*args, **kwargs):
-                return ""
 
         # HTTP/1.1 constant for TLS-retry fallback (curl_cffi >= 0.5.9).
         # Some unstable proxy paths break HTTP/2 framing mid-handshake — falling back
@@ -807,10 +789,9 @@ def main():
                 bdate = f"{random.randint(1990, 2002)}-{random.randint(1,12):02d}-{random.randint(1,28):02d}"
                 _log(f"create_account: name={name}, bdate={bdate}")
 
-                # Try 1: with browser-based Turnstile sentinel (headless, no visible window)
+                # Try 1: with browser-based Turnstile sentinel (no-op stub in this project)
                 sentinel = ""
                 try:
-                    from chatgpt_register.sentinel_browser import get_sentinel_token_browser
                     sentinel = get_sentinel_token_browser(device_id) or ""
                     if sentinel:
                         _log("Sentinel token (Turnstile) obtained")
