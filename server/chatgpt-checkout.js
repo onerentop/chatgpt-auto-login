@@ -62,10 +62,9 @@ function fetchCheckoutLink(accessToken, opts = {}) {
       clearTimeout(timer);
       if (settled) return;
       settled = true;
-      if (currentJpNode) {
-        try { proxyMgr.markJpBad(currentJpNode); } catch {}
-      }
-      resolve({ link: '', title: '', raw: `ERROR: spawn failed: ${e.message?.slice(0, 100)}`, pk: '' });
+      // spawn-error means local Python binary issue (missing, permission, ENOMEM).
+      // Not a JP-node problem — do NOT markJpBad, that would poison the node pool.
+      resolve({ link: '', title: '', raw: `ERROR: spawn failed: ${e.message?.slice(0, 200)}`, pk: '' });
     });
     py.on('close', () => {
       clearTimeout(timer);
