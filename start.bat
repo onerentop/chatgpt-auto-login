@@ -27,8 +27,15 @@ if %errorlevel% neq 0 (
     for /f "tokens=*" %%v in ('py -3 --version 2^>nul') do echo [OK] %%v
     py -3 -c "import curl_cffi" >nul 2>&1
     if %errorlevel% neq 0 (
-        echo [WARN] curl_cffi not installed - required for protocol mode + v3 HTTP modules
-        echo        Run: py -3 -m pip install curl_cffi
+        echo [INFO] curl_cffi not installed - auto-installing via pip ^(~30s^)...
+        py -3 -m pip install --quiet curl_cffi
+        py -3 -c "import curl_cffi" >nul 2>&1
+        if %errorlevel% neq 0 (
+            echo [ERROR] curl_cffi install failed - protocol mode will not work
+            echo         Try manually: py -3 -m pip install curl_cffi
+        ) else (
+            echo [OK] curl_cffi installed
+        )
     ) else (
         echo [OK] curl_cffi installed
     )
@@ -124,9 +131,26 @@ if not exist "config.json" (
         echo   }
         echo }
     ) > config.json
-    echo [INFO] Please configure via web dashboard after startup.
-    echo        v3.0.0 requires proxy.subscriptionUrl + proxy.jpCheckout for the
-    echo        protocol path ^(Phase 2 uses JP-KDDI to obtain $0 PayPal link^).
+    set FIRST_RUN=1
+)
+if not exist "data.db" set FIRST_RUN=1
+
+if "%FIRST_RUN%"=="1" (
+    echo.
+    echo ==========================================
+    echo   FIRST-TIME SETUP — please complete:
+    echo ==========================================
+    echo   1. Proxy subscription URL ^(Config page^)
+    echo      v3.0.0 requires proxy.subscriptionUrl + jpCheckout ^(JP-KDDI^).
+    echo   2. PayPal phone + SMS API ^(Config page^)
+    echo      Without this PayPal SMS verification will hang.
+    echo   3. Import accounts ^(Accounts page^)
+    echo      One account per line, format:
+    echo        email----password----clientId/TOTP----refreshToken
+    echo.
+    echo   Dashboard will open Config page first; fill ^(1^)+^(2^), then go
+    echo   to Accounts to import, then Execute to run.
+    echo ==========================================
 )
 
 echo.
@@ -140,8 +164,12 @@ echo     protocolMode=false - Full Playwright Chrome ^(PipelineEngine^)
 echo ==========================================
 echo.
 
-:: Open browser after 3 seconds
-start "" /b cmd /c "timeout /t 3 /nobreak >nul && start http://localhost:3000"
+:: Open browser after 3 seconds (Config page on first run, Dashboard otherwise)
+if "%FIRST_RUN%"=="1" (
+    start "" /b cmd /c "timeout /t 3 /nobreak >nul && start http://localhost:3000/#/config"
+) else (
+    start "" /b cmd /c "timeout /t 3 /nobreak >nul && start http://localhost:3000"
+)
 
 :: Start server
 node server/index.js
