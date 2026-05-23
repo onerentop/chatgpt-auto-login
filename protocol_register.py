@@ -798,7 +798,7 @@ def main():
             try:
                 sentinel = build_sentinel_token(session, device_id, flow="email_otp_validate", user_agent=ua, sec_ch_ua=sec_ch_ua) or ""
             except Exception: pass
-            r = session.post(f"{AUTH}/api/accounts/email-otp/validate",
+            r = _post_with_h1_fallback(session, f"{AUTH}/api/accounts/email-otp/validate",
                 json={"code": otp},
                 headers={"Accept": "application/json", "Content-Type": "application/json",
                     "Origin": AUTH, "Referer": f"{AUTH}/email-verification",
