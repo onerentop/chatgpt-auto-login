@@ -79,6 +79,7 @@ async function fetchAddress(signal) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ path: '/', method: 'address' }),
+        signal,
       });
       const d = await res.json();
       const a = d.address || d;
@@ -579,7 +580,10 @@ async function handleSmsVerification(page, smsOverride, signal) {
   for (let attempt = 0; attempt < 30; attempt++) {
     if (signal?.aborted) throw _abortError();
     try {
-      const res = await fetch(SMS_URL, { signal, timeout: 10000 });
+      const req_signal = signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(10000)])
+        : AbortSignal.timeout(10000);
+      const res = await fetch(SMS_URL, { signal: req_signal });
       const text = await res.text();
       console.log(`    [Pay] SMS API attempt ${attempt + 1}: ${text.slice(0, 100)}`);
 
@@ -685,6 +689,8 @@ async function _doAutoPayment(page, phoneConfig, signal) {
       paypalHandled = true;
       break;
     } else if (/paypal\.com\/agreements\/approve/i.test(currentUrl)) {
+      // agreements/approve is normally a 1-3s pass-through URL. If we are still
+      // here after 4s, Akamai slider CAPTCHA was almost certainly shown.
       if (!captchaFirstSeenAt) {
         captchaFirstSeenAt = Date.now();
       } else if (Date.now() - captchaFirstSeenAt > 4000 && !captchaHandled) {
@@ -711,6 +717,9 @@ async function _doAutoPayment(page, phoneConfig, signal) {
     return { success: false, reason: 'PayPal not reached' };
   }
 
+  // Wait for PayPal to finish processing and redirect back to pay.openai.com.
+  // Also fail-fast on paypal.com/checkoutweb/genericError (risk-control rejection)
+  // — saves ~30s vs waiting for the full 30s loop.
   console.log('    [Pay] Waiting for payment redirect...');
   let paymentSuccess = false;
   let genericError = false;
