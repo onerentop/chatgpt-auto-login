@@ -297,7 +297,7 @@ async function refresh() {
       console.log(`[Proxy] After region filter (${_state.rotationKeyword}): ${filtered.length}`);
     }
     if (mainPick.usedWhitelist && filtered.length === 0) {
-      throw new Error(`主代理白名单 [${_state.whitelist.join(', ')}] 在订阅中无任何匹配`);
+      throw new Error(`主代理白名单 [${_state.whitelist.filter(t => typeof t === 'string' && t).join(', ')}] 在订阅中无任何匹配`);
     }
     if (!mainPick.usedWhitelist && filtered.length === 0) {
       throw new Error(`没有匹配地区 "${_state.rotationKeyword}" 的节点`);
