@@ -26,7 +26,7 @@ def _emit(payload):
 
 def main():
     inp = json.loads(sys.stdin.read())
-    cs_id = inp['cs_id']
+    cs_id = inp.get('cs_id', '')
     pk = inp.get('pk', '')
     proxy = inp.get('proxy') or None
     proxies = {'http': proxy, 'https': proxy} if proxy else None
