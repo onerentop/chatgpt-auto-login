@@ -228,6 +228,7 @@ import api from '../api'
 import { PLUS_STATUSES, ERROR_STATUSES, aliveStatusType, aliveStatusLabel, ALIVE_FILTER_OPTIONS, EXECUTE_STATUS_FILTER_OPTIONS } from '../status'
 import { socketState } from '../socket'
 import { getSelectionSet, setSelectionFromRows, clearSelection } from '../selection'
+import { useUrlSyncedFilters } from '../composables/useUrlSyncedFilters'
 
 const tableRef = ref(null)
 const accounts = ref([])
@@ -238,6 +239,17 @@ const planFilter = ref('')
 const authFilter = ref('')
 const aliveFilter = ref([])
 const staleOnly = ref(false)
+
+// FX-8: persist all 6 filter refs in the URL so reloading the page (or
+// pasting the URL to a colleague) keeps the filter state.
+useUrlSyncedFilters({
+  search,
+  status: statusFilter,
+  plan: planFilter,
+  auth: authFilter,
+  alive: aliveFilter,
+  stale: staleOnly,
+})
 
 const hasAnyFilter = computed(() =>
   !!search.value || statusFilter.value.length > 0 || !!planFilter.value
