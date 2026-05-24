@@ -169,16 +169,48 @@ function getState() {
     }
     return out;
   };
-  const badNodes = project(_state.badNodes);
-  const jpBadNodes = project(_state.jp.badNodes);
+  // Explicit field whitelist — DO NOT spread _state. The subscriptionUrl
+  // (and any future credential-bearing field) must never reach the
+  // dashboard or server.log. Frontends consume `hasSubscription` /
+  // `subscriptionHost` instead so users can still see "configured ✓"
+  // without exposing the token.
+  let subscriptionHost = null;
+  if (_state.subscriptionUrl) {
+    try { subscriptionHost = new URL(_state.subscriptionUrl).hostname; } catch { subscriptionHost = null; }
+  }
+  // Note: outbounds is intentionally omitted — parsed nodes can contain
+  // credentials (vmess UUID, ss password, trojan password). nodeTags / allTags
+  // are just label strings and safe to expose. failCount / failReasons are
+  // internal Maps that don't round-trip well to JSON.
   return {
-    ..._state,
+    enabled: _state.enabled,
+    hasSubscription: !!_state.subscriptionUrl,
+    subscriptionHost,
+    nodeTags: _state.nodeTags,
+    currentNode: _state.currentNode,
+    rotationStrategy: _state.rotationStrategy,
+    rotationIndex: _state.rotationIndex,
+    rotationKeyword: _state.rotationKeyword,
+    exitIp: _state.exitIp,
+    lastError: _state.lastError,
+    whitelist: _state.whitelist,
+    whitelistMisses: _state.whitelistMisses,
+    allTags: _state.allTags,
     available: _state.nodeTags.length,
-    badNodes,
+    badNodes: project(_state.badNodes),
     jp: {
-      ..._state.jp,
+      enabled: _state.jp.enabled,
+      keyword: _state.jp.keyword,
+      whitelist: _state.jp.whitelist,
+      whitelistMisses: _state.jp.whitelistMisses,
+      nodeTags: _state.jp.nodeTags,
+      currentNode: _state.jp.currentNode,
+      rotationStrategy: _state.jp.rotationStrategy,
+      rotationIndex: _state.jp.rotationIndex,
+      exitIp: _state.jp.exitIp,
+      lastError: _state.jp.lastError,
       available: _state.jp.nodeTags.length,
-      badNodes: jpBadNodes,
+      badNodes: project(_state.jp.badNodes),
     },
   };
 }
