@@ -1,5 +1,75 @@
 # Changelog
 
+## v2.28.0 — 2026-05-25
+
+### Ops UX Fixes — 10 个 P1 改进一次性 ship
+
+3 模块审查（执行控制 / 账号管理 / 代理）共发现 32 个改进项，
+10 个 P1 打包本版本一次性 ship。覆盖 v2.18-v2.32 快速迭代积攒
+的 3 类债：(a) 状态维度扩展未同步到 UI、(b) 后端能力 > 前端
+暴露、(c) 危险操作无守卫 + UI 体力活。
+
+**Execute 页（5 项）：**
+
+- **#1 `failedEmails` 涵盖所有可重试终态（9 个）**：之前只识别
+  `error` 一个，"重试失败"按钮严重失真；改用新 helper
+  `isFailedToRetry()` 涵盖 error / no_link / no_promo /
+  verify_error / paypal_captcha / login_fail / token_expired /
+  aborted / no_jp_proxy 共 9 个未拿到 Plus 但非死号的终态。
+- **#2 statusFilter 下拉动态生成**：从硬编码 11 项 → v-for
+  `EXECUTE_STATUS_FILTER_OPTIONS`（status.js LABEL_MAP 全集除
+  checking / canceled），下拉自动与状态体系同步。
+- **#3 子表加 `原因` 列 + expand-row 顶部 banner**：reason 上列
+  高频可见；代理节点 + 出口 IP + updatedAt 放 banner 低频查阅。
+  后端 account_status 加 proxy_node / exit_ip 两列 + engine
+  emitStatus 时从 proxyMgr 注入。
+- **#4 toolbar 显示 engine mode badge**：协议模式 / 浏览器模式 +
+  link: API / Discord，从 /config/raw 读 protocolMode 和
+  paymentLinkSource。
+- **#5 5s polling /execute/status 兜底 Stop 按钮**：socket 仍是
+  fast path，polling 仅作为冗余；visibilitychange 暂停节省请求。
+  断 socket 后仍可成功 Stop 引擎。
+
+**Accounts 页（3 项）：**
+
+- **#6 toolbar 拆 4 行**：16+ 控件由单行挤拥改成 by 职责分组
+  （数据管理 / 筛选 / 测活 / 下载）；aliveFilter 从下载按钮右
+  边移回筛选行；statusFilter 改用 EXECUTE_STATUS_FILTER_OPTIONS。
+- **#7 TOTP / Refresh Token / Client ID 列加 tooltip + 复制**：
+  el-tooltip 显示完整值；DocumentCopy icon 调 navigator.clipboard
+  复制并 ElMessage 反馈。
+- **#8 测活全部加 ElMessageBox 二次确认**：显示账户数量警告，避
+  免误点对几千账户的库一键发起测活打爆 API/proxy。
+
+**Config 页（2 项）：**
+
+- **#9 整页用 7 个 el-tabs 重构**：支付 / 执行 / Discord / OAuth /
+  代理 / JP / 节点黑名单。原 482 行平铺由 tab 切换替代滚动查找；
+  保存按钮仍是全局一个（所有 tab 字段同时保存）。
+- **#10 停止代理加 ElMessageBox 二次确认**：警告将断开当前所有
+  execute / liveness 流水线的网络。
+
+**后端配套：**
+
+- `account_status` 表加 `proxy_node` / `exit_ip` 两列；CREATE
+  TABLE 块同步 + 老库 PRAGMA-gated ALTER 防御性迁移（幂等不抛错）。
+- `statusDB.set` 沿用既有 'in incoming' 显式判断 merge-aware
+  pattern（与 paymentLink / accessToken 同），中间态 emitStatus
+  不会清空已写入的代理上下文；`statusDB.setAlive` 也同步保留
+  proxy_node / exit_ip 防 INSERT OR REPLACE 清空。
+- `server/engine.js` + `protocol-engine.js` emitStatus 时从
+  `proxyMgr.getState()` 读 currentNode + exitIp 注入 data。
+- `/api/results` 透传 proxyNode / exitIp camelCase 字段。
+
+**单测**：6 个新增 — `db-status-proxy-cols.test.js` +6
+（M1-M3 sql.js schema 行为 + M4-M6 production code 不变式
+回归屏障）+ `status-groups.test.js` 追加 G11/G12 +
+`status-filter-options.test.js` 新建 S1。无回归。
+
+**Spec / Plan**：
+`docs/superpowers/specs/2026-05-25-v2.28-ops-ux-fixes-design.md` +
+`docs/superpowers/plans/2026-05-25-v2.28-ops-ux-fixes.md`。
+
 ## v2.32.2 — 2026-05-25
 
 ### Hotfix: Execute.vue 计划列推导漏改
