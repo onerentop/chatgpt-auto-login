@@ -30,26 +30,20 @@
         <el-divider direction="vertical" />
         <el-tag :type="running ? 'warning' : 'info'">{{ running ? '运行中' : '空闲' }}</el-tag>
         <el-tag v-if="socketState.connected" type="success" style="margin-left: 8px">WS</el-tag>
+        <el-divider direction="vertical" />
+        <el-tag :type="engineMode.protocolMode ? 'success' : 'warning'" size="default">
+          {{ engineMode.protocolMode ? '协议模式' : '浏览器模式' }}
+        </el-tag>
+        <el-tag type="info" size="default" style="margin-left:6px">
+          link: {{ engineMode.paymentLinkSource === 'api' ? 'API' : 'Discord' }}
+        </el-tag>
       </el-col>
     </el-row>
     <el-row style="margin-bottom: 12px">
       <el-col :span="24">
         <el-input v-model="search" placeholder="搜索邮箱..." clearable style="width:200px" />
         <el-select v-model="statusFilter" placeholder="状态" clearable style="width:130px;margin-left:8px">
-          <el-option label="Plus(有RT)" value="plus" />
-          <el-option label="Plus(无RT)" value="plus_no_rt" />
-          <el-option label="错误" value="error" />
-          <el-option label="已删除" value="deactivated" />
-          <el-option label="无链接" value="no_link" />
-          <el-option label="空闲" value="idle" />
-          <el-option label="运行中" value="running" />
-          <el-option label="已停止" value="aborted" />
-          <el-option label="JP节点不可用" value="no_jp_proxy" />
-          <el-option label="无0元资格" value="no_promo" />
-          <el-option label="Stripe验证失败" value="verify_error" />
-          <el-option label="已取消" value="canceled" />
-          <el-option label="Token失效" value="token_expired" />
-          <el-option label="登录失败" value="login_fail" />
+          <el-option v-for="opt in EXECUTE_STATUS_FILTER_OPTIONS" :key="opt.value" :label="opt.label" :value="opt.value" />
         </el-select>
         <el-select v-model="planFilter" placeholder="Plan" clearable style="width:110px;margin-left:8px">
           <el-option label="Plus" value="plus" />
@@ -96,11 +90,11 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted, shallowRef, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount, shallowRef, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
 import api from '../api'
 import { socketState } from '../socket'
-import { statusType, statusLabel, PLUS_STATUSES, ERROR_STATUSES, DEFAULT_EXPANDED_STATUSES, groupAccountsByStatus } from '../status'
+import { statusType, statusLabel, PLUS_STATUSES, ERROR_STATUSES, DEFAULT_EXPANDED_STATUSES, groupAccountsByStatus, isFailedToRetry, EXECUTE_STATUS_FILTER_OPTIONS } from '../status'
 import { getSelectionSet, clearSelection } from '../selection'
 import AccountTableRows from '../components/AccountTableRows.vue'
 
@@ -110,6 +104,39 @@ const autoExpandedEmail = ref('')
 const expandedKeys = ref([...DEFAULT_EXPANDED_STATUSES])
 const groupRefs = ref({})
 const globalSelectedSet = getSelectionSet('execute')
+const engineMode = ref({ protocolMode: false, paymentLinkSource: 'api' })
+
+async function loadEngineMode() {
+  try {
+    const { data } = await api.get('/config/raw')
+    const cfg = data.config || data
+    engineMode.value = {
+      protocolMode: !!cfg.protocolMode,
+      paymentLinkSource: cfg.paymentLinkSource || 'api',
+    }
+  } catch {}
+}
+
+let statusPollTimer = null
+
+function startPolling() {
+  const tick = async () => {
+    if (document.visibilityState !== 'visible') return
+    try {
+      const { data } = await api.get('/execute/status')
+      running.value = data.status === 'running'
+    } catch {}
+  }
+  statusPollTimer = setInterval(tick, 5000)
+  document.addEventListener('visibilitychange', tick)
+}
+
+onBeforeUnmount(() => {
+  if (statusPollTimer) {
+    clearInterval(statusPollTimer)
+    statusPollTimer = null
+  }
+})
 
 const search = ref('')
 const statusFilter = ref('')
@@ -119,7 +146,7 @@ const authFilter = ref('')
 // until user changes any filter (or refreshes).
 const lockedEmails = shallowRef(null)
 const selectedEmails = computed(() => Array.from(globalSelectedSet))
-const failedEmails = computed(() => accounts.value.filter(a => a._status === 'error').map(a => a.email))
+const failedEmails = computed(() => accounts.value.filter(a => isFailedToRetry(a._status)).map(a => a.email))
 const filteredRows = computed(() => {
   if (lockedEmails.value) {
     // Frozen view — show only the snapshot, ignore filters
@@ -227,7 +254,7 @@ watch(() => socketState.logs.length, () => {
 async function loadAccounts() {
   try {
     const { data } = await api.get('/accounts')
-    accounts.value = data.map(a => ({ ...a, _status: 'idle', _phase: '', _hasAuth: false, _showHistory: false, _plan: '' }))
+    accounts.value = data.map(a => ({ ...a, _status: 'idle', _phase: '', _hasAuth: false, _showHistory: false, _plan: '', _reason: '', _proxyNode: '', _exitIp: '', _updatedAt: '' }))
     await loadResults()
   } catch {}
 }
@@ -241,6 +268,10 @@ async function loadResults() {
         if (r.status && r.status !== 'idle') row._status = r.status
         if (r.phase) row._phase = r.phase
         row._hasAuth = r.hasAuthFile || false
+        row._reason = r.reason || ''
+        row._proxyNode = r.proxyNode || ''
+        row._exitIp = r.exitIp || ''
+        row._updatedAt = r.updatedAt || ''
         const st = (r.status || '').toLowerCase()
         row._plan = PLUS_STATUSES.includes(st) ? 'plus' : (ERROR_STATUSES.includes(st) ? 'free' : '')
       }
@@ -252,7 +283,7 @@ async function checkStatus() {
   try { const { data } = await api.get('/execute/status'); running.value = data.status === 'running' } catch {}
 }
 
-onMounted(() => { loadAccounts(); checkStatus() })
+onMounted(() => { loadAccounts(); checkStatus(); loadEngineMode(); startPolling() })
 
 function onGroupSelectionChange(status, rows) {
   // 把本组的选中变化合并到全局 Set：先移除本组 emails，再加入本次选中

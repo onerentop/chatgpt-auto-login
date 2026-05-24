@@ -42,6 +42,14 @@
         <span v-else style="color:#c0c4cc">-</span>
       </template>
     </el-table-column>
+    <el-table-column label="原因" min-width="120" show-overflow-tooltip>
+      <template #default="{ row }">
+        <span v-if="row._reason" :style="row._status === 'deactivated' ? 'color:#f56c6c' : 'color:#909399'">
+          {{ row._reason }}
+        </span>
+        <span v-else style="color:#c0c4cc">-</span>
+      </template>
+    </el-table-column>
     <el-table-column label="操作" width="80">
       <template #default="{ row }">
         <el-button
@@ -54,6 +62,12 @@
     </el-table-column>
     <el-table-column type="expand">
       <template #default="{ row }">
+        <!-- v2.28 #3: 顶部 banner — 本次执行的代理上下文 -->
+        <div v-if="row._proxyNode || row._exitIp" style="display:flex;gap:16px;padding:8px 12px;background:#f5f7fa;border-radius:4px;margin-bottom:8px;font-size:12px;color:#606266">
+          <span v-if="row._proxyNode"><strong>代理节点:</strong> {{ row._proxyNode }}</span>
+          <span v-if="row._exitIp"><strong>出口 IP:</strong> {{ row._exitIp }}</span>
+          <span v-if="row._updatedAt" style="margin-left:auto;color:#909399">{{ formatTs(row._updatedAt) }}</span>
+        </div>
         <div style="font-family:'Consolas','Courier New',monospace;font-size:13px;max-height:calc(100vh - 350px);overflow-y:auto;padding:12px;background:#1e1e1e;color:#d4d4d4;border-radius:4px;line-height:1.6">
           <div v-if="getHistoryLogs(row.email).length > 0">
             <div @click="row._showHistory = !row._showHistory" style="cursor:pointer;color:#569cd6;margin-bottom:6px;user-select:none">
