@@ -65,6 +65,10 @@ function createRunner({ io, statusDB, accountsDB, checker, lightLogin, codexFile
         const verifyRes = await checker.verifyDeactivated(account, { signal: state.abortCtrl.signal, onLog });
         if (verifyRes.status === 'deactivated') {
           probeRes = { alive_status: 'deactivated', alive_reason: 'account_deactivated' };
+          // After this overwrite, needsRelogin below evaluates to false: tok is
+          // present and probeRes.alive_status is now 'deactivated', not
+          // 'token_expired'. lightLogin is correctly skipped. If you ever
+          // refactor the overwrite, re-verify the needsRelogin gate.
         }
       }
 
