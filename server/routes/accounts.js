@@ -82,6 +82,23 @@ router.delete('/:email', (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// POST /batch-delete — delete N accounts in one round trip + one disk flush
+// Body: { emails: string[] }
+// Returns: { deleted: string[], notFound: string[] }
+router.post('/batch-delete', (req, res) => {
+  try {
+    const { emails } = req.body || {};
+    if (!Array.isArray(emails)) {
+      return res.status(400).json({ error: 'emails must be an array' });
+    }
+    if (emails.length === 0) {
+      return res.json({ deleted: [], notFound: [] });
+    }
+    const out = accountsDB.bulkDelete(emails);
+    res.json(out);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // GET /export — export in ---- format
 router.get('/export', (req, res) => {
   try {

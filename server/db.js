@@ -179,6 +179,37 @@ const accountsDB = {
     }
     save();
   },
+  /**
+   * Delete multiple accounts in one transactional sweep — single save() at
+   * the end so N=200 deletes take one disk flush instead of 200. Returns
+   * { deleted: emails[], notFound: emails[] } so the caller can report
+   * partial results. Idempotent on missing rows.
+   */
+  bulkDelete(emails) {
+    if (!Array.isArray(emails)) return { deleted: [], notFound: [] };
+    const deleted = [];
+    const notFound = [];
+    const stmtCheck = db.prepare("SELECT email FROM accounts WHERE email = ?");
+    const stmtDelete = db.prepare("DELETE FROM accounts WHERE email = ?");
+    try {
+      for (const email of emails) {
+        if (typeof email !== 'string' || !email.trim()) continue;
+        stmtCheck.bind([email]);
+        const exists = stmtCheck.step();
+        stmtCheck.reset();
+        if (!exists) { notFound.push(email); continue; }
+        stmtDelete.bind([email]);
+        stmtDelete.step();
+        stmtDelete.reset();
+        deleted.push(email);
+      }
+    } finally {
+      stmtCheck.free();
+      stmtDelete.free();
+    }
+    if (deleted.length > 0) save();
+    return { deleted, notFound };
+  },
 };
 
 const statusDB = {

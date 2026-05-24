@@ -6,8 +6,8 @@
       <el-button @click="exportAccounts">导出全部</el-button>
       <el-button :disabled="selected.length === 0" @click="exportSelected">导出选中 ({{ selected.length }})</el-button>
       <el-button type="success" @click="openAdd">添加单个</el-button>
-      <el-button v-if="selected.length > 0" type="danger" size="small" @click="confirmDelSelected">
-        删除选中 ({{ selected.length }})
+      <el-button v-if="selected.length > 0" type="danger" size="small" :loading="batchDeleting" @click="confirmDelSelected">
+        {{ batchDeleting ? '删除中…' : `删除选中 (${selected.length})` }}
       </el-button>
     </el-row>
 
@@ -539,13 +539,30 @@ async function confirmDelSelected() {
   await delSelected()
 }
 
+const batchDeleting = ref(false)
+
 async function delSelected() {
-  let ok = 0, fail = 0
-  for (const row of selected.value) {
-    try { await api.delete(`/accounts/${encodeURIComponent(row.email)}`); ok++ } catch { fail++ }
+  const emails = selected.value.map(r => r.email)
+  if (emails.length === 0) return
+  batchDeleting.value = true
+  try {
+    // Single-request batch — one transactional sweep + one disk flush on
+    // the backend; previously this was N HTTP round-trips that took ~150ms
+    // each (200 accounts = 30s of UI stutter).
+    const { data } = await api.post('/accounts/batch-delete', { emails })
+    const deleted = (data.deleted || []).length
+    const notFound = (data.notFound || []).length
+    if (notFound > 0) {
+      ElMessage.warning(`删除 ${deleted} 个，${notFound} 个未找到（可能已删）`)
+    } else {
+      ElMessage.success(`删除 ${deleted} 个`)
+    }
+  } catch (err) {
+    ElMessage.error(err.response?.data?.error || '批量删除失败')
+  } finally {
+    batchDeleting.value = false
   }
-  ElMessage.success(`删除 ${ok} 个${fail ? `，失败 ${fail} 个` : ''}`)
-  load()
+  await load()
 }
 
 // === Download helpers (mirror Execute.vue) ===
