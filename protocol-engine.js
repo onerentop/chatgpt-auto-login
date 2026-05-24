@@ -15,6 +15,7 @@ const { fetchCheckoutLink } = require('./server/chatgpt-checkout');
 const { verifyCheckoutIsFree } = require('./server/stripe-verify');
 const { launchChrome, waitForCDP } = require('./server/chrome');
 const proxyMgr = require('./server/proxy');
+const { killTree } = require('./server/process-utils');
 
 const ROOT = __dirname;
 const PYTHON_SCRIPT = path.join(ROOT, 'protocol_register.py');
@@ -147,13 +148,14 @@ class ProtocolEngine extends EventEmitter {
     if (this._abortController) try { this._abortController.abort(); } catch {}
     this.status = 'stopping';
 
-    // Kill Python subprocess (login / PKCE). On Windows .kill() only signals
-    // the top python.exe — curl_cffi may have child threads/processes that
-    // outlive it, but TerminateProcess at least drops the stdout pipe so we
-    // unblock any in-flight readline waiters.
+    // Kill Python subprocess (login / PKCE). curl_cffi may have child
+    // threads/processes; use killTree() so taskkill /T can clean them all
+    // on Windows (HX-13). On POSIX it falls back to single-process kill if
+    // we didn't spawn with detached:true.
     const py = this._pyProc; this._pyProc = null;
     if (py) {
-      try { py.kill(); } catch {}
+      try { killTree(py.pid); } catch {}
+      try { py.kill(); } catch {}  // belt-and-suspenders: signals the Node child wrapper too
     }
     // Browser graceful close then Chrome kill — see PipelineEngine.stop() for
     // rationale.
@@ -163,6 +165,7 @@ class ProtocolEngine extends EventEmitter {
     }
     const chromeProc = this._chromeProc; this._chromeProc = null;
     if (chromeProc) {
+      try { killTree(chromeProc.pid); } catch {}
       try { chromeProc.kill(); } catch {}
     }
     const gw = this._gw; this._gw = null;

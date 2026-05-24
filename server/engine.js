@@ -20,6 +20,7 @@ const { fetchCheckoutLink } = require('./chatgpt-checkout');
 const { verifyCheckoutIsFree } = require('./stripe-verify');
 const { launchChrome, waitForCDP, findChrome } = require('./chrome');
 const proxyMgr = require('./proxy');
+const { killTree } = require('./process-utils');
 
 const {
   saveCPAAuthFile,
@@ -84,9 +85,11 @@ class PipelineEngine extends EventEmitter {
     if (browser) {
       try { await browser.close(); } catch {}
     }
-    // Now kill the Chrome process itself.
+    // Now kill the Chrome process tree (HX-13). taskkill /T cleans renderer
+    // / GPU / utility subprocesses on Windows that .kill() leaves behind.
     const chromeProc = this._chromeProc; this._chromeProc = null;
     if (chromeProc) {
+      try { killTree(chromeProc.pid); } catch {}
       try { chromeProc.kill(); } catch {}
     }
     // Close Discord Gateway
