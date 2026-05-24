@@ -22,7 +22,7 @@ module.exports = function (io) {
 
   // POST /api/execute — start pipeline
   // Body: { emails?: string[] } — if provided, only run these accounts
-  router.post('/', (req, res) => {
+  router.post('/', async (req, res) => {
     if (engine && engine.getStatus() !== 'idle') {
       return res.status(409).json({ error: 'Pipeline is already running' });
     }
@@ -39,8 +39,14 @@ module.exports = function (io) {
         }
       }
     }
-    // Release listeners on previous engine instance (prevent leak)
-    if (engine) try { engine.removeAllListeners(); } catch {}
+    // Release listeners + tear down the previous engine before constructing
+    // a new one. Without this, an in-flight Chrome / Python / tempDir from
+    // the prior run can collide with the new engine's user-data-dir, and
+    // a stale LogCapture monkey-patch lingers on console.log forever.
+    if (engine) {
+      try { engine.removeAllListeners(); } catch {}
+      try { await engine.stop(); } catch {}
+    }
     engine = readProtocolMode() ? new ProtocolEngine() : new PipelineEngine();
 
     engine.on('log', (data) => io.emit('log', data));
@@ -61,7 +67,10 @@ module.exports = function (io) {
 
   router.post('/stop', (req, res) => {
     if (!engine) return res.status(400).json({ error: 'No engine instance' });
-    engine.stop();
+    // engine.stop() is async (waits for browser.close + tempdir rm). We don't
+    // block the HTTP response on it — engine.getStatus() will report 'stopping'
+    // until the cleanup completes, and idempotent re-entry is safe.
+    engine.stop().catch((err) => console.error('engine.stop() failed:', err));
     res.json({ message: 'Force stopped' });
   });
 

@@ -71,45 +71,47 @@ class PipelineEngine extends EventEmitter {
   /**
    * Force stop — kill Chrome, close connections, reset immediately.
    */
-  stop() {
-    if (this.status !== 'idle') {
-      this.stopFlag = true;
-      if (this._abortController) try { this._abortController.abort(); } catch {}
-      this.status = 'stopping';
-      console.log('Force stopping pipeline...');
+  async stop() {
+    if (this.status === 'idle') return;
+    this.stopFlag = true;
+    if (this._abortController) try { this._abortController.abort(); } catch {}
+    this.status = 'stopping';
+    console.log('Force stopping pipeline...');
 
-      // Kill Chrome processes launched by this engine
-      if (this._chromeProc) {
-        try { this._chromeProc.kill(); } catch {}
-        this._chromeProc = null;
-      }
-      // Close browser CDP connection
-      if (this._browser) {
-        try { this._browser.close(); } catch {}
-        this._browser = null;
-      }
-      this._abortController = null;
-      // Close Discord Gateway
-      if (this._gw) {
-        try { this._gw.cleanup(); } catch {}
-        this._gw = null;
-      }
-      // Clean temp dir
-      if (this._tempDir) {
-        try { fs.rmSync(this._tempDir, { recursive: true, force: true }); } catch {}
-        this._tempDir = null;
-      }
-
-      // Reset any "running" accounts in DB to idle
-      try {
-        const { statusDB } = require('./db');
-        if (statusDB.resetRunning) statusDB.resetRunning();
-      } catch {}
-
-      this.logCapture.stop();
-      this.status = 'idle';
-      this.emit('log', { email: '', phase: '', message: 'Pipeline force stopped.', timestamp: new Date().toISOString() });
+    // Close browser CDP first (graceful) so Chrome gets a chance to detach
+    // cleanly before we SIGKILL the process — avoids zombie chrome.exe.
+    const browser = this._browser; this._browser = null;
+    if (browser) {
+      try { await browser.close(); } catch {}
     }
+    // Now kill the Chrome process itself.
+    const chromeProc = this._chromeProc; this._chromeProc = null;
+    if (chromeProc) {
+      try { chromeProc.kill(); } catch {}
+    }
+    // Close Discord Gateway
+    const gw = this._gw; this._gw = null;
+    if (gw) {
+      try { gw.cleanup(); } catch {}
+    }
+    this._abortController = null;
+    // Clean temp dir — async so we don't block the event loop on a multi-GB
+    // user-data-dir, and so the rm waits for the chrome process file handles
+    // to drop (kill() was sync above, but the OS may need a tick to release).
+    const tempDir = this._tempDir; this._tempDir = null;
+    if (tempDir) {
+      try { await fs.promises.rm(tempDir, { recursive: true, force: true }); } catch {}
+    }
+
+    // Reset any "running" accounts in DB to idle
+    try {
+      const { statusDB } = require('./db');
+      if (statusDB.resetRunning) statusDB.resetRunning();
+    } catch {}
+
+    try { this.logCapture.stop(); } catch {}
+    this.status = 'idle';
+    this.emit('log', { email: '', phase: '', message: 'Pipeline force stopped.', timestamp: new Date().toISOString() });
   }
 
   /**

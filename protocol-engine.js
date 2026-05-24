@@ -141,27 +141,48 @@ class ProtocolEngine extends EventEmitter {
     }
   }
 
-  stop() {
-    if (this.status !== 'idle') {
-      this.stopFlag = true;
-      if (this._abortController) try { this._abortController.abort(); } catch {}
-      if (this._pyProc) try { this._pyProc.kill(); } catch {}
-      if (this._chromeProc) try { this._chromeProc.kill(); } catch {}
-      if (this._browser) try { this._browser.close().catch(() => {}); } catch {}
-      if (this._gw) try { this._gw.cleanup(); } catch {}
-      if (this._tempDir) try { fs.rmSync(this._tempDir, { recursive: true, force: true }); } catch {}
-      this._pyProc = null; this._chromeProc = null; this._browser = null; this._gw = null; this._tempDir = null;
-      this._abortController = null;
+  async stop() {
+    if (this.status === 'idle') return;
+    this.stopFlag = true;
+    if (this._abortController) try { this._abortController.abort(); } catch {}
+    this.status = 'stopping';
 
-      // Reset any "running" accounts in DB to idle
-      try {
-        const { statusDB } = require('./server/db');
-        if (statusDB.resetRunning) statusDB.resetRunning();
-      } catch {}
-
-      this.status = 'idle';
-      this.emit('log', { email: '', phase: '', message: 'Protocol engine force stopped.', timestamp: new Date().toISOString() });
+    // Kill Python subprocess (login / PKCE). On Windows .kill() only signals
+    // the top python.exe — curl_cffi may have child threads/processes that
+    // outlive it, but TerminateProcess at least drops the stdout pipe so we
+    // unblock any in-flight readline waiters.
+    const py = this._pyProc; this._pyProc = null;
+    if (py) {
+      try { py.kill(); } catch {}
     }
+    // Browser graceful close then Chrome kill — see PipelineEngine.stop() for
+    // rationale.
+    const browser = this._browser; this._browser = null;
+    if (browser) {
+      try { await browser.close(); } catch {}
+    }
+    const chromeProc = this._chromeProc; this._chromeProc = null;
+    if (chromeProc) {
+      try { chromeProc.kill(); } catch {}
+    }
+    const gw = this._gw; this._gw = null;
+    if (gw) {
+      try { gw.cleanup(); } catch {}
+    }
+    const tempDir = this._tempDir; this._tempDir = null;
+    if (tempDir) {
+      try { await fs.promises.rm(tempDir, { recursive: true, force: true }); } catch {}
+    }
+    this._abortController = null;
+
+    // Reset any "running" accounts in DB to idle
+    try {
+      const { statusDB } = require('./server/db');
+      if (statusDB.resetRunning) statusDB.resetRunning();
+    } catch {}
+
+    this.status = 'idle';
+    this.emit('log', { email: '', phase: '', message: 'Protocol engine force stopped.', timestamp: new Date().toISOString() });
   }
 
   async start(startFrom = 0, filterEmails = null) {
