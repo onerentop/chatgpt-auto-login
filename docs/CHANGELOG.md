@@ -1,5 +1,82 @@
 # Changelog
 
+## v2.30.0 — 2026-05-25
+
+### v2.29 deferred 项二轮收敛 — 8 项一次性 ship
+
+接 v2.29 同日发布。仍不动登录/支付/JSON 主管道。spec 见
+`docs/superpowers/specs/2026-05-25-v2.30-deferred-followups-design.md`。
+
+**后端（4 项）：**
+
+- **HX-9 SIGINT / SIGTERM 优雅退出**：`server/index.js` 注册信号
+  → 调 `logsDB.flush()` 强制 save → `await save.flush()` 等队尾
+  原子落盘 → `process.exit(0)`。5s 硬 deadline 防磁盘 wedge 时
+  挂死。之前 Ctrl+C 时 logsDB 内未达 10 行阈值的 0-9 条日志直接
+  消失。
+- **HX-13 Windows tree-kill**：新增 `server/process-utils.js`
+  `killTree(pid)`：Windows 走 `taskkill /T /F` 杀整棵进程树；
+  POSIX 走 `process.kill(-pid)` 进程组 + 单 PID 双保险。引擎
+  `stop()` 改 `killTree(chromeProc.pid) + chromeProc.kill()` /
+  `killTree(pyProc.pid) + py.kill()` 双保险。之前 `py.kill()`
+  只 SIGTERM 顶层 python.exe，curl_cffi 内部 C 子线程不接受
+  信号 → Windows 留僵尸进程；Chrome 同理 renderer / GPU 孙进
+  程残留。
+- **HX-16 `/api/health` endpoint**：新增 `server/routes/health.js`
+  返回 `{ ok, db, proxy: {…字段白名单子集}, engine, uptimeSec,
+  version }`。200 / 503 区分 DB ok 与否。同时新增
+  `server/engine-singleton.js` 把 `let engine` 从 routes/execute.js
+  提升到模块级，避免 cyclic require。
+- **PX-7 主动健康检查**：新增 `clashApi.testNodeDelay()` 调用
+  Clash `/proxies/{name}/delay` 一次性 HTTPS GET，不动 active
+  selector。新增 `server/proxy/health-probe.js#probeAllNodes()`
+  并发 4 跑 delay test 写入 `_state.probeResults` Map。`refresh()`
+  末尾 fire-and-forget 触发；`config.proxy.activeHealthCheck =
+  false` 可关。`rotate / rotateJp` 内先看是否有 alive 节点，有
+  则跳过 dead-by-probe；全 dead 时回退原逻辑避免死锁。
+  好处：之前首批 3 个账号必失才能识别死节点 + TTL 30min 到期
+  又浪费 3 个；现在 refresh 后秒级标 dead，rotate 自动跳过。
+
+**前端（4 项）：**
+
+- **FX-15 Accounts 主表瘦身**：移除 TOTP / Client ID / Refresh
+  Token 三列。新增"凭证"列：3 个圆点（绿=有 灰=空）+ "查"按钮
+  触发 el-popover 展示完整 3 字段 + 各自复制按钮。主表瘦身约
+  350px，1366px 屏幕不再溢出。
+- **FX-17 Dark mode**：引入 `element-plus/theme-chalk/dark/css-
+  vars.css`。`useDarkMode` composable 写 `html.dark` 类 +
+  localStorage；OS 偏好兜底（用户未显式选过时跟随 prefers-color-
+  scheme）。AppLayout logo 区加月亮 / 太阳切换按钮。
+  `.main` 背景改 `var(--el-bg-color-page, …)` 跟随主题。
+- **FX-13 通知中心**：新增 `web/src/notifications.js` 反应式
+  store（items 最近 100 + unread）。`web/src/api.js` axios
+  interceptor 自动捕获 5xx + 网络错误 → pushNotification
+  （4xx 留给业务代码自决，避免吃掉 409 pipeline-busy 这类正常
+  拒绝）。AppLayout 顶栏铃铛 + 未读 badge；点开弹 el-drawer
+  历史，tag 染色 + 标题 + 正文 + 时间。
+- **FX-5 batch-delete**：新增 `accountsDB.bulkDelete(emails)` +
+  `POST /api/accounts/batch-delete`。前端 `delSelected` 改单次
+  POST，按钮 loading + "删除中…"。之前 N 次串行 DELETE 在
+  N=200 时卡 30s 无进度反馈。
+
+**工程：**
+
+- 6 个新测试文件、174 个 case 全绿（v2.29 158 + v2.30 16 新）。
+- `server/__tests__/process-utils.test.js`：killTree 输入安全 /
+  不存在 PID 静默 / 真子进程实际终止。
+- `server/__tests__/health-endpoint.test.js`：200 + 字段不含
+  subscriptionUrl/token/password。
+- `server/proxy/__tests__/health-probe.test.js`：alive/dead 标
+  记 / rotate 跳 dead / 全 dead 回退 / shouldSkip 跳过 manual /
+  getState 形状。
+- `server/__tests__/accounts-batch-delete.test.js`：成功 / 部分
+  notFound / 边界输入。
+
+**仍留下次的**：PX-4 sing-box stop-after-start-success、PX-8
+Clash secret + 端口自动、FX-4 Pipeline HUD、HX-10 LogCapture
+重写、HX-11 zod schema、HX-19 GitHub Actions CI、`ProxyManager`
+类化、`better-sqlite3` 迁移。
+
 ## v2.29.0 — 2026-05-25
 
 ### 代理 / 前端 UX / 横切硬化 — 4 路审计后 20 项一次性 ship

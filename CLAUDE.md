@@ -80,7 +80,10 @@ pip install curl_cffi
 - **Socket.IO** —— 引擎事件直接 `io.emit` 到前端；CORS 锁死 `localhost:3000` / `127.0.0.1:3000`（v2.29 起允许 `http://${HOST}:3000` 自定义），不做认证（设计上仅本机用）。
 - **HTTP 监听地址（v2.29）** —— 默认绑 `127.0.0.1`。**远程访问必须显式** `set HOST=0.0.0.0`（Windows）/ `HOST=0.0.0.0 node server/index.js`；启动横幅会大字警告"dashboard 无认证，任何本网络机器都能驱动 PayPal pipeline 和读取明文密码"。绑了非 loopback 后请自行加反代 + 认证。
 - **敏感信息日志兜底（v2.29）** —— `server/logger.js#LogCapture` 统一过 `redact()`：JWT 三段、`access_token=…` / `refresh_token=…` / `id_token=…` URL 参数、`Bearer <token>`、`OTP|code|verification code|sms code` 紧邻数字。业务管道的 `console.log` 不动也安全，但**新加打印敏感字段的代码不要依赖 redact 兜底**——优先在业务侧脱敏（保留前 6 后 4）。
-- **代理 `getState()` 字段白名单（v2.29）** —— `server/proxy/index.js#getState` 是显式字段 return（不是 `{ ..._state }`）；`subscriptionUrl`、`outbounds`、`failCount/Reasons` Map 不暴露给前端。新增前端要消费的代理状态字段时必须显式加到 `getState` 白名单。前端看"是否配置订阅"用 `hasSubscription` + `subscriptionHost`。
+- **代理 `getState()` 字段白名单（v2.29）** —— `server/proxy/index.js#getState` 是显式字段 return（不是 `{ ..._state }`）；`subscriptionUrl`、`outbounds`、`failCount/Reasons` Map 不暴露给前端。新增前端要消费的代理状态字段时必须显式加到 `getState` 白名单。前端看"是否配置订阅"用 `hasSubscription` + `subscriptionHost`。v2.30 又加了 `probeResults` / `probeSummary` 暴露主动健康检查结果。
+- **主动健康检查 + dead 节点跳过（v2.30）** —— `refresh()` 末尾 fire-and-forget 调 `runHealthProbe()`：通过 `clashApi.testNodeDelay()` 并发探活全池，写 `_state.probeResults`。`rotate / rotateJp` 内先看是否有 alive 节点；有则跳 dead-by-probe；全 dead 回退原逻辑。`config.proxy.activeHealthCheck = false` 可关。Probe 用 Clash `/proxies/{name}/delay`，不动 active selector，可与业务流量并发。
+- **优雅退出 / 进程清理（v2.30）** —— `server/index.js` SIGINT/SIGTERM 处理：flush logs → `save.flush()` → exit(0)，5s 硬 deadline。引擎 `stop()` 中 chrome/python 子进程改用 `server/process-utils.js#killTree(pid)`：Windows `taskkill /T /F`，POSIX 进程组 SIGKILL。改任何引擎清理路径前先看 v2.29 HX-3 + v2.30 HX-13 的约束。
+- **`/api/health`（v2.30）** —— 运维探活端点。返回 `{ ok, db, proxy: { 字段子集 }, engine, uptimeSec, version }`。代码加新 health 数据时仅暴露非敏感字段。engine 实例通过 `server/engine-singleton.js` 单例暴露给非 execute 路由，避免 cyclic require。
 
 ### 前端
 
