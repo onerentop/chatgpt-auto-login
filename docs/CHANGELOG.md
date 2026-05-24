@@ -1,5 +1,33 @@
 # Changelog
 
+## v2.31.0 — 2026-05-24
+
+### Liveness Proxy Blacklist Integration + Accounts Page Download UI
+
+**Part A — 测活集成 proxy 黑名单**
+
+- `server/liveness/runner.js` 在 `dispatchOne` 末尾终态投票：
+  - `alive_status ∈ {network_error, proxy_error}` → `proxyMgr.recordBadAttempt(currentNode, 'main', 'liveness_<status>')`
+  - `alive_status ∈ {plus, canceled, token_expired, login_fail, deactivated}` → `proxyMgr.recordGoodAttempt(currentNode, 'main')`
+- 依赖 v2.30 的 3-attempt retry —— 走到终态的 network_error 是节点持续不通、不是偶发抖动
+- `createRunner` 接受可选 `proxyMgr` 注入用于测试 mock；production 走 lazy require
+- proxy 未启用时跳过投票（gate `getState().enabled`）
+- reason 字符串 `liveness_<status>` 与流水线的 `login_net_error` / `payment_unreachable` 区分，便于排查黑名单来源
+
+**Part B — Accounts 页下载 UI**
+
+- toolbar 在"测活全部"右侧加两个 dropdown：
+  - **下载选中 (N)** — POST `/api/results/download-selected` 流式 ZIP
+  - **下载全部 (ZIP)** — GET `/api/results/download-all`
+  - 每个 dropdown 含 `CPA 格式` / `Sub2API 格式` 命令
+- 操作列宽 140 → 240，编辑/删除前加 **CPA** / **Sub** 文字按钮，`_hasAuth=false` 时 disabled
+- 三个 helper 函数 (`downloadAuth` / `downloadAllAs` / `downloadSelectedAs`) 跟 Execute.vue 套路一致
+- 后端 endpoint 全沿用 v2.29.1 / 早期既有，零后端改动
+
+**测试**：171 tests pass — runner +3 测试（network_error vote bad / plus vote good / proxy disabled skip）on 168 baseline.
+
+**Spec / Plan**：`docs/superpowers/specs/2026-05-24-liveness-blacklist-and-accounts-download-design.md` + `docs/superpowers/plans/2026-05-24-liveness-blacklist-and-accounts-download.md`。
+
 ## v2.30.0 — 2026-05-24
 
 ### Liveness Log Partition + network_error Auto-Retry
