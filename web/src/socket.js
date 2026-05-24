@@ -7,6 +7,14 @@ export const socketState = reactive({
   connected: false,
   logs: [],
   accountStatuses: {},
+  aliveStatuses: {},   // email -> { alive_status, alive_reason, alive_checked_at }
+  liveness: {          // batch-level
+    running: false,
+    done: 0,
+    total: 0,
+    failed: 0,
+    summary: null,
+  },
 })
 
 export function connectSocket() {
@@ -55,6 +63,33 @@ export function connectSocket() {
       timestamp: new Date().toISOString(),
       email: '',
       message: `Execution complete: ${s.success ?? 0} success, ${s.error ?? 0} error, ${s.noLink ?? 0} no-link`,
+      level: 'success',
+    })
+  })
+
+  socket.on('liveness-status', (data) => {
+    socketState.aliveStatuses[data.email] = {
+      alive_status: data.alive_status,
+      alive_reason: data.alive_reason || '',
+      alive_checked_at: data.alive_status === 'checking' ? '' : new Date().toISOString(),
+    }
+  })
+
+  socket.on('liveness-progress', (data) => {
+    socketState.liveness.done = data.done || 0
+    socketState.liveness.total = data.total || 0
+    socketState.liveness.failed = data.failed || 0
+    socketState.liveness.running = (data.done || 0) < (data.total || 0)
+  })
+
+  socket.on('liveness-complete', (data) => {
+    socketState.liveness.running = false
+    socketState.liveness.summary = data.summary || null
+    const s = data.summary || {}
+    socketState.logs.push({
+      timestamp: new Date().toISOString(),
+      email: '',
+      message: `Liveness done (${Math.round((data.durationMs||0)/1000)}s): plus=${s.plus||0} canceled=${s.canceled||0} login_fail=${s.login_fail||0} token_expired=${s.token_expired||0} proxy_error=${s.proxy_error||0} network_error=${s.network_error||0}`,
       level: 'success',
     })
   })

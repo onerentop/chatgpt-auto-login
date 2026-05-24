@@ -34,6 +34,22 @@
         </el-select>
         <el-tag style="margin-left: 12px">{{ filteredAccounts.length }} / {{ accounts.length }}</el-tag>
         <el-button size="small" style="margin-left: 8px" @click="clearAllSelection">取消选中</el-button>
+        <el-divider direction="vertical" />
+        <el-button size="small" type="primary" :disabled="selected.length === 0 || livenessRunning" @click="startLiveness('selected')">
+          测活选中 ({{ selected.length }})
+        </el-button>
+        <el-button size="small" type="primary" :disabled="livenessRunning" @click="startLiveness('all')">
+          测活全部
+        </el-button>
+        <el-button v-if="livenessRunning" size="small" type="danger" @click="stopLiveness">
+          停止测活
+        </el-button>
+        <el-tag v-if="livenessRunning" type="info" size="small" style="margin-left: 8px">
+          {{ socketState.liveness.done }}/{{ socketState.liveness.total }} (✗{{ socketState.liveness.failed }})
+        </el-tag>
+        <el-select v-model="aliveFilter" placeholder="活性" clearable size="small" style="width:130px;margin-left:8px">
+          <el-option v-for="o in aliveFilterOptions" :key="o.value" :label="o.label" :value="o.value" />
+        </el-select>
       </el-col>
     </el-row>
 
@@ -50,6 +66,26 @@
         <template #default="{ row }">
           <el-tag v-if="row._plan === 'plus'" type="success" size="small">Plus</el-tag>
           <el-tag v-else-if="row._plan === 'free'" size="small">Free</el-tag>
+          <span v-else style="color:#c0c4cc">-</span>
+        </template>
+      </el-table-column>
+      <el-table-column label="活性" width="120">
+        <template #default="{ row }">
+          <el-tooltip v-if="row._aliveReason" :content="row._aliveReason" placement="top">
+            <el-tag :type="aliveStatusType(row._aliveStatus)" size="small">
+              {{ aliveStatusLabel(row._aliveStatus) }}
+            </el-tag>
+          </el-tooltip>
+          <el-tag v-else :type="aliveStatusType(row._aliveStatus)" size="small">
+            {{ aliveStatusLabel(row._aliveStatus) }}
+          </el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column label="上次测活" width="120">
+        <template #default="{ row }">
+          <span v-if="row._aliveCheckedAt" :title="row._aliveCheckedAt" style="color:#909399">
+            {{ formatRelative(row._aliveCheckedAt) }}
+          </span>
           <span v-else style="color:#c0c4cc">-</span>
         </template>
       </el-table-column>
@@ -106,10 +142,11 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, nextTick } from 'vue'
+import { ref, computed, onMounted, nextTick, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import api from '../api'
-import { PLUS_STATUSES, ERROR_STATUSES } from '../status'
+import { PLUS_STATUSES, ERROR_STATUSES, aliveStatusType, aliveStatusLabel, ALIVE_FILTER_OPTIONS } from '../status'
+import { socketState } from '../socket'
 import { getSelectionSet, setSelectionFromRows, clearSelection } from '../selection'
 
 const tableRef = ref(null)
@@ -119,6 +156,8 @@ const search = ref('')
 const statusFilter = ref('')
 const planFilter = ref('')
 const authFilter = ref('')
+const aliveFilter = ref('')
+const aliveFilterOptions = ALIVE_FILTER_OPTIONS
 const filteredAccounts = computed(() => {
   const q = search.value.toLowerCase()
   return accounts.value.filter(a => {
@@ -132,6 +171,7 @@ const filteredAccounts = computed(() => {
     }
     if (authFilter.value === 'yes' && !a._hasAuth) return false
     if (authFilter.value === 'no' && a._hasAuth) return false
+    if (aliveFilter.value && (a._aliveStatus || 'unknown') !== aliveFilter.value) return false
     return true
   })
 })
@@ -153,12 +193,27 @@ async function load() {
       const r = resultMap[a.email] || {}
       const st = (r.status || '').toLowerCase()
       const plan = PLUS_STATUSES.includes(st) ? 'plus' : (ERROR_STATUSES.includes(st) ? 'free' : '')
-      return { ...a, _showPw: false, _status: st || 'idle', _plan: plan, _hasAuth: !!r.hasAuthFile }
+      return {
+        ...a, _showPw: false, _status: st || 'idle', _plan: plan, _hasAuth: !!r.hasAuthFile,
+        _aliveStatus: r.alive_status || 'unknown',
+        _aliveReason: r.alive_reason || '',
+        _aliveCheckedAt: r.alive_checked_at || '',
+      }
     })
     restoreSelection()
   } catch {}
 }
 onMounted(load)
+watch(() => socketState.aliveStatuses, (val) => {
+  for (const row of accounts.value) {
+    const s = val[row.email]
+    if (s) {
+      row._aliveStatus = s.alive_status
+      row._aliveReason = s.alive_reason
+      if (s.alive_checked_at) row._aliveCheckedAt = s.alive_checked_at
+    }
+  }
+}, { deep: true })
 
 function openAdd() {
   editMode.value = false
@@ -221,6 +276,36 @@ function restoreSelection() {
       if (saved.has(row.email)) tableRef.value.toggleRowSelection(row, true)
     }
   })
+}
+
+const livenessRunning = computed(() => socketState.liveness.running)
+
+function formatRelative(iso) {
+  if (!iso) return '-'
+  const ms = Date.now() - new Date(iso).getTime()
+  if (ms < 60_000) return '刚刚'
+  if (ms < 3_600_000) return Math.floor(ms / 60_000) + ' 分钟前'
+  if (ms < 86_400_000) return Math.floor(ms / 3_600_000) + ' 小时前'
+  return Math.floor(ms / 86_400_000) + ' 天前'
+}
+
+async function startLiveness(scope) {
+  const body = scope === 'selected'
+    ? { emails: selected.value.map((r) => r.email) }
+    : {}
+  try {
+    await api.post('/liveness/start', body)
+    socketState.liveness.running = true
+    socketState.liveness.done = 0
+    socketState.liveness.failed = 0
+  } catch (e) {
+    ElMessage.error(`测活启动失败: ${e?.response?.data?.error || e.message}`)
+  }
+}
+
+async function stopLiveness() {
+  try { await api.post('/liveness/stop') }
+  catch (e) { ElMessage.error(`停止失败: ${e.message}`) }
 }
 
 function onRowClick(row, column, event) {

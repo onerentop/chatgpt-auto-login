@@ -48,3 +48,37 @@ export function isPlus(status) {
 export function isError(status) {
   return ERROR_STATUSES.includes((status || '').toLowerCase())
 }
+
+// === Liveness probe display helpers ===
+
+const ALIVE_TYPE_MAP = {
+  plus: 'success',
+  canceled: 'warning',
+  login_fail: 'danger',
+  token_expired: 'danger',
+  proxy_error: 'warning',
+  network_error: 'warning',
+  unknown: 'info',
+  checking: 'info',
+}
+
+const ALIVE_LABEL_MAP = {
+  plus: 'Plus',
+  canceled: '已取消',
+  login_fail: '登录失败',
+  token_expired: 'Token过期',
+  proxy_error: '代理异常',
+  network_error: '网络异常',
+  unknown: '未测试',
+  checking: '检测中',
+}
+
+export function aliveStatusType(s) {
+  return ALIVE_TYPE_MAP[s] || 'info'
+}
+
+export function aliveStatusLabel(s) {
+  return ALIVE_LABEL_MAP[s] || s || '未测试'
+}
+
+export const ALIVE_FILTER_OPTIONS = Object.entries(ALIVE_LABEL_MAP).map(([value, label]) => ({ value, label }))
