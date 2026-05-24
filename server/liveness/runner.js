@@ -143,6 +143,22 @@ function createRunner({ io, statusDB, accountsDB, checker, lightLogin, codexFile
       if (state.abortCtrl?.signal.aborted) return;
       result = await dispatchOnceInner(email, account, onLog, state.abortCtrl.signal);
       if (result.alive_status !== 'network_error') break;
+
+      // v2.31.1: 每次 net_error attempt 立即 vote bad；blacklisted=true 时 await rotate
+      // 切到下一节点（双保险，proxy 内部已 fire-and-forget rotate，这里显式再 await）。
+      try {
+        const pm = getProxyMgr();
+        if (pm && pm.getState().enabled) {
+          const currentNode = pm.getState().currentNode;
+          if (currentNode) {
+            const vote = pm.recordBadAttempt(currentNode, 'main', `liveness_net_error_a${attempt}`);
+            if (vote?.blacklisted) {
+              try { await pm.rotate?.(); } catch {}
+            }
+          }
+        }
+      } catch {}
+
       if (attempt < NETWORK_RETRY_MAX) {
         onLog('warning', `network_error: ${result.alive_reason} — retrying ${attempt}/${NETWORK_RETRY_MAX} in ${NETWORK_RETRY_DELAY_MS / 1000}s`);
         await abortableSleep(NETWORK_RETRY_DELAY_MS, state.abortCtrl.signal);
@@ -163,20 +179,16 @@ function createRunner({ io, statusDB, accountsDB, checker, lightLogin, codexFile
       }
     } catch {}
 
-    // Vote on the current proxy node based on terminal alive_status. Mirrors
-    // server/engine.js:276/281 pattern. The runner has at this point exhausted
-    // up to 3 retries (v2.30); a terminal network_error / proxy_error means
-    // the node is persistently unreachable, not a transient blip — record
-    // it as a bad attempt so the existing FAIL_THRESHOLD logic in
-    // server/proxy/index.js can eventually blacklist the node.
+    // v2.31.1: bad vote 已在 retry loop 内逐 attempt 投出；此处仅 good vote
+    // 负责终态非 net_error 时清空 failCount。proxy_error 本应 retry 但当前
+    // break 条件只看 network_error —— proxy_error 不在此投 bad（YAGNI，
+    // 实际由 sing-box 自己判定，retry 翻盘概率极低）。
     try {
       const pm = getProxyMgr();
       if (pm && pm.getState().enabled) {
         const currentNode = pm.getState().currentNode;
         if (currentNode) {
-          if (result.alive_status === 'network_error' || result.alive_status === 'proxy_error') {
-            pm.recordBadAttempt(currentNode, 'main', `liveness_${result.alive_status}`);
-          } else if (
+          if (
             result.alive_status === 'plus' ||
             result.alive_status === 'canceled' ||
             result.alive_status === 'token_expired' ||
@@ -185,7 +197,6 @@ function createRunner({ io, statusDB, accountsDB, checker, lightLogin, codexFile
           ) {
             pm.recordGoodAttempt(currentNode, 'main');
           }
-          // 'checking' / 'unknown' never reach this code path as terminal states.
         }
       }
     } catch {}

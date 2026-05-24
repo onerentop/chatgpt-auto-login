@@ -241,7 +241,7 @@ test('runner: plus on first attempt does NOT retry', async () => {
   assert.strictEqual(attempts, 1, 'probe called exactly once');
 });
 
-test('runner: terminal network_error calls recordBadAttempt', async () => {
+test('runner: 3 attempts net_error 全部 vote bad (粒度 v2.31.1)', async () => {
   const calls = [];
   const env = mkEnv({
     accounts: [{ email: 'n@x.com', password: 'p', client_id: 'c', refresh_token: 'r' }],
@@ -252,18 +252,23 @@ test('runner: terminal network_error calls recordBadAttempt', async () => {
     codexFile: { read: async () => ({ access_token: 'tok' }), write: async () => {} },
     proxyMgr: {
       getState: () => ({ enabled: true, currentNode: 'pro-us-99' }),
-      recordBadAttempt: (tag, channel, reason) => calls.push({ kind: 'bad', tag, channel, reason }),
+      recordBadAttempt: (tag, channel, reason) => {
+        calls.push({ kind: 'bad', tag, channel, reason });
+        return { blacklisted: false, count: calls.filter(c => c.kind === 'bad').length };
+      },
       recordGoodAttempt: (tag, channel) => calls.push({ kind: 'good', tag, channel }),
+      rotate: async () => calls.push({ kind: 'rotate' }),
     },
   });
   const runner = createRunner(env);
   runner.start(['n@x.com']);
-  await new Promise(r => setTimeout(r, 5500));  // 3 retries + 2*2s delays
-  const bad = calls.find(c => c.kind === 'bad');
-  assert.ok(bad, 'recordBadAttempt was called');
-  assert.strictEqual(bad.tag, 'pro-us-99');
-  assert.strictEqual(bad.channel, 'main');
-  assert.match(bad.reason, /liveness_network_error/);
+  await new Promise(r => setTimeout(r, 5500));
+  const bads = calls.filter(c => c.kind === 'bad');
+  assert.strictEqual(bads.length, 3, '每个 attempt 都 vote bad，共 3 次');
+  assert.match(bads[0].reason, /liveness_net_error_a1/);
+  assert.match(bads[1].reason, /liveness_net_error_a2/);
+  assert.match(bads[2].reason, /liveness_net_error_a3/);
+  assert.strictEqual(calls.filter(c => c.kind === 'rotate').length, 0);
 });
 
 test('runner: terminal plus calls recordGoodAttempt', async () => {
@@ -309,4 +314,42 @@ test('runner: proxy disabled skips vote', async () => {
   runner.start(['d@x.com']);
   await new Promise(r => setTimeout(r, 1500));
   assert.strictEqual(calls.length, 0, 'no vote when proxy disabled');
+});
+
+test('runner: blacklist mid-retry triggers explicit await rotate', async () => {
+  const calls = [];
+  let badCount = 0;
+  const env = mkEnv({
+    accounts: [{ email: 'm@x.com', password: 'p', client_id: 'c', refresh_token: 'r' }],
+    checker: {
+      probe: async () => ({ alive_status: 'network_error', alive_reason: 'check 503' }),
+      verifyDeactivated: async () => ({ status: 'error', reason: 'na' }),
+    },
+    codexFile: { read: async () => ({ access_token: 'tok' }), write: async () => {} },
+    proxyMgr: {
+      getState: () => ({ enabled: true, currentNode: 'pro-us-mid' }),
+      recordBadAttempt: (tag, channel, reason) => {
+        badCount++;
+        calls.push({ kind: 'bad', tag, channel, reason });
+        return { blacklisted: badCount === 2, count: badCount };
+      },
+      recordGoodAttempt: (tag, channel) => calls.push({ kind: 'good', tag, channel }),
+      rotate: async () => {
+        calls.push({ kind: 'rotate' });
+        await new Promise(r => setTimeout(r, 5));
+      },
+    },
+  });
+  const runner = createRunner(env);
+  runner.start(['m@x.com']);
+  await new Promise(r => setTimeout(r, 5500));
+  const bads = calls.filter(c => c.kind === 'bad');
+  const rotates = calls.filter(c => c.kind === 'rotate');
+  assert.strictEqual(bads.length, 3);
+  assert.strictEqual(rotates.length, 1, 'rotate called exactly once when blacklisted:true');
+  const badIdx2 = calls.findIndex(c => c.kind === 'bad' && c.reason.includes('a2'));
+  const rotateIdx = calls.findIndex(c => c.kind === 'rotate');
+  const badIdx3 = calls.findIndex(c => c.kind === 'bad' && c.reason.includes('a3'));
+  assert.ok(badIdx2 < rotateIdx, 'rotate after a2 vote');
+  assert.ok(rotateIdx < badIdx3, 'rotate before a3 vote (because await)');
 });
