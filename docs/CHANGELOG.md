@@ -1,5 +1,37 @@
 # Changelog
 
+## v2.31.1 — 2026-05-25
+
+### Hotfix: 测活投票粒度细化 + 自动 rotate
+
+v2.31.0 投票"每个账户末尾 1 票"过粗：1 个账户 3 次 net_error 只
+贡献 1 个 failCount，需要 3 个账户都净失败才拉黑节点；且
+recordBadAttempt 拉黑后 currentNode 不变，后续账户继续踩坑。
+
+**修复 1 — Proxy auto-rotate**
+
+- `server/proxy/index.js:recordBadAttempt` 在 `next >= FAIL_THRESHOLD`
+  时 fire-and-forget `Promise.resolve().then(() => rotate())`
+  （jp 通道走 `rotateJp`），让 `currentNode` 立即切到非黑名单节点
+- 新增 `__setAutoRotateForTest(mainFn, jpFn)` 注入钩子；传 `null` 恢复默认
+- 现有 engine.js / chatgpt-checkout.js 调用方零改动也享受自动 rotate
+
+**修复 2 — Liveness 逐 attempt vote**
+
+- `server/liveness/runner.js:dispatchOne` retry loop 每次 net_error attempt
+  立即 `recordBadAttempt(currentNode, 'main', 'liveness_net_error_a<N>')`
+- 同账户 3 次连环 net_error 即累加到 FAIL_THRESHOLD=3 拉黑当前节点
+- `blacklisted=true` 时显式 `await pm.rotate?.()` —— 双保险，确保
+  attempt N+1 看到新 currentNode
+- v2.31.0 末尾 vote 块从 bad+good 砍剩 good（bad 已搬进 retry loop）
+
+**测试**：184 tests pass — proxy +2（B5 main / B6 jp 通道阈值触发 rotate）
++ runner +1 替换（3 次 bad call 替原 1 次）+ runner +1 新增
+（mid-retry rotate 顺序断言）on v2.31.0 baseline 181.
+
+**Spec / Plan**：`docs/superpowers/specs/2026-05-25-liveness-blacklist-vote-granularity-design.md`
++ `docs/superpowers/plans/2026-05-25-liveness-blacklist-vote-granularity.md`。
+
 ## v2.31.0 — 2026-05-24
 
 ### Liveness Proxy Blacklist Integration + Accounts Page Download UI
