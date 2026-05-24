@@ -25,10 +25,14 @@ function readConfig() {
 }
 
 /**
- * Write config object to config.json.
+ * Write config object to config.json atomically (tmp + rename) so an
+ * interrupted write cannot leave a truncated file that breaks the next
+ * startup JSON.parse.
  */
 function writeConfig(config) {
-  fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), 'utf-8');
+  const tmp = CONFIG_PATH + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(config, null, 2), 'utf-8');
+  fs.renameSync(tmp, CONFIG_PATH);
 }
 
 /**

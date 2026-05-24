@@ -131,11 +131,28 @@ async function initDB() {
   return db;
 }
 
-function save() {
-  if (!db) return;
-  const data = db.export();
-  fs.writeFileSync(DB_PATH, Buffer.from(data));
+// Serialize all on-disk writes through this promise chain. db.export() still
+// runs synchronously at the call site (capturing the current in-memory state),
+// but the file write/rename is awaited inside the queue so concurrent save()
+// calls cannot interleave half-written buffers.
+let _saveQueue = Promise.resolve();
+
+async function _actualSave(buf) {
+  const tmp = DB_PATH + '.tmp';
+  await fs.promises.writeFile(tmp, buf);
+  // fs.promises.rename is atomic within the same filesystem on Windows/POSIX.
+  await fs.promises.rename(tmp, DB_PATH);
 }
+
+function save() {
+  if (!db) return _saveQueue;
+  const buf = Buffer.from(db.export());
+  _saveQueue = _saveQueue.then(() => _actualSave(buf), () => _actualSave(buf));
+  return _saveQueue;
+}
+
+// Tests / shutdown can await this to make sure all pending writes hit disk.
+save.flush = function flush() { return _saveQueue; };
 
 function detectLoginType(email) {
   const domain = (email.split('@')[1] || '').toLowerCase();
