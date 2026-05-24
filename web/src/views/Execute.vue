@@ -100,7 +100,7 @@ import { ref, computed, watch, onMounted, shallowRef, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
 import api from '../api'
 import { socketState } from '../socket'
-import { statusType, statusLabel, PLUS_STATUSES, DEFAULT_EXPANDED_STATUSES, groupAccountsByStatus } from '../status'
+import { statusType, statusLabel, PLUS_STATUSES, ERROR_STATUSES, DEFAULT_EXPANDED_STATUSES, groupAccountsByStatus } from '../status'
 import { getSelectionSet, clearSelection } from '../selection'
 import AccountTableRows from '../components/AccountTableRows.vue'
 
@@ -187,7 +187,7 @@ watch(() => socketState.accountStatuses, (statuses) => {
       row._status = data.status || 'running'
       row._phase = data.phase || ''
       if (PLUS_STATUSES.includes(data.status)) { row._hasAuth = true; row._plan = 'plus'; }
-      if (['error', 'no_link'].includes(data.status)) row._plan = 'free'
+      if (ERROR_STATUSES.includes(data.status)) row._plan = 'free'
       if (data.status === 'running') currentRunning = email
     }
   }
@@ -242,7 +242,7 @@ async function loadResults() {
         if (r.phase) row._phase = r.phase
         row._hasAuth = r.hasAuthFile || false
         const st = (r.status || '').toLowerCase()
-        row._plan = PLUS_STATUSES.includes(st) ? 'plus' : (['error', 'no_link'].includes(st) ? 'free' : '')
+        row._plan = PLUS_STATUSES.includes(st) ? 'plus' : (ERROR_STATUSES.includes(st) ? 'free' : '')
       }
     }
   } catch {}

@@ -1,5 +1,23 @@
 # Changelog
 
+## v2.32.2 — 2026-05-25
+
+### Hotfix: Execute.vue 计划列推导漏改
+
+v2.32.1 把 3 个新 status 码加进了 `ERROR_STATUSES`，Accounts.vue
+的计划列正常显示 free。但 Execute.vue 自己有两处 `_plan` 推导
+**没有用 ERROR_STATUSES**，而是硬编码 `['error', 'no_link']`：
+
+- 第 190 行（socket 实时 update）：`if (['error', 'no_link'].includes(data.status)) row._plan = 'free'`
+- 第 245 行（load 时 hydrate）：`row._plan = PLUS_STATUSES.includes(st) ? 'plus' : (['error', 'no_link'].includes(st) ? 'free' : '')`
+
+结果 Execute.vue 计划列在 `token_expired` / `canceled` / `login_fail`
+/ `deactivated` / `no_promo` 这些 ERROR_STATUSES 状态下都显示 `-`
+而非 free。
+
+修复：两处硬编码改为 `ERROR_STATUSES.includes(...)`，并在
+import 中加入 `ERROR_STATUSES`。前端 rebuild。
+
 ## v2.32.1 — 2026-05-25
 
 ### Hotfix: 3 个新 status 码加入 ERROR_STATUSES
