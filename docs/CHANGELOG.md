@@ -1,5 +1,28 @@
 # Changelog
 
+## v2.29.0 — 2026-05-24
+
+### Liveness Deactivated Detection + Search UX Overhaul
+
+**Part A — deactivated 检测**
+
+- **Case 1 修复**：`mapPlanType('deactivated')` 直接返 `alive_status='deactivated', reason='account_deactivated'`。v2.28 hotfix `3b64727` 已经让 Python 端在 HTTP 200 + `is_deactivated=true` 时报 `plan_type='deactivated'`，但 Node 端 mapPlanType 误归 `canceled` —— 本次打通。
+- **Case 2 新增**：新建 `chatgpt_register/deactivated_check.py`，跑 `protocol_register.py` 的 Step 0-2（homepage / signin / authorize），扫描响应体里的 `account_deactivated` / `account_disabled` 标记。无 OTP，5-10s/账号。`server/liveness/checker.js` 新 `verifyDeactivated` 包装 spawn；`runner.dispatchOne` 在 probe 返 `token_expired` 后调它。
+- **实时日志**：v2.26 spec §6.2 定义了 `liveness-log` 事件名但 runner 当时没真发。本次正式实现：runner 注入 `onLog(level, message)` 闭包 → `io.emit('liveness-log', {email, level, message})` → 前端 `socket.on('liveness-log')` → `pushLivenessLog`。`pushLivenessLog` 加 `source:'liveness'` 字段，`Accounts.vue` 的 `livenessLogs` computed 改用该字段过滤（不再靠 message 前缀字符串）。
+
+**Part B — Accounts 页搜索 UX**
+
+- 状态、活性筛选改 `<el-select multiple collapse-tags>`，可同时选多项；filter 用 `Array.includes(a._status)`。
+- 搜索框 placeholder 改 `搜索 (邮箱/RT/Client ID/TOTP/密码)`，匹配五个字段的 haystack join。
+- toolbar 新增 3 个按钮：
+  - `仅看未测试` 一键设 `aliveFilter=['unknown']`
+  - `7天未测` 切换 `staleOnly`，按 `alive_checked_at` 时间过滤
+  - `重置筛选` 一键清 6 个 filter 维度（含 staleOnly），任意 filter 激活时才可用
+
+**测试**：159 tests pass —— 16 checker（+2 deactivated 映射）+ 6 verify-deactivated（新）+ 10 runner（+2 verifyDeactivated 集成）+ 既有 125 unchanged。Python `deactivated_check.py` 沿用 stripe_init.py 模式不写单测，集成 smoke 验证。
+
+**Spec / Plan**：`docs/superpowers/specs/2026-05-24-deactivated-detection-and-search-ux-design.md` + `docs/superpowers/plans/2026-05-24-deactivated-detection-and-search-ux.md`。
+
 ## v2.28.0 — 2026-05-24
 
 ### Liveness Probe Cloudflare Bypass + 日志面板
