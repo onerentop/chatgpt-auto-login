@@ -1,5 +1,24 @@
 # Changelog
 
+## v2.27.0 — 2026-05-25
+
+### Execute Page Status-Grouped Account List
+
+Execute 页账户列表由单表平铺改为按 `_status` 分组成 `el-collapse` 折叠面板。默认展开 Plus(有RT) + Plus(无RT) 两组，其余折叠 —— 运维一眼能看到"成功资产"，错误账号按需展开排查。
+
+**核心改动：**
+
+- **`groupAccountsByStatus` 纯函数** 加到 `web/src/status.js`：按 `_status` 分桶 + 按固定业务序 `GROUP_ORDER`（12 个状态）排序 + 隐藏空组。`DEFAULT_EXPANDED_STATUSES = ['plus', 'plus_no_rt']` 同 status.js 导出。
+- **`AccountTableRows.vue` 子组件**：从 Execute.vue 抽出 el-table 列定义 + 展开日志行模板（~142 行）。Props 含 `rows / running / globalSelectedSet / getHistoryLogs / getRealtimeLogs`。Emits `group-selection-change / expand-change / row-action / auth-download / row-click`。Exposes `clearSelection / toggleRowExpansion`。
+- **`Execute.vue` 改造**：`<el-collapse v-model="expandedKeys">` v-for `<AccountTableRows>`；selection 由 `selection.js` 全局 Set 跨组聚合；`autoExpand` 跨子组件接线（先 push `'running'` 进 expandedKeys，nextTick 后调对应子组件 `toggleRowExpansion`）。
+- **`statusFilter` 与分组协同**：选某状态 → watch only-add 进 expandedKeys → 该组自动展开；空组隐藏后效果等同于"只看那一组"。
+
+**关键不变式**：`selection.js` 仍是单一来源 —— 子组件 `watch(() => props.rows) + { flush: 'post' }` 在 rows 变化（如跨组迁移）时用 `globalSelectedSet` 回填选中标记。替代了原 `restoreSelection()` 函数。
+
+**单测**：`__tests__/status-groups.test.js` +10（G1-G10：空输入 / 业务序 / 空组过滤 / 同状态聚合 / 缺失 _status / 未知状态 fallback / label-type 派生 / DEFAULT_EXPANDED 常量 / 非数组守卫 / 多个未知 status 插入序）。
+
+**Spec / Plan**：`docs/superpowers/specs/2026-05-25-execute-status-groups-design.md` + `docs/superpowers/plans/2026-05-25-execute-status-groups.md`。
+
 ## v2.31.1 — 2026-05-25
 
 ### Hotfix: 测活投票粒度细化 + 自动 rotate
