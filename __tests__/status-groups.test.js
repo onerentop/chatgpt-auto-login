@@ -90,3 +90,25 @@ test('G10 多个未知 status 按首次出现顺序', () => {
     ['plus', 'zzz_new', 'aaa_new']
   )
 })
+
+// === v2.28 Task 3: isFailedToRetry helper ===
+
+let isFailedToRetry
+
+test.before(async () => {
+  const mod = await import('../web/src/status.js')
+  isFailedToRetry = mod.isFailedToRetry
+})
+
+test('G11 isFailedToRetry 覆盖所有 9 个未拿到 Plus 的终态', () => {
+  for (const s of ['error', 'no_link', 'no_promo', 'verify_error', 'paypal_captcha',
+                   'login_fail', 'token_expired', 'aborted', 'no_jp_proxy']) {
+    assert.strictEqual(isFailedToRetry(s), true, `${s} 应当可重试`)
+  }
+})
+
+test('G12 isFailedToRetry 排除终态 plus / plus_no_rt / deactivated / idle / running / 空值', () => {
+  for (const s of ['plus', 'plus_no_rt', 'deactivated', 'idle', 'running', 'checking', '', undefined, null]) {
+    assert.strictEqual(isFailedToRetry(s), false, `${JSON.stringify(s)} 不应可重试`)
+  }
+})

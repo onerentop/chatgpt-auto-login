@@ -147,3 +147,30 @@ export function groupAccountsByStatus(rows) {
   })
   return groups
 }
+
+// === Execute page retry / filter helpers ===
+
+// 所有 "未拿到 Plus 但非账号死亡" 的终态 — "重试失败" 按钮的目标集
+// 排除 deactivated（账号已删）、plus / plus_no_rt（已成功）、
+// idle / running（未到终态）、checking / unknown（liveness 中间态）
+export const FAILED_TO_RETRY_STATUSES = [
+  'error',
+  'no_link',
+  'no_promo',
+  'verify_error',
+  'paypal_captcha',
+  'login_fail',
+  'token_expired',
+  'aborted',
+  'no_jp_proxy',
+]
+
+export function isFailedToRetry(status) {
+  return FAILED_TO_RETRY_STATUSES.includes((status || '').toLowerCase())
+}
+
+// statusFilter 下拉的动态选项 — 从 LABEL_MAP 全集生成，避免下拉与状态体系脱节
+// 排除纯 liveness 维度（checking / canceled），它们不在执行流水线 status
+export const EXECUTE_STATUS_FILTER_OPTIONS = Object.entries(LABEL_MAP)
+  .filter(([k]) => !['checking', 'canceled'].includes(k))
+  .map(([value, label]) => ({ value, label }))
