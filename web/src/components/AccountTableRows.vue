@@ -80,7 +80,7 @@
 </template>
 
 <script setup>
-import { ref, watch, nextTick } from 'vue'
+import { ref, watch } from 'vue'
 import { statusType, statusLabel } from '../status'
 
 const props = defineProps({
@@ -112,20 +112,26 @@ function formatTs(ts) {
   return ts.slice(0, 19).replace('T', ' ')
 }
 
-// 关键：rows 变化后（如父组件 filter / 新数据进来），用 globalSelectedSet 回填选中状态
-// el-table 的 reserve-selection 只在本表内 reserve；globalSelectedSet 是跨表共享真相。
+// 关键：rows 变化后（父组件 filter / 新数据进来）用 globalSelectedSet 回填选中状态。
+// el-table 的 reserve-selection 只在本表内按 row-key 缓存；跨表迁移（如账户从
+// plus 组 → running 组）必须靠 globalSelectedSet 重新 toggle。
+//
+// 为什么不 watch globalSelectedSet 自身：本组的选中变化通过 emit
+// 'group-selection-change' → 父组件 → setSelectionFromRows → 全局 Set 写入；
+// 其他组的选中变化对本组无影响（不在本表的 rows 里）。watch Set 会引入
+// 无穷循环（emit → Set 变 → watch 触发 → toggleRowSelection → 再 emit）。
+//
+// `{ flush: 'post' }` 把回调推到 DOM 更新之后，此时 el-table 已渲染新 rows，
+// 可直接调 toggleRowSelection — 无需再 nextTick。
 watch(() => props.rows, () => {
-  nextTick(() => {
-    if (!tableRef.value) return
-    for (const row of props.rows) {
-      const shouldBeSelected = props.globalSelectedSet.has(row.email)
-      tableRef.value.toggleRowSelection(row, shouldBeSelected)
-    }
-  })
+  if (!tableRef.value) return
+  for (const row of props.rows) {
+    const shouldBeSelected = props.globalSelectedSet.has(row.email)
+    tableRef.value.toggleRowSelection(row, shouldBeSelected)
+  }
 }, { flush: 'post' })
 
 defineExpose({
-  tableRef,
   clearSelection() {
     tableRef.value?.clearSelection()
   },
