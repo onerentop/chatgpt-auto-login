@@ -11,6 +11,9 @@ const TYPE_MAP = {
   no_jp_proxy: 'warning',
   no_promo: 'info',
   verify_error: 'danger',
+  canceled: 'warning',
+  token_expired: 'warning',
+  login_fail: 'danger',
   paypal_captcha: 'warning',
   aborted: 'info',
 }
@@ -26,6 +29,9 @@ const LABEL_MAP = {
   no_jp_proxy: 'JP节点不可用',
   no_promo: '无0元资格',
   verify_error: 'Stripe验证失败',
+  canceled: '已取消',
+  token_expired: 'Token失效',
+  login_fail: '登录失败',
   paypal_captcha: 'PayPal人机验证',
   aborted: '已停止',
 }
@@ -94,6 +100,9 @@ export const GROUP_ORDER = [
   'running',        // 运行中
   'error',          // 错误
   'deactivated',    // 已删除
+  'canceled',       // 已取消（测活同步）
+  'token_expired',  // Token失效（测活同步）
+  'login_fail',     // 登录失败（测活同步）
   'no_link',        // 无链接
   'no_promo',       // 无0元资格
   'verify_error',   // Stripe验证失败
