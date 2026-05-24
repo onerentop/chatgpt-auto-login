@@ -6,9 +6,9 @@
       <el-button @click="exportAccounts">导出全部</el-button>
       <el-button :disabled="selected.length === 0" @click="exportSelected">导出选中 ({{ selected.length }})</el-button>
       <el-button type="success" @click="openAdd">添加单个</el-button>
-      <el-popconfirm :title="`确定删除选中的 ${selected.length} 个账号？`" @confirm="delSelected" v-if="selected.length > 0">
-        <template #reference><el-button type="danger" size="small">删除选中 ({{ selected.length }})</el-button></template>
-      </el-popconfirm>
+      <el-button v-if="selected.length > 0" type="danger" size="small" @click="confirmDelSelected">
+        删除选中 ({{ selected.length }})
+      </el-button>
     </el-row>
 
     <!-- v2.28 #6: Row 2 — 筛选 -->
@@ -229,6 +229,7 @@ import { PLUS_STATUSES, ERROR_STATUSES, aliveStatusType, aliveStatusLabel, ALIVE
 import { socketState } from '../socket'
 import { getSelectionSet, setSelectionFromRows, clearSelection } from '../selection'
 import { useUrlSyncedFilters } from '../composables/useUrlSyncedFilters'
+import { confirmDanger } from '../composables/useConfirmDanger'
 
 const tableRef = ref(null)
 const accounts = ref([])
@@ -518,6 +519,21 @@ function exportSelected() {
   a.download = `accounts-selected-${selected.value.length}.txt`
   a.click()
   URL.revokeObjectURL(url)
+}
+
+async function confirmDelSelected() {
+  const n = selected.value.length
+  if (n === 0) return
+  // n > 5 时要求输入数字 N，防止误点批量删除；少量删除走普通确认。
+  const opts = n > 5
+    ? { requireText: String(n), title: `批量删除 ${n} 个账号` }
+    : { title: `删除 ${n} 个账号` }
+  const ok = await confirmDanger(
+    `即将删除 ${n} 个账号，此操作不可恢复。`,
+    opts,
+  )
+  if (!ok) return
+  await delSelected()
 }
 
 async function delSelected() {
