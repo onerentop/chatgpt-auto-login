@@ -56,15 +56,28 @@
       </el-col>
     </el-row>
 
-    <el-collapse v-model="logsExpanded" style="margin-bottom: 12px">
-      <el-collapse-item :title="`测活日志 (${livenessLogs.length})`" name="liveness-logs">
+    <el-collapse v-model="oldLogsExpanded" style="margin-bottom: 8px">
+      <el-collapse-item :title="`旧日志 (${oldLogs.length})`" name="old">
         <div class="liveness-log-list">
-          <div v-for="(log, i) in livenessLogs" :key="i" :class="'log-' + log.level">
+          <div v-for="(log, i) in oldLogs" :key="'o-' + i" :class="'log-' + log.level">
             <span class="log-time">{{ log.timestamp.slice(11, 19) }}</span>
             <span v-if="log.email" class="log-email">{{ log.email }}</span>
             <span class="log-msg">{{ log.message }}</span>
           </div>
-          <div v-if="livenessLogs.length === 0" style="color:#c0c4cc; padding: 8px;">暂无测活日志</div>
+          <div v-if="oldLogs.length === 0" style="color:#c0c4cc; padding: 8px;">暂无历史日志</div>
+        </div>
+      </el-collapse-item>
+    </el-collapse>
+
+    <el-collapse v-model="newLogsExpanded" style="margin-bottom: 12px">
+      <el-collapse-item :title="`实时日志 (${newLogs.length})`" name="new">
+        <div ref="newLogsContainer" class="liveness-log-list">
+          <div v-for="(log, i) in newLogs" :key="'n-' + i" :class="'log-' + log.level">
+            <span class="log-time">{{ log.timestamp.slice(11, 19) }}</span>
+            <span v-if="log.email" class="log-email">{{ log.email }}</span>
+            <span class="log-msg">{{ log.message }}</span>
+          </div>
+          <div v-if="newLogs.length === 0" style="color:#c0c4cc; padding: 8px;">暂无实时日志</div>
         </div>
       </el-collapse-item>
     </el-collapse>
@@ -190,10 +203,25 @@ function resetFilters() {
 }
 
 const aliveFilterOptions = ALIVE_FILTER_OPTIONS
-const logsExpanded = ref([])
-const livenessLogs = computed(() =>
-  socketState.logs.filter(l => l.source === 'liveness').slice(-200)
+const oldLogsExpanded = ref([])                // 默认折叠
+const newLogsExpanded = ref(['new'])           // 默认展开
+const newLogsContainer = ref(null)             // DOM ref for auto-scroll
+
+const oldLogs = computed(() =>
+  socketState.logs.filter(l => l.source === 'liveness' && l.isHistorical).slice(-200)
 )
+const newLogs = computed(() =>
+  socketState.logs.filter(l => l.source === 'liveness' && !l.isHistorical).slice(-500)
+)
+
+// Auto-scroll the realtime log container to the bottom whenever a new entry
+// arrives. nextTick lets Vue re-render the v-for before we read scrollHeight.
+watch(() => newLogs.value.length, () => {
+  nextTick(() => {
+    const el = newLogsContainer.value
+    if (el) el.scrollTop = el.scrollHeight
+  })
+})
 const filteredAccounts = computed(() => {
   const q = search.value.toLowerCase()
   return accounts.value.filter(a => {
@@ -265,6 +293,7 @@ async function loadLivenessLogs() {
         level: log.level || 'info',
         message: (log.message?.startsWith('[') ? log.message : `[liveness] ${log.message}`),
         source: 'liveness',
+        isHistorical: true,
       })
     }
     if (socketState.logs.length > 500) socketState.logs.splice(0, socketState.logs.length - 500)
@@ -273,8 +302,8 @@ async function loadLivenessLogs() {
 onMounted(() => { load(); loadLivenessLogs() })
 // Auto-expand log panel when liveness starts; user controls collapsing afterwards.
 watch(() => socketState.liveness.running, (now) => {
-  if (now && !logsExpanded.value.includes('liveness-logs')) {
-    logsExpanded.value = ['liveness-logs']
+  if (now && !newLogsExpanded.value.includes('new')) {
+    newLogsExpanded.value = ['new']
   }
 })
 

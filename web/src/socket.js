@@ -67,7 +67,7 @@ export function connectSocket() {
     })
   })
 
-  function pushLivenessLog(email, level, message) {
+  function pushLivenessLog(email, level, message, isHistorical = false) {
     const prefixed = message?.startsWith('[') ? message : `[liveness] ${message}`;
     socketState.logs.push({
       timestamp: new Date().toISOString(),
@@ -75,6 +75,7 @@ export function connectSocket() {
       level,
       message: prefixed,
       source: 'liveness',
+      isHistorical,
     });
     if (socketState.logs.length > 500) {
       socketState.logs.splice(0, socketState.logs.length - 500);
