@@ -9,8 +9,8 @@
         <el-popconfirm :title="`确定删除选中的 ${selected.length} 个账号？`" @confirm="delSelected" v-if="selected.length > 0">
           <template #reference><el-button type="danger" size="small">删除选中 ({{ selected.length }})</el-button></template>
         </el-popconfirm>
-        <el-input v-model="search" placeholder="搜索邮箱..." clearable style="width:200px;margin-left:12px" />
-        <el-select v-model="statusFilter" placeholder="状态" clearable style="width:130px;margin-left:8px">
+        <el-input v-model="search" placeholder="搜索 (邮箱/RT/Client ID/TOTP/密码)" clearable style="width:240px;margin-left:12px" />
+        <el-select v-model="statusFilter" placeholder="状态" clearable multiple collapse-tags collapse-tags-tooltip style="width:180px;margin-left:8px">
           <el-option label="Plus(有RT)" value="plus" />
           <el-option label="Plus(无RT)" value="plus_no_rt" />
           <el-option label="错误" value="error" />
@@ -32,6 +32,9 @@
           <el-option label="已生成" value="yes" />
           <el-option label="未生成" value="no" />
         </el-select>
+        <el-button size="small" text @click="aliveFilter = ['unknown']">仅看未测试</el-button>
+        <el-button size="small" :type="staleOnly ? 'primary' : ''" text @click="staleOnly = !staleOnly">7天未测</el-button>
+        <el-button size="small" text :disabled="!hasAnyFilter" @click="resetFilters">重置筛选</el-button>
         <el-tag style="margin-left: 12px">{{ filteredAccounts.length }} / {{ accounts.length }}</el-tag>
         <el-button size="small" style="margin-left: 8px" @click="clearAllSelection">取消选中</el-button>
         <el-divider direction="vertical" />
@@ -47,7 +50,7 @@
         <el-tag v-if="livenessRunning" type="info" size="small" style="margin-left: 8px">
           {{ socketState.liveness.done }}/{{ socketState.liveness.total }} (✗{{ socketState.liveness.failed }})
         </el-tag>
-        <el-select v-model="aliveFilter" placeholder="活性" clearable size="small" style="width:130px;margin-left:8px">
+        <el-select v-model="aliveFilter" placeholder="活性" clearable multiple collapse-tags collapse-tags-tooltip size="small" style="width:180px;margin-left:8px">
           <el-option v-for="o in aliveFilterOptions" :key="o.value" :label="o.label" :value="o.value" />
         </el-select>
       </el-col>
@@ -166,29 +169,53 @@ const tableRef = ref(null)
 const accounts = ref([])
 const selected = ref([])
 const search = ref('')
-const statusFilter = ref('')
+const statusFilter = ref([])
 const planFilter = ref('')
 const authFilter = ref('')
-const aliveFilter = ref('')
+const aliveFilter = ref([])
+const staleOnly = ref(false)
+
+const hasAnyFilter = computed(() =>
+  !!search.value || statusFilter.value.length > 0 || !!planFilter.value
+  || !!authFilter.value || aliveFilter.value.length > 0 || staleOnly.value
+)
+
+function resetFilters() {
+  search.value = ''
+  statusFilter.value = []
+  planFilter.value = ''
+  authFilter.value = ''
+  aliveFilter.value = []
+  staleOnly.value = false
+}
+
 const aliveFilterOptions = ALIVE_FILTER_OPTIONS
 const logsExpanded = ref([])
 const livenessLogs = computed(() =>
-  socketState.logs.filter(l => l.message?.startsWith('[liveness]')).slice(-200)
+  socketState.logs.filter(l => l.source === 'liveness').slice(-200)
 )
 const filteredAccounts = computed(() => {
   const q = search.value.toLowerCase()
   return accounts.value.filter(a => {
-    if (q && !a.email.toLowerCase().includes(q)) return false
-    // Running accounts always shown (don't disappear during execution)
+    if (q) {
+      const haystack = [a.email, a.refresh_token, a.client_id, a.totp_secret, a.password]
+        .map(s => (s || '').toLowerCase()).join(' ')
+      if (!haystack.includes(q)) return false
+    }
     if (a._status === 'running') return true
-    if (statusFilter.value && a._status !== statusFilter.value) return false
+    if (statusFilter.value.length && !statusFilter.value.includes(a._status)) return false
     if (planFilter.value) {
       if (planFilter.value === 'unknown' && a._plan) return false
       if (planFilter.value !== 'unknown' && a._plan !== planFilter.value) return false
     }
     if (authFilter.value === 'yes' && !a._hasAuth) return false
     if (authFilter.value === 'no' && a._hasAuth) return false
-    if (aliveFilter.value && (a._aliveStatus || 'unknown') !== aliveFilter.value) return false
+    if (aliveFilter.value.length && !aliveFilter.value.includes(a._aliveStatus || 'unknown')) return false
+    if (staleOnly.value) {
+      const cutoff = Date.now() - 7 * 86400_000
+      const checkedAt = a._aliveCheckedAt ? Date.parse(a._aliveCheckedAt) : 0
+      if (checkedAt && checkedAt > cutoff) return false  // tested within 7d → out
+    }
     return true
   })
 })

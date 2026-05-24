@@ -68,11 +68,13 @@ export function connectSocket() {
   })
 
   function pushLivenessLog(email, level, message) {
+    const prefixed = message?.startsWith('[') ? message : `[liveness] ${message}`;
     socketState.logs.push({
       timestamp: new Date().toISOString(),
       email: email || '',
       level,
-      message: `[liveness] ${message}`,
+      message: prefixed,
+      source: 'liveness',
     });
     if (socketState.logs.length > 500) {
       socketState.logs.splice(0, socketState.logs.length - 500);
@@ -106,6 +108,10 @@ export function connectSocket() {
     const s = data.summary || {}
     pushLivenessLog('', 'success', `done (${Math.round((data.durationMs||0)/1000)}s): plus=${s.plus||0} canceled=${s.canceled||0} login_fail=${s.login_fail||0} token_expired=${s.token_expired||0} proxy_error=${s.proxy_error||0} network_error=${s.network_error||0}`)
   })
+
+  socket.on('liveness-log', (data) => {
+    pushLivenessLog(data.email, data.level || 'info', data.message);
+  });
 
   socket.connect()
 }
