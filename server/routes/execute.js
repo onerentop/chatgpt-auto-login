@@ -3,8 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const { PipelineEngine } = require('../engine');
 const { ProtocolEngine } = require('../../protocol-engine');
-
-let engine = null;
+const { getEngine, setEngine } = require('../engine-singleton');
 
 function readProtocolMode() {
   try {
@@ -17,12 +16,14 @@ module.exports = function (io) {
   const router = express.Router();
 
   router.get('/status', (req, res) => {
+    const engine = getEngine();
     res.json({ status: engine ? engine.getStatus() : 'idle' });
   });
 
   // POST /api/execute — start pipeline
   // Body: { emails?: string[] } — if provided, only run these accounts
   router.post('/', async (req, res) => {
+    let engine = getEngine();
     if (engine && engine.getStatus() !== 'idle') {
       return res.status(409).json({ error: 'Pipeline is already running' });
     }
@@ -48,6 +49,7 @@ module.exports = function (io) {
       try { await engine.stop(); } catch {}
     }
     engine = readProtocolMode() ? new ProtocolEngine() : new PipelineEngine();
+    setEngine(engine);
 
     engine.on('log', (data) => io.emit('log', data));
     engine.on('account-status', (data) => io.emit('account-status', data));
@@ -66,6 +68,7 @@ module.exports = function (io) {
   });
 
   router.post('/stop', (req, res) => {
+    const engine = getEngine();
     if (!engine) return res.status(400).json({ error: 'No engine instance' });
     // engine.stop() is async (waits for browser.close + tempdir rm). We don't
     // block the HTTP response on it — engine.getStatus() will report 'stopping'

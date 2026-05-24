@@ -85,6 +85,7 @@ initDB().then(() => {
   app.use('/api/results', resultsRoutes);
   app.use('/api/proxy', proxyRoutes);
   app.use('/api/liveness', livenessRoutes(livenessRunner, accountsDB, livenessLogsDB));
+  app.use('/api/health', require('./routes/health'));
 
   const distPath = path.join(__dirname, '..', 'web', 'dist');
   app.use(express.static(distPath));
