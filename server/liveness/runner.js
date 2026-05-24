@@ -68,7 +68,16 @@ function createRunner({ io, statusDB, accountsDB, checker, lightLogin, codexFile
         } catch (e) {
           const msg = String(e?.message || e);
           if (e?.name === 'LivenessLoginNotImplementedError' || /not.*implemented/i.test(msg)) {
-            result = { alive_status: 'login_fail', alive_reason: 'liveness not yet supported in protocol mode' };
+            // Protocol-mode lightLogin is a stub. If the original probe already
+            // gave a real answer (token_expired from 401), preserve it instead
+            // of overwriting with a vague "not yet supported" string — the
+            // user cares whether the account is dead, not whether our re-login
+            // path is implemented yet.
+            if (probeRes && probeRes.alive_status === 'token_expired') {
+              result = probeRes;
+            } else {
+              result = { alive_status: 'login_fail', alive_reason: 'liveness not yet supported in protocol mode' };
+            }
           } else if (/bad password/i.test(msg)) result = { alive_status: 'login_fail', alive_reason: 'bad password' };
           else if (/no password/i.test(msg)) result = { alive_status: 'login_fail', alive_reason: 'no password' };
           else if (/outlook oauth missing/i.test(msg)) result = { alive_status: 'login_fail', alive_reason: 'outlook oauth missing' };
