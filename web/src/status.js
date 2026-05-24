@@ -112,6 +112,7 @@ export const DEFAULT_EXPANDED_STATUSES = ['plus', 'plus_no_rt']
  * @returns {Array<{ status, label, type, rows, count }>}
  */
 export function groupAccountsByStatus(rows) {
+  if (!Array.isArray(rows)) return []
   const buckets = new Map()
   for (const row of rows) {
     const s = row._status || 'idle'
