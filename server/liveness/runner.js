@@ -16,6 +16,9 @@ function emptySummary() {
   return s;
 }
 
+const NETWORK_RETRY_MAX = 3;
+const NETWORK_RETRY_DELAY_MS = 2_000;
+
 function createRunner({ io, statusDB, accountsDB, checker, lightLogin, codexFile, config, livenessLogsDB }) {
   let state = {
     running: false,
@@ -36,29 +39,25 @@ function createRunner({ io, statusDB, accountsDB, checker, lightLogin, codexFile
     };
   }
 
-  async function dispatchOne(email) {
-    if (state.abortCtrl?.signal.aborted) return;
-    const account = accountsDB.get(email);
-    if (!account) { state.done++; state.failed++; io.emit('liveness-progress', { done: state.done, total: state.total, failed: state.failed }); return; }
+  // Sleep that wakes up early if the runner is aborted.
+  function abortableSleep(ms, signal) {
+    return new Promise((resolve) => {
+      const t = setTimeout(resolve, ms);
+      if (signal) signal.addEventListener('abort', () => { clearTimeout(t); resolve(); }, { once: true });
+    });
+  }
 
-    io.emit('liveness-status', { email, alive_status: 'checking', alive_reason: '' });
-    statusDB.setAlive(email, { alive_status: 'checking', alive_reason: '' });
-
-    let result;
+  // Single probe → verifyDeactivated → lightLogin pass. Returns a result
+  // object {alive_status, alive_reason} without writing to DB or emitting
+  // terminal events. Outer dispatchOne wraps this in a retry loop.
+  async function dispatchOnceInner(email, account, onLog, abortSignal) {
+    let result = null;
     try {
       const existing = await codexFile.read(email);
       const tok = existing?.access_token || '';
 
-      const onLog = (level, message) => {
-        const lvl = level || 'info';
-        io.emit('liveness-log', { email, level: lvl, message });
-        // Persist to DB so the panel survives a page refresh. Synchronous +
-        // best-effort: a write failure must not interrupt the probe flow.
-        try { livenessLogsDB?.add({ email, level: lvl, message }); } catch {}
-      };
-
       let probeRes = null;
-      if (tok) probeRes = await checker.probe(tok, { signal: state.abortCtrl.signal, onLog });
+      if (tok) probeRes = await checker.probe(tok, { signal: abortSignal, onLog });
 
       // Case 2 deactivated detection: when probe returns token_expired, spawn a
       // lightweight Step 0-2 signin (no OTP) to discriminate "token genuinely
@@ -66,7 +65,7 @@ function createRunner({ io, statusDB, accountsDB, checker, lightLogin, codexFile
       // verifyDeactivated network errors do NOT override the probe verdict —
       // we stay with token_expired in that case.
       if (probeRes && probeRes.alive_status === 'token_expired') {
-        const verifyRes = await checker.verifyDeactivated(account, { signal: state.abortCtrl.signal, onLog });
+        const verifyRes = await checker.verifyDeactivated(account, { signal: abortSignal, onLog });
         if (verifyRes.status === 'deactivated') {
           probeRes = { alive_status: 'deactivated', alive_reason: 'account_deactivated' };
           // After this overwrite, needsRelogin below evaluates to false: tok is
@@ -81,14 +80,14 @@ function createRunner({ io, statusDB, accountsDB, checker, lightLogin, codexFile
         try {
           const fresh = await lightLogin(account, {
             protocolMode: config.protocolMode,
-            signal: state.abortCtrl.signal,
+            signal: abortSignal,
           });
           await codexFile.write(email, {
             accessToken: fresh.accessToken,
             accountId: fresh.accountId,
             expiresAtIso: fresh.expiresAtIso,
           });
-          probeRes = await checker.probe(fresh.accessToken, { signal: state.abortCtrl.signal, onLog });
+          probeRes = await checker.probe(fresh.accessToken, { signal: abortSignal, onLog });
         } catch (e) {
           const msg = String(e?.message || e);
           if (e?.name === 'LivenessLoginNotImplementedError' || /not.*implemented/i.test(msg) || /not yet supported/i.test(msg)) {
@@ -115,6 +114,33 @@ function createRunner({ io, statusDB, accountsDB, checker, lightLogin, codexFile
       if (!result) result = probeRes || { alive_status: 'network_error', alive_reason: 'no probe result' };
     } catch (e) {
       result = { alive_status: 'network_error', alive_reason: `unexpected: ${String(e?.message || e).slice(0, 40)}` };
+    }
+    return result;
+  }
+
+  async function dispatchOne(email) {
+    if (state.abortCtrl?.signal.aborted) return;
+    const account = accountsDB.get(email);
+    if (!account) { state.done++; state.failed++; io.emit('liveness-progress', { done: state.done, total: state.total, failed: state.failed }); return; }
+
+    io.emit('liveness-status', { email, alive_status: 'checking', alive_reason: '' });
+    statusDB.setAlive(email, { alive_status: 'checking', alive_reason: '' });
+
+    const onLog = (level, message) => {
+      const lvl = level || 'info';
+      io.emit('liveness-log', { email, level: lvl, message });
+      try { livenessLogsDB?.add({ email, level: lvl, message }); } catch {}
+    };
+
+    let result;
+    for (let attempt = 1; attempt <= NETWORK_RETRY_MAX; attempt++) {
+      if (state.abortCtrl?.signal.aborted) return;
+      result = await dispatchOnceInner(email, account, onLog, state.abortCtrl.signal);
+      if (result.alive_status !== 'network_error') break;
+      if (attempt < NETWORK_RETRY_MAX) {
+        onLog('warning', `network_error: ${result.alive_reason} — retrying ${attempt}/${NETWORK_RETRY_MAX} in ${NETWORK_RETRY_DELAY_MS / 1000}s`);
+        await abortableSleep(NETWORK_RETRY_DELAY_MS, state.abortCtrl.signal);
+      }
     }
 
     if (state.abortCtrl?.signal.aborted) return;

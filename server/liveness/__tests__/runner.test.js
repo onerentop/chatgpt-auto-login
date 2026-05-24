@@ -180,3 +180,62 @@ test('runner: probe token_expired + verifyDeactivated active → falls through t
   const dbCall = env.dbCalls.find(c => c.email === 'maybe@x.com' && c.alive_status !== 'checking');
   assert.strictEqual(dbCall.alive_status, 'token_expired');
 });
+
+test('runner: network_error retries up to 3 times', async () => {
+  let attempts = 0;
+  const env = mkEnv({
+    accounts: [{ email: 'flaky@x.com', password: 'p', client_id: 'c', refresh_token: 'r' }],
+    checker: {
+      probe: async () => { attempts++; return { alive_status: 'network_error', alive_reason: 'check 503' }; },
+      verifyDeactivated: async () => ({ status: 'error', reason: 'na' }),
+    },
+    codexFile: { read: async () => ({ access_token: 'tok' }), write: async () => {} },
+  });
+  const runner = createRunner(env);
+  runner.start(['flaky@x.com']);
+  await new Promise(r => setTimeout(r, 5000));
+  assert.strictEqual(attempts, 3, 'probe called 3 times');
+  const final = env.dbCalls.find(c => c.email === 'flaky@x.com' && c.alive_status !== 'checking');
+  assert.ok(final, 'terminal setAlive was called');
+  assert.strictEqual(final.alive_status, 'network_error');
+});
+
+test('runner: first network_error retry succeeds → terminal plus', async () => {
+  let attempts = 0;
+  const env = mkEnv({
+    accounts: [{ email: 'recovery@x.com', password: 'p', client_id: 'c', refresh_token: 'r' }],
+    checker: {
+      probe: async () => {
+        attempts++;
+        return attempts === 1
+          ? { alive_status: 'network_error', alive_reason: 'check 503' }
+          : { alive_status: 'plus', alive_reason: 'check ok' };
+      },
+      verifyDeactivated: async () => ({ status: 'error', reason: 'na' }),
+    },
+    codexFile: { read: async () => ({ access_token: 'tok' }), write: async () => {} },
+  });
+  const runner = createRunner(env);
+  runner.start(['recovery@x.com']);
+  await new Promise(r => setTimeout(r, 3500));
+  assert.strictEqual(attempts, 2, 'probe called 2 times (network_error then plus)');
+  const final = env.dbCalls.find(c => c.email === 'recovery@x.com' && c.alive_status !== 'checking');
+  assert.ok(final, 'terminal setAlive was called');
+  assert.strictEqual(final.alive_status, 'plus');
+});
+
+test('runner: plus on first attempt does NOT retry', async () => {
+  let attempts = 0;
+  const env = mkEnv({
+    accounts: [{ email: 'fast@x.com', password: 'p', client_id: 'c', refresh_token: 'r' }],
+    checker: {
+      probe: async () => { attempts++; return { alive_status: 'plus', alive_reason: 'check ok' }; },
+      verifyDeactivated: async () => ({ status: 'error', reason: 'na' }),
+    },
+    codexFile: { read: async () => ({ access_token: 'tok' }), write: async () => {} },
+  });
+  const runner = createRunner(env);
+  runner.start(['fast@x.com']);
+  await new Promise(r => setTimeout(r, 1500));
+  assert.strictEqual(attempts, 1, 'probe called exactly once');
+});
