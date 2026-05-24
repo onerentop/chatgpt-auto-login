@@ -226,71 +226,110 @@ class ProtocolEngine extends EventEmitter {
         // is still visible after we transition into the new run.
         const prevPersisted = statusDB.get(account.email) || {};
 
-        // Step 1: Protocol login
-        this.emitStatus({ email: account.email, status: 'running', phase: 'protocol-login', progress });
-        console.log(`[${progress}] === ${account.email} (protocol) ===`);
-        // Rotate proxy node before each account (if proxy enabled)
-        if (proxyMgr.getState().enabled) {
-          try {
-            const node = await proxyMgr.rotate();
-            console.log(`[${progress}] Proxy rotated → ${node}`);
-          } catch (e) {
-            console.log(`[${progress}] Proxy rotate failed: ${e.message?.slice(0, 60)}`);
+        // Cached-login fast path: if a previous login persisted a JWT and the
+        // exp is still in the future (with 60s buffer), reconstitute `result`
+        // from the DB and skip Phase 1 entirely. Combined with the v2.25
+        // payment-link cache below, a retry that hits both caches goes
+        // directly to Phase 3 PayPal — saving 30-60s of OTP+auth0 churn.
+        const JWT_BUFFER_SEC = 60;
+        let result = null;
+        if (prevPersisted.last_access_token) {
+          const { decodeJwtExp } = require('./server/liveness/checker');
+          const exp = decodeJwtExp(prevPersisted.last_access_token);
+          if (exp > Date.now() / 1000 + JWT_BUFFER_SEC) {
+            let session = null;
+            try { session = JSON.parse(prevPersisted.last_session_json || '{}'); }
+            catch { session = null; }
+            if (session) {
+              result = {
+                accessToken: prevPersisted.last_access_token,
+                session,
+                planType: session?.account?.planType || session?.chatgpt_plan_type || 'free',
+              };
+              const minLeft = Math.floor((exp - Date.now() / 1000) / 60);
+              console.log(`[${progress}] Phase 1: reusing cached access token (exp in ${minLeft} min)`);
+              this.emitStatus({ email: account.email, status: 'running', phase: 'cached-login', progress });
+            }
           }
         }
 
-        let result;
-        try {
-          result = await runProtocolRegister(account, this);
-          if (result.status === 'tls_failure') {
-            const badNode = proxyMgr.getState().currentNode;
-            console.log(`[${progress}] TLS errors persisted on ${badNode}; counting + rotating + retrying once`);
-            if (proxyMgr.getState().enabled) {
-              try { proxyMgr.recordBadAttempt(badNode, 'main', 'tls_failure'); } catch {}
-              try {
-                const newNode = await proxyMgr.rotate();
-                console.log(`[${progress}] Retrying on ${newNode}`);
-              } catch (e) {
-                console.log(`[${progress}] Rotate failed: ${e.message?.slice(0, 60)}`);
-              }
+        // Step 1: Protocol login (skipped when result was reconstituted above)
+        if (!result) {
+          this.emitStatus({ email: account.email, status: 'running', phase: 'protocol-login', progress });
+          console.log(`[${progress}] === ${account.email} (protocol) ===`);
+          // Rotate proxy node before each account (if proxy enabled)
+          if (proxyMgr.getState().enabled) {
+            try {
+              const node = await proxyMgr.rotate();
+              console.log(`[${progress}] Proxy rotated → ${node}`);
+            } catch (e) {
+              console.log(`[${progress}] Proxy rotate failed: ${e.message?.slice(0, 60)}`);
             }
+          }
+
+          try {
             result = await runProtocolRegister(account, this);
             if (result.status === 'tls_failure') {
-              console.log(`[${progress}] TLS still failing after rotation — giving up on this account`);
+              const badNode = proxyMgr.getState().currentNode;
+              console.log(`[${progress}] TLS errors persisted on ${badNode}; counting + rotating + retrying once`);
               if (proxyMgr.getState().enabled) {
-                try { proxyMgr.recordBadAttempt(proxyMgr.getState().currentNode, 'main', 'tls_failure'); } catch {}
+                try { proxyMgr.recordBadAttempt(badNode, 'main', 'tls_failure'); } catch {}
+                try {
+                  const newNode = await proxyMgr.rotate();
+                  console.log(`[${progress}] Retrying on ${newNode}`);
+                } catch (e) {
+                  console.log(`[${progress}] Rotate failed: ${e.message?.slice(0, 60)}`);
+                }
               }
-              this.emitStatus({ email: account.email, status: 'error', phase: 'protocol-login', progress, reason: result.error });
+              result = await runProtocolRegister(account, this);
+              if (result.status === 'tls_failure') {
+                console.log(`[${progress}] TLS still failing after rotation — giving up on this account`);
+                if (proxyMgr.getState().enabled) {
+                  try { proxyMgr.recordBadAttempt(proxyMgr.getState().currentNode, 'main', 'tls_failure'); } catch {}
+                }
+                this.emitStatus({ email: account.email, status: 'error', phase: 'protocol-login', progress, reason: result.error });
+                summary.error++;
+                continue;
+              }
+            }
+            // G1: 任何"业务返回"（success / deactivated 等）都代表节点工作正常
+            if (proxyMgr.getState().enabled) {
+              try { proxyMgr.recordGoodAttempt(proxyMgr.getState().currentNode, 'main'); } catch {}
+            }
+            if (result.status === 'deactivated') {
+              console.log(`[${progress}] Account deactivated/deleted by OpenAI`);
+              this.emitStatus({ email: account.email, status: 'deactivated', phase: 'done', progress, reason: 'account_deactivated' });
               summary.error++;
               continue;
             }
-          }
-          // G1: 任何"业务返回"（success / deactivated 等）都代表节点工作正常
-          if (proxyMgr.getState().enabled) {
-            try { proxyMgr.recordGoodAttempt(proxyMgr.getState().currentNode, 'main'); } catch {}
-          }
-          if (result.status === 'deactivated') {
-            console.log(`[${progress}] Account deactivated/deleted by OpenAI`);
-            this.emitStatus({ email: account.email, status: 'deactivated', phase: 'done', progress, reason: 'account_deactivated' });
+            console.log(`[${progress}] Protocol login OK: ${result.accessToken}`);
+          } catch (e) {
+            console.log(`[${progress}] Protocol login failed: ${e.message?.slice(0, 80)}`);
+            // T8: 网络类异常算节点失败；业务异常不算
+            if (proxyMgr.isProxyNetError(e.message) && proxyMgr.getState().enabled) {
+              try { proxyMgr.recordBadAttempt(proxyMgr.getState().currentNode, 'main', 'protocol_net_error'); } catch {}
+            }
+            this.emitStatus({ email: account.email, status: 'error', phase: 'protocol-login', progress, reason: e.message });
             summary.error++;
             continue;
           }
-          console.log(`[${progress}] Protocol login OK: ${result.accessToken}`);
-        } catch (e) {
-          console.log(`[${progress}] Protocol login failed: ${e.message?.slice(0, 80)}`);
-          // T8: 网络类异常算节点失败；业务异常不算
-          if (proxyMgr.isProxyNetError(e.message) && proxyMgr.getState().enabled) {
-            try { proxyMgr.recordBadAttempt(proxyMgr.getState().currentNode, 'main', 'protocol_net_error'); } catch {}
-          }
-          this.emitStatus({ email: account.email, status: 'error', phase: 'protocol-login', progress, reason: e.message });
-          summary.error++;
-          continue;
+        }
+
+        // After Phase 1 (cached or fresh), persist the token to DB so the
+        // next retry can skip Phase 1 entirely. Without this, the
+        // cached-login fast-path above would never have anything to read.
+        if (result) {
+          statusDB.set(account.email, {
+            accessToken: result.accessToken,
+            sessionJson: JSON.stringify(result.session || {}),
+          });
         }
 
         // Check if already Plus
         const isPlusOrAbove = ['plus', 'pro', 'team', 'enterprise'].includes((result.planType || 'free').toLowerCase());
         if (isPlusOrAbove) {
           statusDB.clearPaymentLink(account.email);
+          statusDB.clearAccessToken(account.email);
           console.log(`[${progress}] Already Plus`);
           if (runtimeCfg.enableOAuth) {
             console.log(`[${progress}] Running PKCE via protocol...`);
@@ -470,6 +509,7 @@ class ProtocolEngine extends EventEmitter {
 
           if (paymentResult.success) {
             statusDB.clearPaymentLink(account.email);
+            statusDB.clearAccessToken(account.email);
             if (runtimeCfg.enableOAuth) {
               console.log(`[${progress}] Running PKCE via protocol...`);
               await this._finalizePkce(account, result, progress);
