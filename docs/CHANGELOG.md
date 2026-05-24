@@ -1,5 +1,44 @@
 # Changelog
 
+## v2.32.0 — 2026-05-25
+
+### 测活终态同步到 status 字段 + 3 个新 status 码
+
+之前 alive_status 和 status 完全解耦：Execute.vue 只看 status，
+测活只写 alive_status —— 跑完测活 Execute 页看到的还是上次执行
+流水线写的旧值。
+
+**后端 — runner.js dispatchOne 末尾按映射表同步**
+
+| alive_status | → status |
+|---|---|
+| `plus` | `plus` |
+| `deactivated` | `deactivated` |
+| `canceled` | `canceled` (新) |
+| `token_expired` | `token_expired` (新) |
+| `login_fail` | `login_fail` (新) |
+| `network_error` / `proxy_error` / `checking` / `unknown` | 不同步 |
+
+例外：`alive=plus` 且 `persisted.status=plus_no_rt` 时保留 plus_no_rt
+（plus_no_rt 比 plus 信息更丰富，alive=plus 验证不到 RT 状态，不
+降级覆盖）。同步时同时 `io.emit('account-status', ...)` 推送，
+Execute.vue 通过既有 socket 路径实时更新 `row._status`。
+
+**前端 — 3 个新 status 码 + 筛选下拉补齐**
+
+- `web/src/status.js`: TYPE_MAP / LABEL_MAP / GROUP_ORDER 各 +3
+- Execute.vue / Accounts.vue / Results.vue 状态筛选下拉 +3 option
+  - Results.vue 顺便补 deactivated（之前漏掉）
+
+样式：canceled / token_expired = warning；login_fail = danger。
+Labels：已取消 / Token失效 / 登录失败。
+
+**测试**：188 tests pass — runner +4（plus 同步 / deactivated 覆盖 /
+network_error 不同步 / plus 不降级 plus_no_rt）on v2.31.1 baseline 184.
+
+**Spec / Plan**：`docs/superpowers/specs/2026-05-25-liveness-status-sync-design.md`
++ `docs/superpowers/plans/2026-05-25-liveness-status-sync.md`。
+
 ## v2.27.0 — 2026-05-25
 
 ### Execute Page Status-Grouped Account List
