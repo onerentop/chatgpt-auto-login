@@ -97,7 +97,7 @@ import { ElMessage } from 'element-plus'
 import api from '../api'
 import { socketState } from '../socket'
 import { statusType, statusLabel, PLUS_STATUSES, DEFAULT_EXPANDED_STATUSES, groupAccountsByStatus } from '../status'
-import { getSelectionSet, setSelectionFromRows, clearSelection } from '../selection'
+import { getSelectionSet, clearSelection } from '../selection'
 import AccountTableRows from '../components/AccountTableRows.vue'
 
 const running = ref(false)
