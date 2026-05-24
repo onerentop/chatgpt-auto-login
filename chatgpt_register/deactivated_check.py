@@ -263,7 +263,7 @@ def main():
         # /email-verification  → existing account with OTP  (active)
         # /create-account/...  → brand new account           (active, no such account)
         # /log-in              → auth.openai.com login page  (active, email not found or needs password)
-        _log(f"  [Deactivated] Step 2: Authorize -> {final_path} (not deactivated)")
+        _log(f"Step 2: Authorize -> {final_path} (not deactivated)")
         _emit({"status": "active", "reason": None})
 
     except Exception as e:
