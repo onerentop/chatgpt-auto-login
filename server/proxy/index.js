@@ -92,6 +92,16 @@ function _addToBlacklist(tag, channel, ttlMs, reason, source) {
   try { blacklist.add(tag, channel, ttlMs, reason, source); } catch (e) { console.log(`[Proxy] blacklist.add failed: ${e.message?.slice(0, 60)}`); }
 }
 
+// v2.31.1: rotate 钩子 — module-init 后指向真实 rotate/rotateJp（见文件下方）；
+// 测试可用 __setAutoRotateForTest 替换。传 null 恢复默认。
+let _autoRotateFn = null;
+let _autoRotateJpFn = null;
+
+function __setAutoRotateForTest(mainFn, jpFn) {
+  _autoRotateFn = (mainFn === null) ? rotate : (mainFn || _autoRotateFn);
+  _autoRotateJpFn = (jpFn === null) ? rotateJp : (jpFn || _autoRotateJpFn);
+}
+
 function recordBadAttempt(tag, channel, reason = '') {
   if (!tag) return { blacklisted: false, count: 0 };
   const ns = _ns(channel);
@@ -103,6 +113,13 @@ function recordBadAttempt(tag, channel, reason = '') {
     _addToBlacklist(tag, channel, BAD_NODE_TTL_MS, reason, 'auto');
     ns.failCount.delete(tag);
     ns.failReasons.delete(tag);
+    // v2.31.1: 拉黑后 fire-and-forget rotate，让 currentNode 立即切到下一个非黑名单节点。
+    const doRotate = channel === 'jp' ? _autoRotateJpFn : _autoRotateFn;
+    if (typeof doRotate === 'function') {
+      Promise.resolve().then(() => doRotate()).catch((e) => {
+        console.log(`[Proxy] auto-rotate after blacklist failed: ${e?.message?.slice(0, 60)}`);
+      });
+    }
     return { blacklisted: true, count: next };
   }
   return { blacklisted: false, count: next };
@@ -482,6 +499,11 @@ async function rotateJp() {
   return nextTag;
 }
 
+// v2.31.1: 把真实 rotate 注入 recordBadAttempt 的 fire-and-forget 钩子（在 rotate/rotateJp
+// 已定义之后赋值，避免 TDZ）。
+_autoRotateFn = rotate;
+_autoRotateJpFn = rotateJp;
+
 /** Switch to a specific node by name. */
 async function switchTo(nodeTag) {
   if (!_state.nodeTags.includes(nodeTag)) throw new Error(`节点不存在: ${nodeTag}`);
@@ -620,6 +642,7 @@ module.exports = {
   // blacklist + counter API
   recordBadAttempt,
   recordGoodAttempt,
+  __setAutoRotateForTest,
   blacklistManually,
   removeFromBlacklist,
   clearBlacklist,

@@ -85,3 +85,50 @@ test('loadAll 跳过已过期条目（防 hydrate 灌入坏数据）', () => {
   assert.strictEqual(rows.length, 1);
   assert.strictEqual(rows[0].tag, 'alive');
 });
+
+test('B5 recordBadAttempt 达到 FAIL_THRESHOLD 触发 fire-and-forget rotate (main)', async () => {
+  const proxyMgr = require('../index');
+  const calls = [];
+  proxyMgr.__setAutoRotateForTest(
+    () => { calls.push('main'); return Promise.resolve(); },
+    () => { calls.push('jp'); return Promise.resolve(); }
+  );
+  try {
+    const r1 = proxyMgr.recordBadAttempt('test-node-X', 'main', 'test1');
+    const r2 = proxyMgr.recordBadAttempt('test-node-X', 'main', 'test2');
+    const r3 = proxyMgr.recordBadAttempt('test-node-X', 'main', 'test3');
+    assert.strictEqual(r1.blacklisted, false);
+    assert.strictEqual(r1.count, 1);
+    assert.strictEqual(r2.blacklisted, false);
+    assert.strictEqual(r2.count, 2);
+    assert.strictEqual(r3.blacklisted, true);
+    assert.strictEqual(r3.count, 3);
+    await new Promise(r => setImmediate(r));
+    assert.strictEqual(calls.length, 1, 'main rotate called once');
+    assert.strictEqual(calls[0], 'main');
+  } finally {
+    proxyMgr.__setAutoRotateForTest(null, null);
+    try { proxyMgr.removeFromBlacklist?.('test-node-X', 'main'); } catch {}
+  }
+});
+
+test('B6 recordBadAttempt (jp 通道) 达到阈值触发 rotateJp', async () => {
+  const proxyMgr = require('../index');
+  const calls = [];
+  proxyMgr.__setAutoRotateForTest(
+    () => { calls.push('main'); return Promise.resolve(); },
+    () => { calls.push('jp'); return Promise.resolve(); }
+  );
+  try {
+    proxyMgr.recordBadAttempt('test-jp-Y', 'jp', 'jpfail1');
+    proxyMgr.recordBadAttempt('test-jp-Y', 'jp', 'jpfail2');
+    const r3 = proxyMgr.recordBadAttempt('test-jp-Y', 'jp', 'jpfail3');
+    assert.strictEqual(r3.blacklisted, true);
+    await new Promise(r => setImmediate(r));
+    assert.strictEqual(calls.length, 1);
+    assert.strictEqual(calls[0], 'jp', 'jp channel calls rotateJp');
+  } finally {
+    proxyMgr.__setAutoRotateForTest(null, null);
+    try { proxyMgr.removeFromBlacklist?.('test-jp-Y', 'jp'); } catch {}
+  }
+});
