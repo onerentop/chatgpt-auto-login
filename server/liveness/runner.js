@@ -19,7 +19,13 @@ function emptySummary() {
 const NETWORK_RETRY_MAX = 3;
 const NETWORK_RETRY_DELAY_MS = 2_000;
 
-function createRunner({ io, statusDB, accountsDB, checker, lightLogin, codexFile, config, livenessLogsDB }) {
+function createRunner({ io, statusDB, accountsDB, checker, lightLogin, codexFile, config, livenessLogsDB, proxyMgr }) {
+  // proxyMgr is optional — lazy-require fallback keeps the production wiring
+  // working without explicit injection (mirrors checker.js:12-18 lazy pattern).
+  function getProxyMgr() {
+    if (proxyMgr) return proxyMgr;
+    try { return require('../proxy'); } catch { return null; }
+  }
   let state = {
     running: false,
     batchId: null,
@@ -154,6 +160,33 @@ function createRunner({ io, statusDB, accountsDB, checker, lightLogin, codexFile
       const persisted = statusDB.get(email);
       if (persisted?.status === 'deactivated' && (result.alive_status === 'token_expired' || result.alive_status === 'login_fail')) {
         result = { alive_status: 'deactivated', alive_reason: 'account_deactivated' };
+      }
+    } catch {}
+
+    // Vote on the current proxy node based on terminal alive_status. Mirrors
+    // server/engine.js:276/281 pattern. The runner has at this point exhausted
+    // up to 3 retries (v2.30); a terminal network_error / proxy_error means
+    // the node is persistently unreachable, not a transient blip — record
+    // it as a bad attempt so the existing FAIL_THRESHOLD logic in
+    // server/proxy/index.js can eventually blacklist the node.
+    try {
+      const pm = getProxyMgr();
+      if (pm && pm.getState().enabled) {
+        const currentNode = pm.getState().currentNode;
+        if (currentNode) {
+          if (result.alive_status === 'network_error' || result.alive_status === 'proxy_error') {
+            pm.recordBadAttempt(currentNode, 'main', `liveness_${result.alive_status}`);
+          } else if (
+            result.alive_status === 'plus' ||
+            result.alive_status === 'canceled' ||
+            result.alive_status === 'token_expired' ||
+            result.alive_status === 'login_fail' ||
+            result.alive_status === 'deactivated'
+          ) {
+            pm.recordGoodAttempt(currentNode, 'main');
+          }
+          // 'checking' / 'unknown' never reach this code path as terminal states.
+        }
       }
     } catch {}
 

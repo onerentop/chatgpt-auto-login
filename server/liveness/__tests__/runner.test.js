@@ -24,6 +24,7 @@ function mkEnv(opts = {}) {
     },
     lightLogin: opts.lightLogin || (async () => ({ accessToken: 'tok', accountId: 'acc', expiresAtIso: 'iso' })),
     codexFile: opts.codexFile || { read: async () => ({ access_token: 'cached.tok.x' }), write: async () => {} },
+    proxyMgr: opts.proxyMgr || null,
   };
 }
 
@@ -238,4 +239,74 @@ test('runner: plus on first attempt does NOT retry', async () => {
   runner.start(['fast@x.com']);
   await new Promise(r => setTimeout(r, 1500));
   assert.strictEqual(attempts, 1, 'probe called exactly once');
+});
+
+test('runner: terminal network_error calls recordBadAttempt', async () => {
+  const calls = [];
+  const env = mkEnv({
+    accounts: [{ email: 'n@x.com', password: 'p', client_id: 'c', refresh_token: 'r' }],
+    checker: {
+      probe: async () => ({ alive_status: 'network_error', alive_reason: 'check 503' }),
+      verifyDeactivated: async () => ({ status: 'error', reason: 'na' }),
+    },
+    codexFile: { read: async () => ({ access_token: 'tok' }), write: async () => {} },
+    proxyMgr: {
+      getState: () => ({ enabled: true, currentNode: 'pro-us-99' }),
+      recordBadAttempt: (tag, channel, reason) => calls.push({ kind: 'bad', tag, channel, reason }),
+      recordGoodAttempt: (tag, channel) => calls.push({ kind: 'good', tag, channel }),
+    },
+  });
+  const runner = createRunner(env);
+  runner.start(['n@x.com']);
+  await new Promise(r => setTimeout(r, 5500));  // 3 retries + 2*2s delays
+  const bad = calls.find(c => c.kind === 'bad');
+  assert.ok(bad, 'recordBadAttempt was called');
+  assert.strictEqual(bad.tag, 'pro-us-99');
+  assert.strictEqual(bad.channel, 'main');
+  assert.match(bad.reason, /liveness_network_error/);
+});
+
+test('runner: terminal plus calls recordGoodAttempt', async () => {
+  const calls = [];
+  const env = mkEnv({
+    accounts: [{ email: 'p@x.com', password: 'p', client_id: 'c', refresh_token: 'r' }],
+    checker: {
+      probe: async () => ({ alive_status: 'plus', alive_reason: 'check ok' }),
+      verifyDeactivated: async () => ({ status: 'error', reason: 'na' }),
+    },
+    codexFile: { read: async () => ({ access_token: 'tok' }), write: async () => {} },
+    proxyMgr: {
+      getState: () => ({ enabled: true, currentNode: 'pro-us-77' }),
+      recordBadAttempt: (...args) => calls.push({ kind: 'bad', args }),
+      recordGoodAttempt: (tag, channel) => calls.push({ kind: 'good', tag, channel }),
+    },
+  });
+  const runner = createRunner(env);
+  runner.start(['p@x.com']);
+  await new Promise(r => setTimeout(r, 1500));
+  const good = calls.find(c => c.kind === 'good');
+  assert.ok(good, 'recordGoodAttempt was called');
+  assert.strictEqual(good.tag, 'pro-us-77');
+  assert.strictEqual(good.channel, 'main');
+});
+
+test('runner: proxy disabled skips vote', async () => {
+  const calls = [];
+  const env = mkEnv({
+    accounts: [{ email: 'd@x.com', password: 'p', client_id: 'c', refresh_token: 'r' }],
+    checker: {
+      probe: async () => ({ alive_status: 'plus', alive_reason: 'check ok' }),
+      verifyDeactivated: async () => ({ status: 'error', reason: 'na' }),
+    },
+    codexFile: { read: async () => ({ access_token: 'tok' }), write: async () => {} },
+    proxyMgr: {
+      getState: () => ({ enabled: false, currentNode: 'pro-us-disabled' }),
+      recordBadAttempt: (...args) => calls.push({ kind: 'bad', args }),
+      recordGoodAttempt: (...args) => calls.push({ kind: 'good', args }),
+    },
+  });
+  const runner = createRunner(env);
+  runner.start(['d@x.com']);
+  await new Promise(r => setTimeout(r, 1500));
+  assert.strictEqual(calls.length, 0, 'no vote when proxy disabled');
 });
