@@ -61,6 +61,11 @@ let _state = {
   whitelist: [],          // 用户配置的 tag 数组（与 _state.jp.whitelist 同语义）
   whitelistMisses: [],    // 订阅中缺失的 tag（UI 黄色提示）
   allTags: [],   // 订阅里全部节点 tag (refresh 时缓存，供 /api/proxy/nodes 用)
+  // PX-7 active health probe — tag → { alive: bool, delayMs, lastTested }.
+  // rotate() prefers alive nodes when at least one alive exists; otherwise
+  // ignores probe results to avoid deadlock.
+  probeResults: new Map(),
+  probeSummary: { alive: 0, dead: 0, total: 0, lastRunAt: 0 },
   jp: {
     enabled: false,
     keyword: JP_DEFAULT_KEYWORD,
@@ -76,6 +81,8 @@ let _state = {
     failReasons: new Map(),
     exitIp: '',
     lastError: '',
+    probeResults: new Map(),
+    probeSummary: { alive: 0, dead: 0, total: 0, lastRunAt: 0 },
   },
 };
 
@@ -194,6 +201,12 @@ function getState() {
   // credentials (vmess UUID, ss password, trojan password). nodeTags / allTags
   // are just label strings and safe to expose. failCount / failReasons are
   // internal Maps that don't round-trip well to JSON.
+  // Project probeResults Map → plain object so it JSON-serializes for the UI.
+  const projectProbe = (map) => {
+    const out = {};
+    for (const [tag, entry] of map.entries()) out[tag] = entry;
+    return out;
+  };
   return {
     enabled: _state.enabled,
     hasSubscription: !!_state.subscriptionUrl,
@@ -210,6 +223,8 @@ function getState() {
     allTags: _state.allTags,
     available: _state.nodeTags.length,
     badNodes: project(_state.badNodes),
+    probeResults: projectProbe(_state.probeResults),
+    probeSummary: { ..._state.probeSummary },
     jp: {
       enabled: _state.jp.enabled,
       keyword: _state.jp.keyword,
@@ -223,6 +238,8 @@ function getState() {
       lastError: _state.jp.lastError,
       available: _state.jp.nodeTags.length,
       badNodes: project(_state.jp.badNodes),
+      probeResults: projectProbe(_state.jp.probeResults),
+      probeSummary: { ..._state.jp.probeSummary },
     },
   };
 }
@@ -478,7 +495,39 @@ async function refresh() {
     }
   });
 
+  // PX-7 active health probe — fire-and-forget so refresh() returns
+  // immediately; rotate() consults probeResults to prefer alive nodes.
+  // Setting `activeHealthCheck: false` in config.proxy disables it.
+  // NB: `cfg` here was assigned `readCfg().proxy || {}`, so the field is at
+  // `cfg.activeHealthCheck`, not `cfg.proxy.activeHealthCheck`.
+  const probeEnabled = cfg.activeHealthCheck !== false;
+  if (probeEnabled) {
+    Promise.resolve().then(() => runHealthProbe()).catch((e) => {
+      console.log(`[Proxy] health probe failed: ${e.message?.slice(0, 80)}`);
+    });
+  }
+
   return filtered.length;
+}
+
+async function runHealthProbe() {
+  const { probeAllNodes } = require('./health-probe');
+  // Main channel
+  if (_state.enabled && _state.nodeTags.length > 0) {
+    const summary = await probeAllNodes(_state.nodeTags, _state.probeResults, {
+      shouldSkip: (tag) => isBad(tag),  // don't probe blacklisted nodes
+    });
+    _state.probeSummary = { ...summary, lastRunAt: Date.now() };
+    console.log(`[Proxy] health probe: main ${summary.alive}/${summary.total} alive`);
+  }
+  // JP channel
+  if (_state.jp.enabled && _state.jp.nodeTags.length > 0) {
+    const summary = await probeAllNodes(_state.jp.nodeTags, _state.jp.probeResults, {
+      shouldSkip: (tag) => isJpBad(tag),
+    });
+    _state.jp.probeSummary = { ...summary, lastRunAt: Date.now() };
+    console.log(`[Proxy:JP] health probe: ${summary.alive}/${summary.total} alive`);
+  }
 }
 
 async function stop() {
@@ -496,6 +545,14 @@ async function rotate() {
   return withRotateLock(async () => {
     if (!_state.enabled || _state.nodeTags.length === 0) throw new Error('代理未启用');
 
+    // PX-7: if the health probe identified at least one alive non-bad node,
+    // prefer alive ones; this prevents wasting accounts on a known-dead node
+    // that hasn't yet hit the 3-strike blacklist threshold. When no alive
+    // node exists (or probe never ran), fall through to the original logic.
+    const hasAlive = _state.nodeTags.some(
+      (t) => !isBad(t) && _state.probeResults.get(t)?.alive === true,
+    );
+
     // Try to find a non-bad next node; bounded by nodeTags.length attempts.
     let nextTag = null;
     for (let i = 0; i < _state.nodeTags.length; i++) {
@@ -506,7 +563,9 @@ async function rotate() {
         _state.rotationIndex = (_state.rotationIndex + 1) % _state.nodeTags.length;
         candidate = _state.nodeTags[_state.rotationIndex];
       }
-      if (!isBad(candidate)) { nextTag = candidate; break; }
+      if (isBad(candidate)) continue;
+      if (hasAlive && _state.probeResults.get(candidate)?.alive === false) continue;
+      nextTag = candidate; break;
     }
 
     if (!nextTag) {
@@ -562,6 +621,10 @@ async function rotateJp() {
   return withRotateLock(async () => {
     if (!_state.jp.enabled || _state.jp.nodeTags.length === 0) throw new Error('JP 通道未启用');
 
+    const hasAlive = _state.jp.nodeTags.some(
+      (t) => !isJpBad(t) && _state.jp.probeResults.get(t)?.alive === true,
+    );
+
     let nextTag = null;
     for (let i = 0; i < _state.jp.nodeTags.length; i++) {
       let candidate;
@@ -571,7 +634,9 @@ async function rotateJp() {
         _state.jp.rotationIndex = (_state.jp.rotationIndex + 1) % _state.jp.nodeTags.length;
         candidate = _state.jp.nodeTags[_state.jp.rotationIndex];
       }
-      if (!isJpBad(candidate)) { nextTag = candidate; break; }
+      if (isJpBad(candidate)) continue;
+      if (hasAlive && _state.jp.probeResults.get(candidate)?.alive === false) continue;
+      nextTag = candidate; break;
     }
 
     if (!nextTag) {
@@ -763,6 +828,8 @@ module.exports = {
   // blacklist + counter API
   recordBadAttempt,
   recordGoodAttempt,
+  // PX-7 health probe
+  runHealthProbe,
   __setAutoRotateForTest,
   blacklistManually,
   removeFromBlacklist,

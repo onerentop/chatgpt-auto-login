@@ -44,4 +44,21 @@ async function getCurrentSelected(selectorName, secret) {
   return sel.now || '';
 }
 
-module.exports = { getProxies, getSelector, switchSelector, getCurrentSelected, request };
+/**
+ * GET /proxies/{name}/delay?timeout=8000&url=https://www.google.com/generate_204
+ * sing-box / Clash both expose this — runs a one-shot HTTPS GET through the
+ * given outbound and returns { delay: ms } on success, 5xx on failure.
+ * Does NOT mutate the selected node; safe to call concurrently while the
+ * pipeline is using a different selector. Returns null on timeout / error.
+ */
+async function testNodeDelay(nodeName, { timeoutMs = 8000, testUrl = 'https://www.google.com/generate_204' } = {}, secret) {
+  const qs = `timeout=${timeoutMs}&url=${encodeURIComponent(testUrl)}`;
+  try {
+    const r = await request('GET', `/proxies/${encodeURIComponent(nodeName)}/delay?${qs}`, null, secret);
+    return typeof r.delay === 'number' ? r.delay : null;
+  } catch {
+    return null;
+  }
+}
+
+module.exports = { getProxies, getSelector, switchSelector, getCurrentSelected, testNodeDelay, request };
