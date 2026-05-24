@@ -18,7 +18,10 @@ function mkEnv(opts = {}) {
     io, statusDB, accountsDB, events, dbCalls,
     accounts: opts.accounts || [],
     config: { protocolMode: false, ...opts.config },
-    checker: opts.checker || { probe: async () => ({ alive_status: 'plus', alive_reason: 'check ok' }) },
+    checker: opts.checker || {
+      probe: async () => ({ alive_status: 'plus', alive_reason: 'check ok' }),
+      verifyDeactivated: async () => ({ status: 'error', reason: 'mock not configured' }),
+    },
     lightLogin: opts.lightLogin || (async () => ({ accessToken: 'tok', accountId: 'acc', expiresAtIso: 'iso' })),
     codexFile: opts.codexFile || { read: async () => ({ access_token: 'cached.tok.x' }), write: async () => {} },
   };
@@ -140,4 +143,40 @@ test('emits liveness-status + liveness-progress per account', async () => {
   assert.strictEqual(statuses[0].payload.alive_status, 'checking');
   assert.strictEqual(progresses[0].payload.done, 1);
   assert.strictEqual(progresses[0].payload.total, 1);
+});
+
+test('runner: probe token_expired + verifyDeactivated deactivated → terminal deactivated', async () => {
+  const env = mkEnv({
+    accounts: [{ email: 'banned@x.com', password: 'p', client_id: 'c', refresh_token: 'r' }],
+    checker: {
+      probe: async () => ({ alive_status: 'token_expired', alive_reason: 'check 401' }),
+      verifyDeactivated: async () => ({ status: 'deactivated', reason: 'account_deactivated' }),
+    },
+    codexFile: { read: async () => ({ access_token: 'eyJ.dead.tok' }), write: async () => {} },
+  });
+  const runner = createRunner(env);
+  runner.start(['banned@x.com']);
+  await new Promise(r => setTimeout(r, 2000));
+  const dbCall = env.dbCalls.find(c => c.email === 'banned@x.com' && c.alive_status !== 'checking');
+  assert.ok(dbCall, 'terminal setAlive call exists');
+  assert.strictEqual(dbCall.alive_status, 'deactivated');
+});
+
+test('runner: probe token_expired + verifyDeactivated active → falls through to lightLogin', async () => {
+  let lightLoginCalls = 0;
+  const env = mkEnv({
+    accounts: [{ email: 'maybe@x.com', password: 'p', client_id: 'c', refresh_token: 'r' }],
+    checker: {
+      probe: async () => ({ alive_status: 'token_expired', alive_reason: 'check 401' }),
+      verifyDeactivated: async () => ({ status: 'active', reason: null }),
+    },
+    codexFile: { read: async () => ({ access_token: 'eyJ.expired.tok' }), write: async () => {} },
+    lightLogin: async () => { lightLoginCalls++; throw new Error('liveness not yet supported in protocol mode'); },
+  });
+  const runner = createRunner(env);
+  runner.start(['maybe@x.com']);
+  await new Promise(r => setTimeout(r, 2000));
+  assert.strictEqual(lightLoginCalls, 1, 'lightLogin was attempted after verifyDeactivated=active');
+  const dbCall = env.dbCalls.find(c => c.email === 'maybe@x.com' && c.alive_status !== 'checking');
+  assert.strictEqual(dbCall.alive_status, 'token_expired');
 });

@@ -33,6 +33,7 @@ function decodeJwtExp(jwt) {
 function mapPlanType(planType) {
   if (planType === 'plus') return { alive_status: 'plus', alive_reason: 'check ok' };
   if (planType === 'free') return { alive_status: 'canceled', alive_reason: 'no plus' };
+  if (planType === 'deactivated') return { alive_status: 'deactivated', alive_reason: 'account_deactivated' };
   return { alive_status: 'canceled', alive_reason: `plan: ${planType}` };
 }
 
@@ -104,8 +105,10 @@ async function probe(accessToken, opts = {}) {
       for (const line of data.toString().split('\n').filter(l => l.trim())) {
         try {
           const p = JSON.parse(line);
-          if (p.log) console.log(p.log);
-          else stdoutLast = line;
+          if (p.log) {
+            if (opts.onLog) opts.onLog('info', p.log);
+            else console.log(p.log);
+          } else stdoutLast = line;
         } catch {
           stdoutLast = line;
         }
@@ -146,4 +149,78 @@ async function probe(accessToken, opts = {}) {
   });
 }
 
-module.exports = { probe, decodeJwtExp, mapPlanType, extractPlanType, mapTerminal };
+const VERIFY_DEACTIVATED_SCRIPT = path.join(__dirname, '..', '..', 'chatgpt_register', 'deactivated_check.py');
+const VERIFY_DEACTIVATED_TIMEOUT_MS = 14_000;  // 12s wall + 2s startup grace
+
+async function verifyDeactivated(account, opts = {}) {
+  const { signal, spawnImpl, proxyUrl, onLog } = opts;
+  const doSpawn = spawnImpl || ((cmd, args, options) => spawn(cmd, args, options));
+  const effectiveProxy = (proxyUrl !== undefined) ? proxyUrl : getProxyUrl();
+
+  return new Promise((resolve) => {
+    let settled = false;
+    let stdoutLast = '';
+    let stderrBuf = '';
+    const py = doSpawn('py', ['-3', VERIFY_DEACTIVATED_SCRIPT], { stdio: ['pipe', 'pipe', 'pipe'] });
+
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      try { py.kill(); } catch {}
+      resolve({ status: 'error', reason: 'verifyDeactivated timeout' });
+    }, VERIFY_DEACTIVATED_TIMEOUT_MS);
+
+    if (signal) signal.addEventListener('abort', () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try { py.kill(); } catch {}
+      resolve({ status: 'error', reason: 'aborted' });
+    }, { once: true });
+
+    py.stdout.on('data', (data) => {
+      for (const line of data.toString().split('\n').filter(l => l.trim())) {
+        try {
+          const p = JSON.parse(line);
+          if (p.log) {
+            if (onLog) onLog('info', p.log);
+            else console.log(p.log);
+          } else stdoutLast = line;
+        } catch {
+          stdoutLast = line;
+        }
+      }
+    });
+    py.stderr.on('data', (data) => { stderrBuf += data.toString(); });
+
+    py.on('error', (e) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({ status: 'error', reason: `spawn error: ${(e.code || e.message || '').toString().slice(0, 40)}` });
+    });
+
+    py.on('close', () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      let parsed;
+      try { parsed = JSON.parse(stdoutLast); }
+      catch {
+        resolve({ status: 'error', reason: `unparsable: ${stderrBuf.slice(-60).trim()}` });
+        return;
+      }
+      resolve(parsed);
+    });
+
+    const stdinPayload = JSON.stringify({
+      email: account.email,
+      client_id: account.client_id || '',
+      refresh_token: account.refresh_token || '',
+      proxy_url: effectiveProxy || null,
+    });
+    try { py.stdin.write(stdinPayload); py.stdin.end(); } catch {}
+  });
+}
+
+module.exports = { probe, decodeJwtExp, mapPlanType, extractPlanType, mapTerminal, verifyDeactivated };

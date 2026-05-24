@@ -63,6 +63,15 @@ test('mapPlanType: team/enterprise → canceled w/ plan name', () => {
   assert.deepStrictEqual(mapPlanType('team'), { alive_status: 'canceled', alive_reason: 'plan: team' });
 });
 
+test('mapPlanType: deactivated → alive_status=deactivated', () => {
+  assert.deepStrictEqual(mapPlanType('deactivated'), { alive_status: 'deactivated', alive_reason: 'account_deactivated' });
+});
+
+test('mapTerminal: ok 200 + plan_type=deactivated → alive_status=deactivated', () => {
+  const r = mapTerminal({ status: 'ok', http: 200, plan_type: 'deactivated', reason: null });
+  assert.strictEqual(r.alive_status, 'deactivated');
+});
+
 // === probe() tests with spawnImpl injection ===
 
 test('probe: JWT already expired returns token_expired without spawning', async () => {

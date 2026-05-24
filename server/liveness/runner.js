@@ -49,8 +49,24 @@ function createRunner({ io, statusDB, accountsDB, checker, lightLogin, codexFile
       const existing = await codexFile.read(email);
       const tok = existing?.access_token || '';
 
+      const onLog = (level, message) => {
+        io.emit('liveness-log', { email, level: level || 'info', message });
+      };
+
       let probeRes = null;
-      if (tok) probeRes = await checker.probe(tok, { signal: state.abortCtrl.signal });
+      if (tok) probeRes = await checker.probe(tok, { signal: state.abortCtrl.signal, onLog });
+
+      // Case 2 deactivated detection: when probe returns token_expired, spawn a
+      // lightweight Step 0-2 signin (no OTP) to discriminate "token genuinely
+      // expired" from "OpenAI revoked the token because they banned the account".
+      // verifyDeactivated network errors do NOT override the probe verdict —
+      // we stay with token_expired in that case.
+      if (probeRes && probeRes.alive_status === 'token_expired') {
+        const verifyRes = await checker.verifyDeactivated(account, { signal: state.abortCtrl.signal, onLog });
+        if (verifyRes.status === 'deactivated') {
+          probeRes = { alive_status: 'deactivated', alive_reason: 'account_deactivated' };
+        }
+      }
 
       const needsRelogin = !tok || (probeRes && probeRes.alive_status === 'token_expired');
       if (needsRelogin) {
@@ -64,10 +80,10 @@ function createRunner({ io, statusDB, accountsDB, checker, lightLogin, codexFile
             accountId: fresh.accountId,
             expiresAtIso: fresh.expiresAtIso,
           });
-          probeRes = await checker.probe(fresh.accessToken, { signal: state.abortCtrl.signal });
+          probeRes = await checker.probe(fresh.accessToken, { signal: state.abortCtrl.signal, onLog });
         } catch (e) {
           const msg = String(e?.message || e);
-          if (e?.name === 'LivenessLoginNotImplementedError' || /not.*implemented/i.test(msg)) {
+          if (e?.name === 'LivenessLoginNotImplementedError' || /not.*implemented/i.test(msg) || /not yet supported/i.test(msg)) {
             // Protocol-mode lightLogin is a stub. If the original probe already
             // gave a real answer (token_expired from 401), preserve it instead
             // of overwriting with a vague "not yet supported" string — the
