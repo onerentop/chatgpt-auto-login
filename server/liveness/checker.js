@@ -6,6 +6,41 @@ const DEFAULT_PROXY = 'http://127.0.0.1:7890';
 const CHECK_URL = 'https://chatgpt.com/backend-api/accounts/check/v4-2023-04-27';
 const FETCH_TIMEOUT_MS = 10_000;
 
+// Node 22's built-in fetch (undici) uses a global dispatcher that ignores
+// HTTP_PROXY env vars. To actually route through the main :7890 proxy we have
+// to construct a request manually with HttpsProxyAgent — same pattern used in
+// server/discord-gateway.js (with the same UND_ERR_INVALID_ARG comment).
+function _requestViaProxy(url, { method, headers, signal, proxyUrl }) {
+  const https = require('https');
+  const { URL } = require('url');
+  const { HttpsProxyAgent } = require('https-proxy-agent');
+  const u = new URL(url);
+  const agent = new HttpsProxyAgent(proxyUrl);
+  return new Promise((resolve, reject) => {
+    const req = https.request({
+      method, agent,
+      hostname: u.hostname, port: u.port || 443,
+      path: u.pathname + u.search, headers,
+    }, (res) => {
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => {
+        const text = Buffer.concat(chunks).toString('utf-8');
+        resolve({
+          status: res.statusCode,
+          ok: res.statusCode >= 200 && res.statusCode < 300,
+          json: async () => JSON.parse(text),
+          text: async () => text,
+        });
+      });
+      res.on('error', reject);
+    });
+    if (signal) signal.addEventListener('abort', () => req.destroy(new Error('aborted')), { once: true });
+    req.on('error', reject);
+    req.end();
+  });
+}
+
 function decodeJwtExp(jwt) {
   try {
     const parts = String(jwt || '').split('.');
@@ -40,18 +75,29 @@ async function probe(accessToken, opts = {}) {
     return { alive_status: 'token_expired', alive_reason: 'jwt expired' };
   }
 
-  const doFetch = fetchImpl || globalThis.fetch;
+  // Production path goes through HttpsProxyAgent to the main :7890 proxy
+  // (account was registered through that IP — direct fetch from a CN IP gets
+  // a Cloudflare 403). Tests inject fetchImpl to skip the proxy.
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(new Error('check timeout')), FETCH_TIMEOUT_MS);
   if (signal) signal.addEventListener('abort', () => ctl.abort(signal.reason), { once: true });
 
   let res;
   try {
-    res = await doFetch(CHECK_URL, {
-      method: 'GET',
-      headers: { Authorization: `Bearer ${accessToken}`, 'User-Agent': 'Mozilla/5.0' },
-      signal: ctl.signal,
-    });
+    if (fetchImpl) {
+      res = await fetchImpl(CHECK_URL, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${accessToken}`, 'User-Agent': 'Mozilla/5.0' },
+        signal: ctl.signal,
+      });
+    } else {
+      res = await _requestViaProxy(CHECK_URL, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${accessToken}`, 'User-Agent': 'Mozilla/5.0' },
+        signal: ctl.signal,
+        proxyUrl,
+      });
+    }
   } catch (e) {
     clearTimeout(timer);
     const code = e?.cause?.code || e?.code || '';
