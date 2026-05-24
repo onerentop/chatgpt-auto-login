@@ -136,7 +136,10 @@ async function probe(accessToken, opts = {}) {
     const stdinPayload = JSON.stringify({
       access_token: accessToken,
       proxy_url: effectiveProxy || null,
-      impersonate: 'chrome131',
+      // No `impersonate` field: lets the Python script rotate through its
+      // _CHROME pool on Cloudflare-403 retry. chrome131 (the previous hard-
+      // coded default) is currently 100% blocked; chrome146 / chrome142 /
+      // chrome136 work — same multi-impersonate behavior as checkout_link.py.
       timeout_ms: FETCH_TIMEOUT_MS,
     });
     try { py.stdin.write(stdinPayload); py.stdin.end(); } catch {}
