@@ -18,9 +18,10 @@ test('S1 EXECUTE_STATUS_FILTER_OPTIONS 含所有 LABEL_MAP 状态除 checking / 
   for (const s of ['plus', 'plus_no_rt', 'error', 'deactivated', 'no_link', 'idle', 'running', 'no_jp_proxy', 'no_promo', 'verify_error']) {
     assert.ok(values.includes(s), `${s} 应在下拉中`)
   }
-  // 必须排除的（纯 liveness 维度）
+  // 必须排除的（纯 liveness 维度 — 不在 pipeline status 范围）
   assert.ok(!values.includes('checking'), 'checking 不应在下拉中')
-  assert.ok(!values.includes('canceled'), 'canceled 不应在下拉中')
+  // canceled 自 v2.32.0 起被 runner 同步到 pipeline status，应可筛选
+  assert.ok(values.includes('canceled'), 'canceled 自 v2.32.0 起应在下拉中')
   // 每个 option 有 label + value
   for (const opt of EXECUTE_STATUS_FILTER_OPTIONS) {
     assert.ok(typeof opt.value === 'string' && opt.value, `option.value 必须为非空 string`)

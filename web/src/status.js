@@ -170,7 +170,9 @@ export function isFailedToRetry(status) {
 }
 
 // statusFilter 下拉的动态选项 — 从 LABEL_MAP 全集生成，避免下拉与状态体系脱节
-// 排除纯 liveness 维度（checking / canceled），它们不在执行流水线 status
+// 排除纯 liveness 维度（checking 只在 ALIVE_LABEL_MAP，未来防御性过滤）
+// canceled 自 v2.32.0 起被 runner.dispatchOne 同步到 pipeline status，
+// 因此保留为可筛选项
 export const EXECUTE_STATUS_FILTER_OPTIONS = Object.entries(LABEL_MAP)
-  .filter(([k]) => !['checking', 'canceled'].includes(k))
+  .filter(([k]) => k !== 'checking')
   .map(([value, label]) => ({ value, label }))
