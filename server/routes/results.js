@@ -66,6 +66,31 @@ router.get('/download-all', (req, res) => {
   archive.finalize();
 });
 
+// POST /download-selected — ZIP only the selected emails' auth files
+// Body: { emails: string[], format?: 'cpa' | 'sub2api' }
+// Replaces the previous client-side loop of N individual window.open() calls
+// that triggered N download dialogs in a row.
+router.post('/download-selected', (req, res) => {
+  if (!fs.existsSync(CPA_AUTH_DIR)) return res.status(404).json({ error: 'No auth files' });
+  const format = (req.body?.format === 'sub2api') ? 'sub2api' : 'cpa';
+  const emails = Array.isArray(req.body?.emails) ? req.body.emails : null;
+  if (!emails || emails.length === 0) {
+    return res.status(400).json({ error: 'emails array required' });
+  }
+  const wantedFilenames = new Set(emails.map(e => emailToAuthFilename(e, format)));
+  const allFiles = fs.readdirSync(CPA_AUTH_DIR).filter(f => f.endsWith('.json'));
+  const files = allFiles.filter(f => wantedFilenames.has(f));
+  if (files.length === 0) {
+    return res.status(404).json({ error: `No ${format} auth files for selected accounts` });
+  }
+  res.setHeader('Content-Type', 'application/zip');
+  res.setHeader('Content-Disposition', `attachment; filename=${format}-selected-${files.length}.zip`);
+  const archive = archiver('zip', { zlib: { level: 9 } });
+  archive.pipe(res);
+  for (const f of files) archive.file(path.join(CPA_AUTH_DIR, f), { name: f });
+  archive.finalize();
+});
+
 // GET /:email/logs — get logs for account
 router.get('/:email/logs', (req, res) => {
   try {

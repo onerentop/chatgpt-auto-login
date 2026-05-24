@@ -344,10 +344,35 @@ async function handleStop() {
 
 function downloadAuth(email, format = 'cpa') { window.open(`/api/results/${encodeURIComponent(email)}/auth-file?format=${format}`) }
 function downloadAllAs(format) { window.open(`/api/results/download-all?format=${format || 'cpa'}`) }
-function downloadSelectedAs(format) {
-  for (const email of selectedEmails.value) {
-    const row = accounts.value.find(a => a.email === email)
-    if (row?._hasAuth) downloadAuth(email, format || 'cpa')
+async function downloadSelectedAs(format) {
+  const fmt = format || 'cpa'
+  // Only include rows that actually have an auth file written — otherwise the
+  // server filters them out anyway and the ZIP would be smaller than expected.
+  const emails = selectedEmails.value.filter(e => {
+    const row = accounts.value.find(a => a.email === e)
+    return row?._hasAuth
+  })
+  if (emails.length === 0) { ElMessage.warning('选中账号都没有 auth 文件可下载'); return }
+  try {
+    const res = await api.post('/results/download-selected', { emails, format: fmt }, { responseType: 'blob' })
+    // axios surfaces 4xx/5xx as throws when responseType is blob — handle in catch.
+    const url = window.URL.createObjectURL(res.data)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${fmt}-selected-${emails.length}.zip`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    window.URL.revokeObjectURL(url)
+  } catch (e) {
+    let msg = '下载失败'
+    // If responseType:'blob' fails, error response is also a blob — read it as text.
+    if (e?.response?.data instanceof Blob) {
+      try { msg = JSON.parse(await e.response.data.text()).error || msg } catch {}
+    } else {
+      msg = e?.response?.data?.error || e?.message || msg
+    }
+    ElMessage.error(msg)
   }
 }
 </script>
