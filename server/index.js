@@ -28,12 +28,53 @@ initDB().then(() => {
   const executeRoutes = require('./routes/execute');
   const resultsRoutes = require('./routes/results');
   const proxyRoutes = require('./routes/proxy');
+  const livenessRoutes = require('./routes/liveness');
+  const { createRunner } = require('./liveness/runner');
+  const checker = require('./liveness/checker');
+  const codexFile = require('./liveness/codex-file');
+  const { lightLogin } = require('./liveness/light-login');
+  const { accountsDB, statusDB } = require('./db');
+  const fs = require('fs');
+
+  function readProtocolMode() {
+    try {
+      const cfg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'config.json'), 'utf-8'));
+      return Boolean(cfg.protocolMode);
+    } catch { return true; }
+  }
+
+  // Lazy chromium import — only loaded if a re-login is actually triggered
+  async function lazyChromiumConnect() {
+    const { chromium } = require('playwright');
+    return chromium.connectOverCDP('http://127.0.0.1:9222');
+  }
+
+  // OTP wrapper: try to use the existing login.fetchOtp if present; otherwise throw a clear error
+  async function getOtp(account) {
+    try {
+      const login = require('../login');
+      if (typeof login.fetchOtp === 'function') return await login.fetchOtp(account);
+    } catch {}
+    throw new Error('otp fetch not wired');
+  }
+
+  const livenessRunner = createRunner({
+    io, statusDB, accountsDB, checker,
+    lightLogin: (account, opts) => lightLogin(account, {
+      ...opts,
+      playwrightConnect: lazyChromiumConnect,
+      getOtp,
+    }),
+    codexFile,
+    config: { get protocolMode() { return readProtocolMode(); } },
+  });
 
   app.use('/api/accounts', accountsRoutes);
   app.use('/api/config', configRoutes);
   app.use('/api/execute', executeRoutes(io));
   app.use('/api/results', resultsRoutes);
   app.use('/api/proxy', proxyRoutes);
+  app.use('/api/liveness', livenessRoutes(livenessRunner, accountsDB));
 
   const distPath = path.join(__dirname, '..', 'web', 'dist');
   app.use(express.static(distPath));
