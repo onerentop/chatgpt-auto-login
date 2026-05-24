@@ -10,7 +10,16 @@ const configRoutes = require('./routes/config');
 const app = express();
 const server = http.createServer(app);
 
-const ALLOWED_ORIGINS = ['http://localhost:3000', 'http://127.0.0.1:3000'];
+// Bind to loopback by default — the dashboard intentionally has no auth, so
+// exposing it on 0.0.0.0 would let any LAN peer drive PayPal payments and
+// read plaintext credentials via /api/accounts/raw. Users who knowingly want
+// remote access can set HOST=0.0.0.0 (or a specific NIC IP).
+const HOST = process.env.HOST || '127.0.0.1';
+const ALLOWED_ORIGINS = [
+  'http://localhost:3000',
+  'http://127.0.0.1:3000',
+  `http://${HOST}:3000`,
+];
 
 const io = new Server(server, {
   cors: { origin: ALLOWED_ORIGINS, methods: ['GET', 'POST'] },
@@ -84,8 +93,13 @@ initDB().then(() => {
   });
 
   const PORT = process.env.PORT || 3000;
-  server.listen(PORT, () => {
-    console.log(`Server running on http://localhost:${PORT}`);
+  server.listen(PORT, HOST, () => {
+    if (HOST === '127.0.0.1') {
+      console.log(`Server running on http://127.0.0.1:${PORT} (local only — set HOST=0.0.0.0 for LAN access)`);
+    } else {
+      console.log(`Server running on http://${HOST}:${PORT}`);
+      console.log('⚠ Listening on non-loopback host — the dashboard has NO authentication, anyone on this network can drive the pipeline and read credentials.');
+    }
 
     // Auto-start proxy if config.proxy.enabled is true
     try {
