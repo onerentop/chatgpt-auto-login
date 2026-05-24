@@ -27,6 +27,18 @@ function isProxyNetError(msg) {
   return PROXY_NET_ERROR_RE.test(String(msg || ''));
 }
 
+// Serialize selector mutations. Without this, fire-and-forget rotate
+// (recordBadAttempt) + explicit await rotate (engine catch) can race the
+// Clash API PUT /proxies (not a transaction) and leave _state.currentNode
+// disagreeing with sing-box's actually-selected node — the next
+// recordBadAttempt would then blame the wrong tag.
+let _rotateLock = Promise.resolve();
+function withRotateLock(fn) {
+  const next = _rotateLock.then(fn, fn);
+  _rotateLock = next.catch(() => {});  // never let the lock chain reject
+  return next;                          // propagate errors to the caller
+}
+
 function _ns(channel) {
   if (channel !== 'main' && channel !== 'jp') throw new Error(`channel must be 'main' or 'jp', got: ${channel}`);
   return channel === 'jp' ? _state.jp : _state;
@@ -449,6 +461,23 @@ async function refresh() {
   const mainDesc = _state.enabled ? `:${HTTP_PORT}(${filtered.length})` : 'disabled';
   const jpDesc = _state.jp.enabled ? `:${JP_HTTP_PORT}(${jpFiltered.length})` : 'disabled';
   console.log(`[Proxy] sing-box running: main=${mainDesc} jp=${jpDesc}`);
+
+  // PX-3: singbox config writes default = filtered[0], but _state.currentNode
+  // may have been preserved by rotationIndex from a previous run. If they
+  // diverge, the Clash selector still points to filtered[0] until the next
+  // rotate() — meanwhile recordBadAttempt would blame the wrong tag for the
+  // next failure. Force a selector switch to align state.
+  await withRotateLock(async () => {
+    if (_state.enabled && _state.currentNode && _state.rotationIndex !== 0) {
+      try { await clashApi.switchSelector(SELECTOR_TAG, _state.currentNode); }
+      catch (e) { console.log(`[Proxy] selector sync failed: ${e.message?.slice(0, 60)}`); }
+    }
+    if (_state.jp.enabled && _state.jp.currentNode && _state.jp.rotationIndex !== 0) {
+      try { await clashApi.switchSelector(JP_SELECTOR_TAG, _state.jp.currentNode); }
+      catch (e) { console.log(`[Proxy:JP] selector sync failed: ${e.message?.slice(0, 60)}`); }
+    }
+  });
+
   return filtered.length;
 }
 
@@ -464,71 +493,128 @@ async function stop() {
  * "bad" mark than to fail with no candidates.
  */
 async function rotate() {
-  if (!_state.enabled || _state.nodeTags.length === 0) throw new Error('代理未启用');
+  return withRotateLock(async () => {
+    if (!_state.enabled || _state.nodeTags.length === 0) throw new Error('代理未启用');
 
-  // Try to find a non-bad next node; bounded by nodeTags.length attempts.
-  let nextTag = null;
-  for (let i = 0; i < _state.nodeTags.length; i++) {
-    let candidate;
-    if (_state.rotationStrategy === 'random') {
-      candidate = _state.nodeTags[Math.floor(Math.random() * _state.nodeTags.length)];
-    } else {
-      _state.rotationIndex = (_state.rotationIndex + 1) % _state.nodeTags.length;
-      candidate = _state.nodeTags[_state.rotationIndex];
+    // Try to find a non-bad next node; bounded by nodeTags.length attempts.
+    let nextTag = null;
+    for (let i = 0; i < _state.nodeTags.length; i++) {
+      let candidate;
+      if (_state.rotationStrategy === 'random') {
+        candidate = _state.nodeTags[Math.floor(Math.random() * _state.nodeTags.length)];
+      } else {
+        _state.rotationIndex = (_state.rotationIndex + 1) % _state.nodeTags.length;
+        candidate = _state.nodeTags[_state.rotationIndex];
+      }
+      if (!isBad(candidate)) { nextTag = candidate; break; }
     }
-    if (!isBad(candidate)) { nextTag = candidate; break; }
-  }
 
-  if (!nextTag) {
-    // Every node is bad. Clear the blacklist (memory + DB) and try once more — TTLs
-    // may have lapsed since they were set, and a stuck blacklist is worse than
-    // re-trying a flaky node. Must sync DB or restart would resurrect cleared rows.
-    console.log(`[Proxy] All ${_state.nodeTags.length} nodes are blacklisted; clearing and rotating fresh`);
-    _state.badNodes.clear();
-    try { blacklist.removeAll('main'); } catch {}
-    if (_state.rotationStrategy === 'random') {
-      nextTag = _state.nodeTags[Math.floor(Math.random() * _state.nodeTags.length)];
-    } else {
-      _state.rotationIndex = (_state.rotationIndex + 1) % _state.nodeTags.length;
-      nextTag = _state.nodeTags[_state.rotationIndex];
+    if (!nextTag) {
+      // Every node is bad. First try clearing only auto-blacklisted entries —
+      // user-pinned manual bans should survive unless they're the *only*
+      // thing keeping every node out. If after clearing autos we still have
+      // no candidates, fall back to a full clear.
+      const autoTags = [];
+      for (const [tag, entry] of _state.badNodes.entries()) {
+        const obj = typeof entry === 'number' ? { source: 'auto' } : entry;
+        if (obj.source !== 'manual') autoTags.push(tag);
+      }
+      if (autoTags.length > 0) {
+        console.log(`[Proxy] All ${_state.nodeTags.length} nodes blacklisted; clearing ${autoTags.length} auto entries (manual entries preserved)`);
+        for (const tag of autoTags) {
+          _state.badNodes.delete(tag);
+          try { blacklist.remove(tag, 'main'); } catch {}
+        }
+      }
+      // Try again to find a candidate.
+      for (let i = 0; i < _state.nodeTags.length; i++) {
+        if (_state.rotationStrategy === 'random') {
+          nextTag = _state.nodeTags[Math.floor(Math.random() * _state.nodeTags.length)];
+        } else {
+          _state.rotationIndex = (_state.rotationIndex + 1) % _state.nodeTags.length;
+          nextTag = _state.nodeTags[_state.rotationIndex];
+        }
+        if (!isBad(nextTag)) break;
+        nextTag = null;
+      }
+      if (!nextTag) {
+        // Even after clearing autos, every remaining node is manually banned.
+        // Last-resort clear so we don't deadlock with no proxy at all.
+        console.log(`[Proxy] All nodes remain blacklisted (all manual); clearing everything to avoid deadlock`);
+        _state.badNodes.clear();
+        try { blacklist.removeAll('main'); } catch {}
+        if (_state.rotationStrategy === 'random') {
+          nextTag = _state.nodeTags[Math.floor(Math.random() * _state.nodeTags.length)];
+        } else {
+          _state.rotationIndex = (_state.rotationIndex + 1) % _state.nodeTags.length;
+          nextTag = _state.nodeTags[_state.rotationIndex];
+        }
+      }
     }
-  }
 
-  await clashApi.switchSelector(SELECTOR_TAG, nextTag);
-  _state.currentNode = nextTag;
-  return nextTag;
+    await clashApi.switchSelector(SELECTOR_TAG, nextTag);
+    _state.currentNode = nextTag;
+    return nextTag;
+  });
 }
 
 async function rotateJp() {
-  if (!_state.jp.enabled || _state.jp.nodeTags.length === 0) throw new Error('JP 通道未启用');
+  return withRotateLock(async () => {
+    if (!_state.jp.enabled || _state.jp.nodeTags.length === 0) throw new Error('JP 通道未启用');
 
-  let nextTag = null;
-  for (let i = 0; i < _state.jp.nodeTags.length; i++) {
-    let candidate;
-    if (_state.jp.rotationStrategy === 'random') {
-      candidate = _state.jp.nodeTags[Math.floor(Math.random() * _state.jp.nodeTags.length)];
-    } else {
-      _state.jp.rotationIndex = (_state.jp.rotationIndex + 1) % _state.jp.nodeTags.length;
-      candidate = _state.jp.nodeTags[_state.jp.rotationIndex];
+    let nextTag = null;
+    for (let i = 0; i < _state.jp.nodeTags.length; i++) {
+      let candidate;
+      if (_state.jp.rotationStrategy === 'random') {
+        candidate = _state.jp.nodeTags[Math.floor(Math.random() * _state.jp.nodeTags.length)];
+      } else {
+        _state.jp.rotationIndex = (_state.jp.rotationIndex + 1) % _state.jp.nodeTags.length;
+        candidate = _state.jp.nodeTags[_state.jp.rotationIndex];
+      }
+      if (!isJpBad(candidate)) { nextTag = candidate; break; }
     }
-    if (!isJpBad(candidate)) { nextTag = candidate; break; }
-  }
 
-  if (!nextTag) {
-    console.log(`[Proxy:JP] All ${_state.jp.nodeTags.length} KDDI nodes are blacklisted; clearing and rotating fresh`);
-    _state.jp.badNodes.clear();
-    try { blacklist.removeAll('jp'); } catch {}
-    if (_state.jp.rotationStrategy === 'random') {
-      nextTag = _state.jp.nodeTags[Math.floor(Math.random() * _state.jp.nodeTags.length)];
-    } else {
-      _state.jp.rotationIndex = (_state.jp.rotationIndex + 1) % _state.jp.nodeTags.length;
-      nextTag = _state.jp.nodeTags[_state.jp.rotationIndex];
+    if (!nextTag) {
+      // Auto-vs-manual cleared in two passes: preserve manual bans first.
+      const autoTags = [];
+      for (const [tag, entry] of _state.jp.badNodes.entries()) {
+        const obj = typeof entry === 'number' ? { source: 'auto' } : entry;
+        if (obj.source !== 'manual') autoTags.push(tag);
+      }
+      if (autoTags.length > 0) {
+        console.log(`[Proxy:JP] All ${_state.jp.nodeTags.length} KDDI nodes blacklisted; clearing ${autoTags.length} auto entries (manual preserved)`);
+        for (const tag of autoTags) {
+          _state.jp.badNodes.delete(tag);
+          try { blacklist.remove(tag, 'jp'); } catch {}
+        }
+      }
+      for (let i = 0; i < _state.jp.nodeTags.length; i++) {
+        if (_state.jp.rotationStrategy === 'random') {
+          nextTag = _state.jp.nodeTags[Math.floor(Math.random() * _state.jp.nodeTags.length)];
+        } else {
+          _state.jp.rotationIndex = (_state.jp.rotationIndex + 1) % _state.jp.nodeTags.length;
+          nextTag = _state.jp.nodeTags[_state.jp.rotationIndex];
+        }
+        if (!isJpBad(nextTag)) break;
+        nextTag = null;
+      }
+      if (!nextTag) {
+        console.log(`[Proxy:JP] All KDDI nodes remain blacklisted (all manual); clearing to avoid deadlock`);
+        _state.jp.badNodes.clear();
+        try { blacklist.removeAll('jp'); } catch {}
+        if (_state.jp.rotationStrategy === 'random') {
+          nextTag = _state.jp.nodeTags[Math.floor(Math.random() * _state.jp.nodeTags.length)];
+        } else {
+          _state.jp.rotationIndex = (_state.jp.rotationIndex + 1) % _state.jp.nodeTags.length;
+          nextTag = _state.jp.nodeTags[_state.jp.rotationIndex];
+        }
+      }
     }
-  }
 
-  await clashApi.switchSelector(JP_SELECTOR_TAG, nextTag);
-  _state.jp.currentNode = nextTag;
-  return nextTag;
+    await clashApi.switchSelector(JP_SELECTOR_TAG, nextTag);
+    _state.jp.currentNode = nextTag;
+    return nextTag;
+  });
 }
 
 // v2.31.1: 把真实 rotate 注入 recordBadAttempt 的 fire-and-forget 钩子（在 rotate/rotateJp
@@ -536,12 +622,15 @@ async function rotateJp() {
 _autoRotateFn = rotate;
 _autoRotateJpFn = rotateJp;
 
-/** Switch to a specific node by name. */
+/** Switch to a specific node by name. Serialized through the same rotate lock
+ *  so this can't race with rotate / rotateJp. */
 async function switchTo(nodeTag) {
-  if (!_state.nodeTags.includes(nodeTag)) throw new Error(`节点不存在: ${nodeTag}`);
-  await clashApi.switchSelector(SELECTOR_TAG, nodeTag);
-  _state.currentNode = nodeTag;
-  return nodeTag;
+  return withRotateLock(async () => {
+    if (!_state.nodeTags.includes(nodeTag)) throw new Error(`节点不存在: ${nodeTag}`);
+    await clashApi.switchSelector(SELECTOR_TAG, nodeTag);
+    _state.currentNode = nodeTag;
+    return nodeTag;
+  });
 }
 
 /** Detect current exit IP through the proxy. Uses HTTP CONNECT tunnel to HTTPS endpoint. */
