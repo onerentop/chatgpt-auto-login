@@ -302,6 +302,7 @@ class ProtocolEngine extends EventEmitter {
         this.emitStatus({ email: account.email, status: 'running', phase: phaseTag, progress });
         console.log(`[${progress}] ${phaseTag === 'discord' ? 'Discord' : 'Checkout'}: ${account.email}...`);
         let link;
+        let fetchResult = null;
 
         // Reconnect Gateway only when using Discord path
         if (linkSource === 'discord' && this._gw?.ws?.readyState !== 1) {
@@ -327,7 +328,6 @@ class ProtocolEngine extends EventEmitter {
         }
 
         let linkFetchOk = usedCachedLink;
-        if (!fetchResult) fetchResult = null;
         if (!usedCachedLink) {
           for (let dRetry = 0; dRetry < 3; dRetry++) {
             try {
