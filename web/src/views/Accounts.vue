@@ -142,42 +142,45 @@
           <el-button size="small" text @click.stop="row._showPw = !row._showPw">{{ row._showPw ? '隐' : '显' }}</el-button>
         </template>
       </el-table-column>
-      <el-table-column prop="totp_secret" label="TOTP" min-width="120">
+      <el-table-column label="凭证" width="120">
         <template #default="{ row }">
-          <span v-if="!row.totp_secret" style="color:#c0c4cc">-</span>
-          <span v-else style="display:inline-flex;align-items:center;gap:4px">
-            <el-tooltip :content="row.totp_secret" placement="top">
-              <span style="font-family:monospace">{{ row.totp_secret }}</span>
-            </el-tooltip>
-            <el-icon style="cursor:pointer;color:#909399" @click.stop="copyToClipboard(row.totp_secret, 'TOTP')">
-              <DocumentCopy />
-            </el-icon>
-          </span>
-        </template>
-      </el-table-column>
-      <el-table-column prop="client_id" label="Client ID" min-width="120">
-        <template #default="{ row }">
-          <span v-if="!row.client_id" style="color:#c0c4cc">-</span>
-          <span v-else style="display:inline-flex;align-items:center;gap:4px">
-            <el-tooltip :content="row.client_id" placement="top">
-              <span style="font-family:monospace">{{ row.client_id }}</span>
-            </el-tooltip>
-            <el-icon style="cursor:pointer;color:#909399" @click.stop="copyToClipboard(row.client_id, 'Client ID')">
-              <DocumentCopy />
-            </el-icon>
-          </span>
-        </template>
-      </el-table-column>
-      <el-table-column label="Refresh Token" min-width="120">
-        <template #default="{ row }">
-          <span v-if="!row.refresh_token" style="color:#c0c4cc">-</span>
-          <span v-else style="display:inline-flex;align-items:center;gap:4px">
-            <el-tooltip :content="row.refresh_token" placement="top">
-              <span style="font-family:monospace">{{ row.refresh_token.slice(0, 20) }}...</span>
-            </el-tooltip>
-            <el-icon style="cursor:pointer;color:#909399" @click.stop="copyToClipboard(row.refresh_token, 'Refresh Token')">
-              <DocumentCopy />
-            </el-icon>
+          <!-- 三个圆点：是否设置。绿=有 灰=空。点击 '查' 弹出 popover
+               展示完整字段 + 复制按钮，避免主表挤 4 个长字段列。 -->
+          <span style="display:inline-flex;gap:4px;align-items:center">
+            <span title="TOTP" :style="{ display:'inline-block', width:'8px', height:'8px', borderRadius:'50%', background: row.totp_secret ? '#67c23a' : '#dcdfe6' }" />
+            <span title="Client ID" :style="{ display:'inline-block', width:'8px', height:'8px', borderRadius:'50%', background: row.client_id ? '#67c23a' : '#dcdfe6' }" />
+            <span title="Refresh Token" :style="{ display:'inline-block', width:'8px', height:'8px', borderRadius:'50%', background: row.refresh_token ? '#67c23a' : '#dcdfe6' }" />
+            <el-popover placement="left" :width="420" trigger="click">
+              <template #reference>
+                <el-button size="small" text style="margin-left:4px">查</el-button>
+              </template>
+              <div style="display:flex;flex-direction:column;gap:8px;font-size:13px">
+                <div>
+                  <strong style="display:block;color:#606266;font-size:12px;margin-bottom:2px">TOTP 密钥</strong>
+                  <div v-if="row.totp_secret" style="display:flex;gap:6px;align-items:center">
+                    <code style="font-family:monospace;background:#f5f7fa;padding:2px 6px;border-radius:3px;flex:1;overflow-wrap:break-word">{{ row.totp_secret }}</code>
+                    <el-button size="small" @click="copyToClipboard(row.totp_secret, 'TOTP')">复制</el-button>
+                  </div>
+                  <span v-else style="color:#c0c4cc">未设置</span>
+                </div>
+                <div>
+                  <strong style="display:block;color:#606266;font-size:12px;margin-bottom:2px">Client ID</strong>
+                  <div v-if="row.client_id" style="display:flex;gap:6px;align-items:center">
+                    <code style="font-family:monospace;background:#f5f7fa;padding:2px 6px;border-radius:3px;flex:1;overflow-wrap:break-word">{{ row.client_id }}</code>
+                    <el-button size="small" @click="copyToClipboard(row.client_id, 'Client ID')">复制</el-button>
+                  </div>
+                  <span v-else style="color:#c0c4cc">未设置</span>
+                </div>
+                <div>
+                  <strong style="display:block;color:#606266;font-size:12px;margin-bottom:2px">Refresh Token</strong>
+                  <div v-if="row.refresh_token" style="display:flex;gap:6px;align-items:center">
+                    <code style="font-family:monospace;background:#f5f7fa;padding:2px 6px;border-radius:3px;flex:1;overflow-wrap:break-word;word-break:break-all;max-height:80px;overflow-y:auto">{{ row.refresh_token }}</code>
+                    <el-button size="small" @click="copyToClipboard(row.refresh_token, 'Refresh Token')">复制</el-button>
+                  </div>
+                  <span v-else style="color:#c0c4cc">未设置</span>
+                </div>
+              </div>
+            </el-popover>
           </span>
         </template>
       </el-table-column>
