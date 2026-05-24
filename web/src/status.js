@@ -45,7 +45,7 @@ export function statusLabel(s) {
 }
 
 export const PLUS_STATUSES = ['plus', 'plus_no_rt']
-export const ERROR_STATUSES = ['error', 'no_link', 'deactivated', 'no_promo']
+export const ERROR_STATUSES = ['error', 'no_link', 'deactivated', 'no_promo', 'canceled', 'token_expired', 'login_fail']
 
 export function isPlus(status) {
   return PLUS_STATUSES.includes((status || '').toLowerCase())

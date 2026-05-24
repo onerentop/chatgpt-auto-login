@@ -1,5 +1,23 @@
 # Changelog
 
+## v2.32.1 — 2026-05-25
+
+### Hotfix: 3 个新 status 码加入 ERROR_STATUSES
+
+v2.32.0 引入的 3 个 status 码 (`canceled` / `token_expired` /
+`login_fail`) 当时只加进了 TYPE_MAP / LABEL_MAP / GROUP_ORDER，
+**漏加 ERROR_STATUSES**。导致 Accounts.vue:291 的 `_plan` 推导：
+
+```js
+PLUS_STATUSES.includes(st) ? 'plus' : (ERROR_STATUSES.includes(st) ? 'free' : '')
+```
+
+3 个新 status 既不在 PLUS_STATUSES 也不在 ERROR_STATUSES → `_plan=''`
+→ Accounts 页「计划」列显示 `-`（看起来"没数据"）。
+
+修复：`web/src/status.js:ERROR_STATUSES` 追加 3 个值。这 3 个全
+归 free（账户层面失败 → Plus 信息已不可信）。前端 rebuild。
+
 ## v2.32.0 — 2026-05-25
 
 ### 测活终态同步到 status 字段 + 3 个新 status 码
