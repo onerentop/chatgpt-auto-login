@@ -263,7 +263,8 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, onBeforeUnmount } from 'vue'
+import { ref, reactive, onMounted, onBeforeUnmount, watch } from 'vue'
+import { onBeforeRouteLeave } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '../api'
 
@@ -279,6 +280,13 @@ const activeTab = ref('payment')
 const FAIL_THRESHOLD = 3
 const blacklist = ref({ main: [], jp: [] })
 let blacklistTimer = null
+
+// FX-6: dirty form guard. We can't watch immediately because onMounted will
+// load real values into `form` and that would mark the form dirty before
+// the user has touched anything. `loaded` becomes true at the end of
+// onMounted's loader so the watcher only starts counting changes after.
+const isDirty = ref(false)
+const loaded = ref(false)
 
 const form = reactive({
   protocolMode: false,
@@ -332,8 +340,58 @@ onMounted(async () => {
   await loadProxyStatus()
   await loadAllNodes()
   await loadBlacklist()
-  blacklistTimer = setInterval(loadBlacklist, 10000)
+  startBlacklistPolling()
+  document.addEventListener('visibilitychange', onVisibilityChange)
+  window.addEventListener('beforeunload', onBeforeUnload)
+  // Defer turning on dirty-tracking until next tick so the form-restoration
+  // mutations above don't trip the watcher.
+  loaded.value = true
 })
+
+watch(
+  () => JSON.stringify(form),
+  () => { if (loaded.value) isDirty.value = true },
+)
+
+function onBeforeUnload(e) {
+  if (isDirty.value) {
+    // Modern browsers ignore returnValue text but require it to be set.
+    e.preventDefault()
+    e.returnValue = ''
+  }
+}
+
+onBeforeRouteLeave(async (to, from) => {
+  if (!isDirty.value) return true
+  try {
+    await ElMessageBox.confirm(
+      '有未保存的更改，确定要离开？离开后改动会丢失。',
+      '未保存的更改',
+      { type: 'warning', confirmButtonText: '丢弃并离开', cancelButtonText: '继续编辑' },
+    )
+    return true
+  } catch {
+    return false
+  }
+})
+
+// FX-14: pause blacklist polling when the tab is hidden so we don't burn
+// network on background tabs.
+function startBlacklistPolling() {
+  if (blacklistTimer) return
+  blacklistTimer = setInterval(loadBlacklist, 10000)
+}
+function stopBlacklistPolling() {
+  if (blacklistTimer) { clearInterval(blacklistTimer); blacklistTimer = null }
+}
+function onVisibilityChange() {
+  if (document.visibilityState === 'hidden') {
+    stopBlacklistPolling()
+  } else {
+    loadBlacklist()
+    startBlacklistPolling()
+  }
+}
 
 async function loadProxyStatus() {
   try {
@@ -382,6 +440,7 @@ async function handleSave() {
       },
     }
     await api.put('/config', payload)
+    isDirty.value = false
     ElMessage.success('配置已保存')
   } catch (err) {
     ElMessage.error(err.response?.data?.error || '保存失败')
@@ -505,6 +564,8 @@ function formatTtl(ms) {
 }
 
 onBeforeUnmount(() => {
-  if (blacklistTimer) clearInterval(blacklistTimer)
+  stopBlacklistPolling()
+  document.removeEventListener('visibilitychange', onVisibilityChange)
+  window.removeEventListener('beforeunload', onBeforeUnload)
 })
 </script>
