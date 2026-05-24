@@ -32,6 +32,25 @@
       </el-menu>
     </el-aside>
     <el-main class="main">
+      <el-alert
+        v-if="!socketState.connected"
+        type="warning"
+        :closable="false"
+        show-icon
+        style="margin-bottom:12px"
+      >
+        <template #title>
+          <span style="font-weight:500">实时数据已暂停</span>
+          <span style="color:#909399;margin-left:8px">WebSocket 已断开，自动重连中…</span>
+          <el-button
+            link
+            type="primary"
+            size="small"
+            style="margin-left:12px"
+            @click="reconnectSocket"
+          >手动重连</el-button>
+        </template>
+      </el-alert>
       <slot />
     </el-main>
   </el-container>
@@ -40,6 +59,7 @@
 <script setup>
 import { useRoute } from 'vue-router'
 import { Monitor, User, Setting, VideoPlay, Document } from '@element-plus/icons-vue'
+import { socketState, reconnectSocket } from '../socket'
 
 const route = useRoute()
 </script>

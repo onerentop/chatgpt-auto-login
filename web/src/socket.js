@@ -124,3 +124,15 @@ export function disconnectSocket() {
     socketState.connected = false
   }
 }
+
+// Manual reconnect — for the AppLayout "重连" button when the socket has
+// exhausted its automatic retries.
+export function reconnectSocket() {
+  if (socket && !socket.connected) {
+    socket.connect()
+    return
+  }
+  if (!socket) {
+    connectSocket()
+  }
+}
