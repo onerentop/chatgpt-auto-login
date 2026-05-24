@@ -302,9 +302,15 @@ class PipelineEngine extends EventEmitter {
           } // end if (!loginResult)
 
           // Persist the freshly-obtained token so the next retry can skip
-          // the browser login entirely.
+          // the browser login entirely. status: 'running' explicitly passed;
+          // without it, statusDB.set's destructuring default would revert
+          // status to 'idle' and the running-account would flicker off the
+          // UI for one frame.
           if (loginResult && loginResult.accessToken) {
             statusDB.set(account.email, {
+              status: 'running',
+              phase: 'login',
+              progress,
               accessToken: loginResult.accessToken,
               sessionJson: JSON.stringify(loginResult.session || {}),
             });

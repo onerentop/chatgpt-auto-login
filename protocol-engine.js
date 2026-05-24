@@ -253,19 +253,22 @@ class ProtocolEngine extends EventEmitter {
           }
         }
 
+        console.log(`[${progress}] === ${account.email} (protocol) ===`);
+        // Rotate proxy node before each account (if proxy enabled).
+        // Hoisted OUT of `if (!result)` so cache-hit accounts also get a
+        // fresh node for Phase 3 PayPal — matches server/engine.js parity.
+        if (proxyMgr.getState().enabled) {
+          try {
+            const node = await proxyMgr.rotate();
+            console.log(`[${progress}] Proxy rotated → ${node}`);
+          } catch (e) {
+            console.log(`[${progress}] Proxy rotate failed: ${e.message?.slice(0, 60)}`);
+          }
+        }
+
         // Step 1: Protocol login (skipped when result was reconstituted above)
         if (!result) {
           this.emitStatus({ email: account.email, status: 'running', phase: 'protocol-login', progress });
-          console.log(`[${progress}] === ${account.email} (protocol) ===`);
-          // Rotate proxy node before each account (if proxy enabled)
-          if (proxyMgr.getState().enabled) {
-            try {
-              const node = await proxyMgr.rotate();
-              console.log(`[${progress}] Proxy rotated → ${node}`);
-            } catch (e) {
-              console.log(`[${progress}] Proxy rotate failed: ${e.message?.slice(0, 60)}`);
-            }
-          }
 
           try {
             result = await runProtocolRegister(account, this);
@@ -319,7 +322,13 @@ class ProtocolEngine extends EventEmitter {
         // next retry can skip Phase 1 entirely. Without this, the
         // cached-login fast-path above would never have anything to read.
         if (result) {
+          // status: 'running' explicitly passed; without it, statusDB.set's
+          // destructuring default would revert status to 'idle' and the
+          // running-account would flicker off the UI for one frame.
           statusDB.set(account.email, {
+            status: 'running',
+            phase: 'protocol-login',
+            progress,
             accessToken: result.accessToken,
             sessionJson: JSON.stringify(result.session || {}),
           });
