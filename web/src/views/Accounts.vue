@@ -1,81 +1,77 @@
 <template>
   <div>
-    <el-row style="margin-bottom: 16px" :gutter="12" align="middle">
-      <el-col :span="24">
-        <el-button type="primary" @click="showImport = true">批量导入</el-button>
-        <el-button @click="exportAccounts">导出全部</el-button>
-        <el-button :disabled="selected.length === 0" @click="exportSelected">导出选中 ({{ selected.length }})</el-button>
-        <el-button type="success" @click="openAdd">添加单个</el-button>
-        <el-popconfirm :title="`确定删除选中的 ${selected.length} 个账号？`" @confirm="delSelected" v-if="selected.length > 0">
-          <template #reference><el-button type="danger" size="small">删除选中 ({{ selected.length }})</el-button></template>
-        </el-popconfirm>
-        <el-input v-model="search" placeholder="搜索 (邮箱/RT/Client ID/TOTP/密码)" clearable style="width:240px;margin-left:12px" />
-        <el-select v-model="statusFilter" placeholder="状态" clearable multiple collapse-tags collapse-tags-tooltip style="width:180px;margin-left:8px">
-          <el-option label="Plus(有RT)" value="plus" />
-          <el-option label="Plus(无RT)" value="plus_no_rt" />
-          <el-option label="错误" value="error" />
-          <el-option label="已删除" value="deactivated" />
-          <el-option label="无链接" value="no_link" />
-          <el-option label="空闲" value="idle" />
-          <el-option label="运行中" value="running" />
-          <el-option label="已停止" value="aborted" />
-          <el-option label="JP节点不可用" value="no_jp_proxy" />
-          <el-option label="无0元资格" value="no_promo" />
-          <el-option label="Stripe验证失败" value="verify_error" />
-          <el-option label="已取消" value="canceled" />
-          <el-option label="Token失效" value="token_expired" />
-          <el-option label="登录失败" value="login_fail" />
-        </el-select>
-        <el-select v-model="planFilter" placeholder="Plan" clearable style="width:110px;margin-left:8px">
-          <el-option label="Plus" value="plus" />
-          <el-option label="Free" value="free" />
-          <el-option label="未知" value="unknown" />
-        </el-select>
-        <el-select v-model="authFilter" placeholder="Auth" clearable style="width:110px;margin-left:8px">
-          <el-option label="已生成" value="yes" />
-          <el-option label="未生成" value="no" />
-        </el-select>
-        <el-button size="small" text @click="aliveFilter = ['unknown']">仅看未测试</el-button>
-        <el-button size="small" :type="staleOnly ? 'primary' : ''" text @click="staleOnly = !staleOnly">7天未测</el-button>
-        <el-button size="small" text :disabled="!hasAnyFilter" @click="resetFilters">重置筛选</el-button>
-        <el-tag style="margin-left: 12px">{{ filteredAccounts.length }} / {{ accounts.length }}</el-tag>
-        <el-button size="small" style="margin-left: 8px" @click="clearAllSelection">取消选中</el-button>
-        <el-divider direction="vertical" />
-        <el-button size="small" type="primary" :disabled="selected.length === 0 || livenessRunning" @click="startLiveness('selected')">
-          测活选中 ({{ selected.length }})
-        </el-button>
-        <el-button size="small" type="primary" :disabled="livenessRunning" @click="startLiveness('all')">
-          测活全部
-        </el-button>
-        <el-button v-if="livenessRunning" size="small" type="danger" @click="stopLiveness">
-          停止测活
-        </el-button>
-        <el-tag v-if="livenessRunning" type="info" size="small" style="margin-left: 8px">
-          {{ socketState.liveness.done }}/{{ socketState.liveness.total }} (✗{{ socketState.liveness.failed }})
-        </el-tag>
-        <el-divider direction="vertical" />
-        <el-dropdown :disabled="selected.length === 0" @command="downloadSelectedAs" split-button size="small">
-          下载选中 ({{ selected.length }})
-          <template #dropdown>
-            <el-dropdown-menu>
-              <el-dropdown-item command="cpa">CPA 格式</el-dropdown-item>
-              <el-dropdown-item command="sub2api">Sub2API 格式</el-dropdown-item>
-            </el-dropdown-menu>
-          </template>
-        </el-dropdown>
-        <el-dropdown @command="downloadAllAs" split-button size="small" style="margin-left:8px">
-          下载全部 (ZIP)
-          <template #dropdown>
-            <el-dropdown-menu>
-              <el-dropdown-item command="cpa">CPA 格式</el-dropdown-item>
-              <el-dropdown-item command="sub2api">Sub2API 格式</el-dropdown-item>
-            </el-dropdown-menu>
-          </template>
-        </el-dropdown>
-        <el-select v-model="aliveFilter" placeholder="活性" clearable multiple collapse-tags collapse-tags-tooltip size="small" style="width:180px;margin-left:8px">
-          <el-option v-for="o in aliveFilterOptions" :key="o.value" :label="o.label" :value="o.value" />
-        </el-select>
-      </el-col>
+    <!-- v2.28 #6: Row 1 — 数据管理 -->
+    <el-row style="margin-bottom: 8px" :gutter="8" align="middle">
+      <el-button type="primary" @click="showImport = true">批量导入</el-button>
+      <el-button @click="exportAccounts">导出全部</el-button>
+      <el-button :disabled="selected.length === 0" @click="exportSelected">导出选中 ({{ selected.length }})</el-button>
+      <el-button type="success" @click="openAdd">添加单个</el-button>
+      <el-popconfirm :title="`确定删除选中的 ${selected.length} 个账号？`" @confirm="delSelected" v-if="selected.length > 0">
+        <template #reference><el-button type="danger" size="small">删除选中 ({{ selected.length }})</el-button></template>
+      </el-popconfirm>
+    </el-row>
+
+    <!-- v2.28 #6: Row 2 — 筛选 -->
+    <el-row style="margin-bottom: 8px" :gutter="8" align="middle">
+      <el-input v-model="search" placeholder="搜索 (邮箱/RT/Client ID/TOTP/密码)" clearable style="width:240px" />
+      <el-select v-model="statusFilter" placeholder="状态" clearable multiple collapse-tags collapse-tags-tooltip style="width:180px;margin-left:8px">
+        <el-option v-for="opt in EXECUTE_STATUS_FILTER_OPTIONS" :key="opt.value" :label="opt.label" :value="opt.value" />
+      </el-select>
+      <el-select v-model="planFilter" placeholder="Plan" clearable style="width:110px;margin-left:8px">
+        <el-option label="Plus" value="plus" />
+        <el-option label="Free" value="free" />
+        <el-option label="未知" value="unknown" />
+      </el-select>
+      <el-select v-model="authFilter" placeholder="Auth" clearable style="width:110px;margin-left:8px">
+        <el-option label="已生成" value="yes" />
+        <el-option label="未生成" value="no" />
+      </el-select>
+      <el-select v-model="aliveFilter" placeholder="活性" clearable multiple collapse-tags collapse-tags-tooltip size="small" style="width:180px;margin-left:8px">
+        <el-option v-for="o in aliveFilterOptions" :key="o.value" :label="o.label" :value="o.value" />
+      </el-select>
+      <el-button size="small" text @click="aliveFilter = ['unknown']" style="margin-left:8px">仅看未测试</el-button>
+      <el-button size="small" :type="staleOnly ? 'primary' : ''" text @click="staleOnly = !staleOnly">7天未测</el-button>
+      <el-button size="small" text :disabled="!hasAnyFilter" @click="resetFilters">重置筛选</el-button>
+      <el-tag style="margin-left: 8px">{{ filteredAccounts.length }} / {{ accounts.length }}</el-tag>
+      <el-button size="small" style="margin-left: 8px" @click="clearAllSelection">取消选中</el-button>
+    </el-row>
+
+    <!-- v2.28 #6 + #8: Row 3 — 测活 -->
+    <el-row style="margin-bottom: 8px" :gutter="8" align="middle">
+      <el-button size="small" type="primary" :disabled="selected.length === 0 || livenessRunning" @click="startLiveness('selected')">
+        测活选中 ({{ selected.length }})
+      </el-button>
+      <el-button size="small" type="primary" :disabled="livenessRunning" @click="checkAllWithConfirm">
+        测活全部
+      </el-button>
+      <el-button v-if="livenessRunning" size="small" type="danger" @click="stopLiveness">
+        停止测活
+      </el-button>
+      <el-tag v-if="livenessRunning" type="info" size="small" style="margin-left: 8px">
+        {{ socketState.liveness.done }}/{{ socketState.liveness.total }} (✗{{ socketState.liveness.failed }})
+      </el-tag>
+    </el-row>
+
+    <!-- v2.28 #6: Row 4 — 下载 -->
+    <el-row style="margin-bottom: 12px" :gutter="8" align="middle">
+      <el-dropdown :disabled="selected.length === 0" @command="downloadSelectedAs" split-button size="small">
+        下载选中 ({{ selected.length }})
+        <template #dropdown>
+          <el-dropdown-menu>
+            <el-dropdown-item command="cpa">CPA 格式</el-dropdown-item>
+            <el-dropdown-item command="sub2api">Sub2API 格式</el-dropdown-item>
+          </el-dropdown-menu>
+        </template>
+      </el-dropdown>
+      <el-dropdown @command="downloadAllAs" split-button size="small" style="margin-left:8px">
+        下载全部 (ZIP)
+        <template #dropdown>
+          <el-dropdown-menu>
+            <el-dropdown-item command="cpa">CPA 格式</el-dropdown-item>
+            <el-dropdown-item command="sub2api">Sub2API 格式</el-dropdown-item>
+          </el-dropdown-menu>
+        </template>
+      </el-dropdown>
     </el-row>
 
     <el-collapse v-model="oldLogsExpanded" style="margin-bottom: 8px">
@@ -146,14 +142,44 @@
           <el-button size="small" text @click.stop="row._showPw = !row._showPw">{{ row._showPw ? '隐' : '显' }}</el-button>
         </template>
       </el-table-column>
-      <el-table-column prop="totp_secret" label="TOTP" min-width="120" show-overflow-tooltip>
-        <template #default="{ row }">{{ row.totp_secret || '-' }}</template>
+      <el-table-column prop="totp_secret" label="TOTP" min-width="120">
+        <template #default="{ row }">
+          <span v-if="!row.totp_secret" style="color:#c0c4cc">-</span>
+          <span v-else style="display:inline-flex;align-items:center;gap:4px">
+            <el-tooltip :content="row.totp_secret" placement="top">
+              <span style="font-family:monospace">{{ row.totp_secret }}</span>
+            </el-tooltip>
+            <el-icon style="cursor:pointer;color:#909399" @click.stop="copyToClipboard(row.totp_secret, 'TOTP')">
+              <DocumentCopy />
+            </el-icon>
+          </span>
+        </template>
       </el-table-column>
-      <el-table-column prop="client_id" label="Client ID" min-width="120" show-overflow-tooltip>
-        <template #default="{ row }">{{ row.client_id || '-' }}</template>
+      <el-table-column prop="client_id" label="Client ID" min-width="120">
+        <template #default="{ row }">
+          <span v-if="!row.client_id" style="color:#c0c4cc">-</span>
+          <span v-else style="display:inline-flex;align-items:center;gap:4px">
+            <el-tooltip :content="row.client_id" placement="top">
+              <span style="font-family:monospace">{{ row.client_id }}</span>
+            </el-tooltip>
+            <el-icon style="cursor:pointer;color:#909399" @click.stop="copyToClipboard(row.client_id, 'Client ID')">
+              <DocumentCopy />
+            </el-icon>
+          </span>
+        </template>
       </el-table-column>
-      <el-table-column label="Refresh Token" min-width="120" show-overflow-tooltip>
-        <template #default="{ row }">{{ row.refresh_token ? row.refresh_token.slice(0, 20) + '...' : '-' }}</template>
+      <el-table-column label="Refresh Token" min-width="120">
+        <template #default="{ row }">
+          <span v-if="!row.refresh_token" style="color:#c0c4cc">-</span>
+          <span v-else style="display:inline-flex;align-items:center;gap:4px">
+            <el-tooltip :content="row.refresh_token" placement="top">
+              <span style="font-family:monospace">{{ row.refresh_token.slice(0, 20) }}...</span>
+            </el-tooltip>
+            <el-icon style="cursor:pointer;color:#909399" @click.stop="copyToClipboard(row.refresh_token, 'Refresh Token')">
+              <DocumentCopy />
+            </el-icon>
+          </span>
+        </template>
       </el-table-column>
       <el-table-column label="操作" width="240">
         <template #default="{ row }">
@@ -196,9 +222,10 @@
 
 <script setup>
 import { ref, computed, onMounted, nextTick, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { DocumentCopy } from '@element-plus/icons-vue'
 import api from '../api'
-import { PLUS_STATUSES, ERROR_STATUSES, aliveStatusType, aliveStatusLabel, ALIVE_FILTER_OPTIONS } from '../status'
+import { PLUS_STATUSES, ERROR_STATUSES, aliveStatusType, aliveStatusLabel, ALIVE_FILTER_OPTIONS, EXECUTE_STATUS_FILTER_OPTIONS } from '../status'
 import { socketState } from '../socket'
 import { getSelectionSet, setSelectionFromRows, clearSelection } from '../selection'
 
@@ -433,6 +460,27 @@ async function startLiveness(scope) {
 async function stopLiveness() {
   try { await api.post('/liveness/stop') }
   catch (e) { ElMessage.error(`停止失败: ${e.message}`) }
+}
+
+async function copyToClipboard(text, label) {
+  try {
+    await navigator.clipboard.writeText(text)
+    ElMessage.success(`${label} 已复制`)
+  } catch {
+    ElMessage.error('复制失败（浏览器可能阻止）')
+  }
+}
+
+async function checkAllWithConfirm() {
+  const n = accounts.value.length
+  try {
+    await ElMessageBox.confirm(
+      `将对 ${n} 个账户发起活性检测，可能耗时较长且消耗代理请求配额。继续？`,
+      '确认测活全部',
+      { type: 'warning', confirmButtonText: '开始测活', cancelButtonText: '取消' },
+    )
+  } catch { return }
+  startLiveness('all')
 }
 
 function onRowClick(row, column, event) {
