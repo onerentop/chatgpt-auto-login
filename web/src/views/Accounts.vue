@@ -50,6 +50,25 @@
         <el-tag v-if="livenessRunning" type="info" size="small" style="margin-left: 8px">
           {{ socketState.liveness.done }}/{{ socketState.liveness.total }} (✗{{ socketState.liveness.failed }})
         </el-tag>
+        <el-divider direction="vertical" />
+        <el-dropdown :disabled="selected.length === 0" @command="downloadSelectedAs" split-button size="small">
+          下载选中 ({{ selected.length }})
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="cpa">CPA 格式</el-dropdown-item>
+              <el-dropdown-item command="sub2api">Sub2API 格式</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
+        <el-dropdown @command="downloadAllAs" split-button size="small" style="margin-left:8px">
+          下载全部 (ZIP)
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="cpa">CPA 格式</el-dropdown-item>
+              <el-dropdown-item command="sub2api">Sub2API 格式</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
         <el-select v-model="aliveFilter" placeholder="活性" clearable multiple collapse-tags collapse-tags-tooltip size="small" style="width:180px;margin-left:8px">
           <el-option v-for="o in aliveFilterOptions" :key="o.value" :label="o.label" :value="o.value" />
         </el-select>
@@ -133,8 +152,10 @@
       <el-table-column label="Refresh Token" min-width="120" show-overflow-tooltip>
         <template #default="{ row }">{{ row.refresh_token ? row.refresh_token.slice(0, 20) + '...' : '-' }}</template>
       </el-table-column>
-      <el-table-column label="操作" width="140">
+      <el-table-column label="操作" width="240">
         <template #default="{ row }">
+          <el-button size="small" text type="success" :disabled="!row._hasAuth" @click.stop="downloadAuth(row.email, 'cpa')">CPA</el-button>
+          <el-button size="small" text type="primary" :disabled="!row._hasAuth" @click.stop="downloadAuth(row.email, 'sub2api')">Sub</el-button>
           <el-button size="small" text type="primary" @click="openEdit(row)">编辑</el-button>
           <el-popconfirm title="确定删除?" @confirm="del(row.email)">
             <template #reference><el-button size="small" text type="danger">删除</el-button></template>
@@ -443,6 +464,38 @@ async function delSelected() {
   }
   ElMessage.success(`删除 ${ok} 个${fail ? `，失败 ${fail} 个` : ''}`)
   load()
+}
+
+// === Download helpers (mirror Execute.vue) ===
+function downloadAuth(email, format = 'cpa') {
+  window.open(`/api/results/${encodeURIComponent(email)}/auth-file?format=${format}`)
+}
+function downloadAllAs(format) {
+  window.open(`/api/results/download-all?format=${format || 'cpa'}`)
+}
+async function downloadSelectedAs(format) {
+  const fmt = format || 'cpa'
+  const emails = selected.value.filter(r => r._hasAuth).map(r => r.email)
+  if (emails.length === 0) { ElMessage.warning('选中账号都没有 auth 文件可下载'); return }
+  try {
+    const res = await api.post('/results/download-selected', { emails, format: fmt }, { responseType: 'blob' })
+    const url = window.URL.createObjectURL(res.data)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${fmt}-selected-${emails.length}.zip`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    window.URL.revokeObjectURL(url)
+  } catch (e) {
+    let msg = '下载失败'
+    if (e?.response?.data instanceof Blob) {
+      try { msg = JSON.parse(await e.response.data.text()).error || msg } catch {}
+    } else {
+      msg = e?.response?.data?.error || e?.message || msg
+    }
+    ElMessage.error(msg)
+  }
 }
 </script>
 
