@@ -17,13 +17,17 @@
           <el-icon><User /></el-icon>
           <span>账号管理</span>
         </el-menu-item>
-        <el-menu-item index="/config">
-          <el-icon><Setting /></el-icon>
-          <span>配置设置</span>
-        </el-menu-item>
         <el-menu-item index="/execute">
           <el-icon><VideoPlay /></el-icon>
           <span>执行控制</span>
+        </el-menu-item>
+        <el-menu-item index="/results">
+          <el-icon><Document /></el-icon>
+          <span>执行结果</span>
+        </el-menu-item>
+        <el-menu-item index="/config">
+          <el-icon><Setting /></el-icon>
+          <span>配置设置</span>
         </el-menu-item>
       </el-menu>
     </el-aside>
@@ -35,7 +39,7 @@
 
 <script setup>
 import { useRoute } from 'vue-router'
-import { Monitor, User, Setting, VideoPlay } from '@element-plus/icons-vue'
+import { Monitor, User, Setting, VideoPlay, Document } from '@element-plus/icons-vue'
 
 const route = useRoute()
 </script>
