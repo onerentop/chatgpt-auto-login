@@ -53,6 +53,19 @@
       </el-col>
     </el-row>
 
+    <el-collapse v-model="logsExpanded" style="margin-bottom: 12px">
+      <el-collapse-item :title="`测活日志 (${livenessLogs.length})`" name="liveness-logs">
+        <div class="liveness-log-list">
+          <div v-for="(log, i) in livenessLogs" :key="i" :class="'log-' + log.level">
+            <span class="log-time">{{ log.timestamp.slice(11, 19) }}</span>
+            <span v-if="log.email" class="log-email">{{ log.email }}</span>
+            <span class="log-msg">{{ log.message }}</span>
+          </div>
+          <div v-if="livenessLogs.length === 0" style="color:#c0c4cc; padding: 8px;">暂无测活日志</div>
+        </div>
+      </el-collapse-item>
+    </el-collapse>
+
     <el-table ref="tableRef" :data="filteredAccounts" stripe border size="small" row-key="email" @selection-change="onSelectionChange" @row-click="onRowClick">
       <el-table-column type="selection" width="45" :reserve-selection="true" />
       <el-table-column type="index" label="#" width="50" />
@@ -113,19 +126,6 @@
         </template>
       </el-table-column>
     </el-table>
-
-    <el-collapse v-model="logsExpanded" style="margin-top: 12px">
-      <el-collapse-item :title="`测活日志 (${livenessLogs.length})`" name="liveness-logs">
-        <div class="liveness-log-list">
-          <div v-for="(log, i) in livenessLogs" :key="i" :class="'log-' + log.level">
-            <span class="log-time">{{ log.timestamp.slice(11, 19) }}</span>
-            <span v-if="log.email" class="log-email">{{ log.email }}</span>
-            <span class="log-msg">{{ log.message }}</span>
-          </div>
-          <div v-if="livenessLogs.length === 0" style="color:#c0c4cc; padding: 8px;">暂无测活日志</div>
-        </div>
-      </el-collapse-item>
-    </el-collapse>
 
     <!-- Import Dialog -->
     <el-dialog v-model="showImport" title="批量导入" width="650">
