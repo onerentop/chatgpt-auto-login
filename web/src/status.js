@@ -54,6 +54,7 @@ export function isError(status) {
 const ALIVE_TYPE_MAP = {
   plus: 'success',
   canceled: 'warning',
+  deactivated: 'danger',
   login_fail: 'danger',
   token_expired: 'danger',
   proxy_error: 'warning',
@@ -65,6 +66,7 @@ const ALIVE_TYPE_MAP = {
 const ALIVE_LABEL_MAP = {
   plus: 'Plus',
   canceled: '已取消',
+  deactivated: '已删除',
   login_fail: '登录失败',
   token_expired: 'Token过期',
   proxy_error: '代理异常',

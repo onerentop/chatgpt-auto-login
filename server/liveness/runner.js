@@ -8,7 +8,7 @@ const THROTTLE_MS = 1_000;
 const REASON_MAX = 60;
 function clipReason(s) { return String(s || '').slice(0, REASON_MAX); }
 
-const SUMMARY_KEYS = ['plus', 'canceled', 'login_fail', 'token_expired', 'proxy_error', 'network_error', 'unknown'];
+const SUMMARY_KEYS = ['plus', 'canceled', 'deactivated', 'login_fail', 'token_expired', 'proxy_error', 'network_error', 'unknown'];
 
 function emptySummary() {
   const s = {};
@@ -94,6 +94,19 @@ function createRunner({ io, statusDB, accountsDB, checker, lightLogin, codexFile
     }
 
     if (state.abortCtrl?.signal.aborted) return;
+
+    // If the execution pipeline already determined this account is
+    // OpenAI-banned (status='deactivated'), surface that as alive_status
+    // 'deactivated' even though the probe returned 401 / token_expired.
+    // A 401 on a deactivated account is just confirmation, not a separate
+    // "token problem" — let the UI show 已删除 in both dimensions.
+    try {
+      const persisted = statusDB.get(email);
+      if (persisted?.status === 'deactivated' && (result.alive_status === 'token_expired' || result.alive_status === 'login_fail')) {
+        result = { alive_status: 'deactivated', alive_reason: 'account_deactivated' };
+      }
+    } catch {}
+
     result.alive_reason = clipReason(result.alive_reason);
     statusDB.setAlive(email, result);
     state.done++;

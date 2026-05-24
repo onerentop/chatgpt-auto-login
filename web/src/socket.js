@@ -88,7 +88,7 @@ export function connectSocket() {
     const level = data.alive_status === 'plus' ? 'success'
                 : data.alive_status === 'checking' ? 'info'
                 : data.alive_status === 'canceled' ? 'warning'
-                : data.alive_status === 'token_expired' || data.alive_status === 'login_fail' ? 'error'
+                : data.alive_status === 'deactivated' || data.alive_status === 'token_expired' || data.alive_status === 'login_fail' ? 'error'
                 : 'warning'
     pushLivenessLog(data.email, level, `${data.alive_status}${data.alive_reason ? ': ' + data.alive_reason : ''}`)
   })
