@@ -67,12 +67,30 @@ export function connectSocket() {
     })
   })
 
+  function pushLivenessLog(email, level, message) {
+    socketState.logs.push({
+      timestamp: new Date().toISOString(),
+      email: email || '',
+      level,
+      message: `[liveness] ${message}`,
+    });
+    if (socketState.logs.length > 500) {
+      socketState.logs.splice(0, socketState.logs.length - 500);
+    }
+  }
+
   socket.on('liveness-status', (data) => {
     socketState.aliveStatuses[data.email] = {
       alive_status: data.alive_status,
       alive_reason: data.alive_reason || '',
       alive_checked_at: data.alive_status === 'checking' ? '' : new Date().toISOString(),
     }
+    const level = data.alive_status === 'plus' ? 'success'
+                : data.alive_status === 'checking' ? 'info'
+                : data.alive_status === 'canceled' ? 'warning'
+                : data.alive_status === 'token_expired' || data.alive_status === 'login_fail' ? 'error'
+                : 'warning'
+    pushLivenessLog(data.email, level, `${data.alive_status}${data.alive_reason ? ': ' + data.alive_reason : ''}`)
   })
 
   socket.on('liveness-progress', (data) => {
@@ -86,12 +104,7 @@ export function connectSocket() {
     socketState.liveness.running = false
     socketState.liveness.summary = data.summary || null
     const s = data.summary || {}
-    socketState.logs.push({
-      timestamp: new Date().toISOString(),
-      email: '',
-      message: `Liveness done (${Math.round((data.durationMs||0)/1000)}s): plus=${s.plus||0} canceled=${s.canceled||0} login_fail=${s.login_fail||0} token_expired=${s.token_expired||0} proxy_error=${s.proxy_error||0} network_error=${s.network_error||0}`,
-      level: 'success',
-    })
+    pushLivenessLog('', 'success', `done (${Math.round((data.durationMs||0)/1000)}s): plus=${s.plus||0} canceled=${s.canceled||0} login_fail=${s.login_fail||0} token_expired=${s.token_expired||0} proxy_error=${s.proxy_error||0} network_error=${s.network_error||0}`)
   })
 
   socket.connect()

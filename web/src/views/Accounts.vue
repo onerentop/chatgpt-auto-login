@@ -114,6 +114,19 @@
       </el-table-column>
     </el-table>
 
+    <el-collapse v-model="logsExpanded" style="margin-top: 12px">
+      <el-collapse-item :title="`测活日志 (${livenessLogs.length})`" name="liveness-logs">
+        <div class="liveness-log-list">
+          <div v-for="(log, i) in livenessLogs" :key="i" :class="'log-' + log.level">
+            <span class="log-time">{{ log.timestamp.slice(11, 19) }}</span>
+            <span v-if="log.email" class="log-email">{{ log.email }}</span>
+            <span class="log-msg">{{ log.message }}</span>
+          </div>
+          <div v-if="livenessLogs.length === 0" style="color:#c0c4cc; padding: 8px;">暂无测活日志</div>
+        </div>
+      </el-collapse-item>
+    </el-collapse>
+
     <!-- Import Dialog -->
     <el-dialog v-model="showImport" title="批量导入" width="650">
       <p style="color:#909399;margin-bottom:12px">每行一个账号，格式：<code>邮箱----密码----2FA/ClientID----RefreshToken</code><br>空白符会自动去除</p>
@@ -158,6 +171,10 @@ const planFilter = ref('')
 const authFilter = ref('')
 const aliveFilter = ref('')
 const aliveFilterOptions = ALIVE_FILTER_OPTIONS
+const logsExpanded = ref([])
+const livenessLogs = computed(() =>
+  socketState.logs.filter(l => l.message?.startsWith('[liveness]')).slice(-200)
+)
 const filteredAccounts = computed(() => {
   const q = search.value.toLowerCase()
   return accounts.value.filter(a => {
@@ -204,6 +221,13 @@ async function load() {
   } catch {}
 }
 onMounted(load)
+// Auto-expand log panel when liveness starts; user controls collapsing afterwards.
+watch(() => socketState.liveness.running, (now) => {
+  if (now && !logsExpanded.value.includes('liveness-logs')) {
+    logsExpanded.value = ['liveness-logs']
+  }
+})
+
 watch(() => socketState.aliveStatuses, (val) => {
   for (const row of accounts.value) {
     const s = val[row.email]
@@ -347,4 +371,13 @@ async function delSelected() {
 :deep(.el-table__body tr) {
   cursor: pointer;
 }
+.liveness-log-list { max-height: 300px; overflow-y: auto; font-family: monospace; font-size: 12px; padding: 4px 8px; background: #fafafa; border-radius: 4px; }
+.liveness-log-list > div { padding: 2px 0; }
+.log-time { color: #909399; margin-right: 8px; }
+.log-email { color: #409EFF; margin-right: 8px; }
+.log-msg { color: #303133; }
+.log-success .log-msg { color: #67C23A; }
+.log-warning .log-msg { color: #E6A23C; }
+.log-error .log-msg { color: #F56C6C; }
+.log-info .log-msg { color: #909399; }
 </style>

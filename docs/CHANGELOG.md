@@ -1,5 +1,25 @@
 # Changelog
 
+## v2.28.0 — 2026-05-24
+
+### Liveness Probe Cloudflare Bypass + 日志面板
+
+v2.26 测活在 2026-05-24 实测中发现 **100% 失败**：Node `globalThis.fetch` 调 `/accounts/check` 被 Cloudflare 的 TLS 指纹检测一律拦截返 403，即便走 :7890 主代理也无法绕过（验证 commit `7b65000` 的 `HttpsProxyAgent + https.request` 路径仍中招）。同时用户反馈"测活看不到日志"。
+
+**核心改动：**
+
+- **Python curl_cffi probe**：新建 `chatgpt_register/liveness_probe.py`，套路对照 `stripe_init.py` / `protocol_register.py` / `checkout_link.py`，spawn 出来用 `impersonate='chrome131'` 模拟真实浏览器 TLS 指纹过 Cloudflare。
+- **`server/liveness/checker.js` 重构**：删 v2.26 的 `globalThis.fetch` 和 `7b65000` 的 `_requestViaProxy`；改 `spawn('py', ['-3', 'liveness_probe.py'])`，套路对照 `server/stripe-verify.js`。`decodeJwtExp` / `mapPlanType` / `extractPlanType` 保留导出。
+- **Cloudflare 403 区分账号 403**：Python 端扫返回体里的 `__cf_chl` / `cf-mitigated` / `Cloudflare` 标记。Cloudflare → `alive_status='proxy_error'`（网络层、提示切节点）；账号 → `alive_status='login_fail'`（账号问题）。
+- **测试改造**：11 → 14 测试。5 个纯 helper unit 保留；9 个 probe 测试从 `fetchImpl` 注入改成 `spawnImpl` 注入（fakeChild EventEmitter）；新增包括 spawn ENOENT、stdout unparsable、cloudflare-vs-account 403 discriminator。
+- **Accounts 页底部折叠日志面板**：表格下方加 `<el-collapse>`，订阅 `socketState.logs` 过滤 `[liveness]` 前缀。测活启动时自动展开、结束后保留展开供回看。`socket.js` 3 个 liveness handler 各加一条 push（liveness-progress 不打日志避免 flood）。
+
+**预期效果：** 测活通过率从 0% 回到 ~100%（JWT 未过期 + 账号是 Plus 的真实账号），用户能实时看到逐账号 `[liveness] checking → plus: check ok` 日志流。
+
+**Spec / Plan**：`docs/superpowers/specs/2026-05-24-liveness-python-probe-design.md` + `docs/superpowers/plans/2026-05-24-liveness-python-probe.md`。
+
+**测试**：149 个测试通过。
+
 ## v2.27.0 — 2026-05-24
 
 ### Skip Phase 1 on Access-Token Cache Hit
