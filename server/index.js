@@ -122,3 +122,33 @@ initDB().then(() => {
 
 process.on('unhandledRejection', (err) => console.error('Unhandled rejection:', err));
 process.on('uncaughtException', (err) => console.error('Uncaught exception:', err));
+
+// Graceful shutdown — flush log buffers and the async save queue before
+// exiting. Without this, Ctrl+C can lose the trailing 0-9 log entries that
+// haven't crossed the 10-line save threshold yet.
+let _shuttingDown = false;
+async function gracefulShutdown(signal) {
+  if (_shuttingDown) return;
+  _shuttingDown = true;
+  console.log(`[shutdown] received ${signal}, flushing…`);
+  // Hard timeout: never block exit longer than 5s on the queue. If the
+  // disk is wedged, we'd rather lose the last write than hang forever.
+  const HARD_DEADLINE_MS = 5000;
+  const timer = setTimeout(() => {
+    console.warn('[shutdown] flush did not complete within 5s — forcing exit');
+    process.exit(1);
+  }, HARD_DEADLINE_MS);
+  timer.unref();
+  try {
+    const db = require('./db');
+    if (db.logsDB?.flush) db.logsDB.flush();
+    if (db.livenessLogsDB?.clear) {} // intentionally not clearing on shutdown
+    if (db.save?.flush) await db.save.flush();
+  } catch (e) {
+    console.error('[shutdown] flush failed:', e.message);
+  }
+  clearTimeout(timer);
+  process.exit(0);
+}
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
