@@ -1,5 +1,29 @@
 # Changelog
 
+## v2.30.0 — 2026-05-24
+
+### Liveness Log Partition + network_error Auto-Retry
+
+**Part A — UI 日志面板拆分**
+
+- 单一 `<el-collapse>` 拆成两个：
+  - **旧日志** (默认折叠) — 来自 DB 的最近 200 条历史，跨页面刷新保留
+  - **实时日志** (默认展开) — 本次会话 socket 推送的 500 条，自动滚动到底部
+- `socketState.logs` 每条 entry 加 `isHistorical: boolean` 字段。`loadLivenessLogs` (onMounted) 设 true；`pushLivenessLog` (socket realtime) 默认 false。
+- `watch(newLogs.length)` + `nextTick` + `scrollTop = scrollHeight` 实现自动滚动。无手动滚动暂停检测——KISS。
+
+**Part B — network_error 自动重试**
+
+- `runner.dispatchOne` 重构：抽 `dispatchOnceInner(email, account, onLog, signal)` 单次尝试，外层 3-attempt 循环每次间隔 2s。
+- 重试触发：`alive_status === 'network_error'`（含 HTTP 429/5xx / probe timeout / curl exception / spawn ENOENT / stdout 不可解析 / unexpected）。
+- 重试进度通过 `onLog('warning', ...)` 流到 UI 面板和 DB（`network_error: ... — retrying 1/3 in 2s`）。
+- `abortableSleep` 让 `await sleep()` 在 `abortCtrl.signal` abort 时立刻 resolve，"停止测活" 秒级响应。
+- Worst case 耗时：3 × 12s probe + 2 × 2s delay = **~40s/账号**（仅 network_error 触发；正常 plus 单次 1-3s 不受影响）。
+
+**测试**：168 tests pass — runner +3 (3-attempt 重试 / 1-attempt 重试成功 / plus 不重试) on 165 baseline。
+
+**Spec / Plan**：`docs/superpowers/specs/2026-05-24-liveness-log-partition-and-retry-design.md` + `docs/superpowers/plans/2026-05-24-liveness-log-partition-and-retry.md`。
+
 ## v2.29.0 — 2026-05-24
 
 ### Liveness Deactivated Detection + Search UX Overhaul
