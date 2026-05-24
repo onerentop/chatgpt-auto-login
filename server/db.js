@@ -40,7 +40,9 @@ async function initDB() {
       last_access_token TEXT DEFAULT '',
       last_session_json TEXT DEFAULT '',
       last_access_token_at TEXT DEFAULT '',
-      updated_at TEXT DEFAULT (datetime('now'))
+      updated_at TEXT DEFAULT (datetime('now')),
+      proxy_node TEXT DEFAULT '',
+      exit_ip TEXT DEFAULT ''
     );
     CREATE TABLE IF NOT EXISTS execution_logs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -108,6 +110,12 @@ async function initDB() {
   }
   if (!existingCols.has('last_access_token_at')) {
     db.run("ALTER TABLE account_status ADD COLUMN last_access_token_at TEXT DEFAULT ''");
+  }
+  if (!existingCols.has('proxy_node')) {
+    db.run("ALTER TABLE account_status ADD COLUMN proxy_node TEXT DEFAULT ''");
+  }
+  if (!existingCols.has('exit_ip')) {
+    db.run("ALTER TABLE account_status ADD COLUMN exit_ip TEXT DEFAULT ''");
   }
 
   // One-time migration of old status values
@@ -196,17 +204,25 @@ const statusDB = {
     const last_access_token_at = ('accessToken' in incoming && incoming.accessToken)
       ? new Date().toISOString()
       : (existing.last_access_token_at || '');
+    // proxy_node / exit_ip — only override when caller explicitly passed the key
+    const proxy_node = 'proxyNode' in incoming
+      ? (incoming.proxyNode || '')
+      : (existing.proxy_node || '');
+    const exit_ip = 'exitIp' in incoming
+      ? (incoming.exitIp || '')
+      : (existing.exit_ip || '');
     const existingAlive = {
       alive_status: existing.alive_status || 'unknown',
       alive_checked_at: existing.alive_checked_at || '',
       alive_reason: existing.alive_reason || '',
     };
     db.run(
-      "INSERT OR REPLACE INTO account_status (email, status, phase, progress, reason, has_auth_file, payment_link, payment_link_pk, payment_link_at, alive_status, alive_checked_at, alive_reason, last_access_token, last_session_json, last_access_token_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))",
+      "INSERT OR REPLACE INTO account_status (email, status, phase, progress, reason, has_auth_file, payment_link, payment_link_pk, payment_link_at, alive_status, alive_checked_at, alive_reason, last_access_token, last_session_json, last_access_token_at, proxy_node, exit_ip, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))",
       [email, status, phase, progress || '', reason || '', has_auth_file ? 1 : 0,
        payment_link, payment_link_pk, payment_link_at,
        existingAlive.alive_status, existingAlive.alive_checked_at, existingAlive.alive_reason,
-       last_access_token, last_session_json, last_access_token_at]
+       last_access_token, last_session_json, last_access_token_at,
+       proxy_node, exit_ip]
     );
     save();
   },
@@ -226,13 +242,14 @@ const statusDB = {
     const alive_reason = ('alive_reason' in incoming) ? (incoming.alive_reason || '') : (existing.alive_reason || '');
     const alive_checked_at = new Date().toISOString();
     db.run(
-      "INSERT OR REPLACE INTO account_status (email, status, phase, progress, reason, has_auth_file, payment_link, payment_link_pk, payment_link_at, alive_status, alive_checked_at, alive_reason, last_access_token, last_session_json, last_access_token_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))",
+      "INSERT OR REPLACE INTO account_status (email, status, phase, progress, reason, has_auth_file, payment_link, payment_link_pk, payment_link_at, alive_status, alive_checked_at, alive_reason, last_access_token, last_session_json, last_access_token_at, proxy_node, exit_ip, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))",
       [email,
        existing.status || 'idle', existing.phase || '', existing.progress || '', existing.reason || '',
        existing.has_auth_file ? 1 : 0,
        existing.payment_link || '', existing.payment_link_pk || '', existing.payment_link_at || '',
        alive_status, alive_checked_at, alive_reason,
-       existing.last_access_token || '', existing.last_session_json || '', existing.last_access_token_at || '']
+       existing.last_access_token || '', existing.last_session_json || '', existing.last_access_token_at || '',
+       existing.proxy_node || '', existing.exit_ip || '']
     );
     save();
   },
