@@ -10,18 +10,12 @@
           @change="loadResults"
         >
           <el-option label="全部" value="" />
-          <el-option label="Plus(有RT)" value="plus" />
-          <el-option label="Plus(无RT)" value="plus_no_rt" />
-          <el-option label="无链接" value="no_link" />
-          <el-option label="错误" value="error" />
-          <el-option label="已停止" value="aborted" />
-          <el-option label="JP节点不可用" value="no_jp_proxy" />
-          <el-option label="无0元资格" value="no_promo" />
-          <el-option label="Stripe验证失败" value="verify_error" />
-          <el-option label="已删除" value="deactivated" />
-          <el-option label="已取消" value="canceled" />
-          <el-option label="Token失效" value="token_expired" />
-          <el-option label="登录失败" value="login_fail" />
+          <el-option
+            v-for="opt in EXECUTE_STATUS_FILTER_OPTIONS"
+            :key="opt.value"
+            :label="opt.label"
+            :value="opt.value"
+          />
         </el-select>
         <el-button @click="handleDownloadAll">下载全部 ZIP</el-button>
         <el-button @click="loadResults">刷新</el-button>
@@ -32,7 +26,7 @@
       <el-table-column prop="email" label="邮箱" min-width="220" />
       <el-table-column prop="status" label="状态" width="120">
         <template #default="{ row }">
-          <el-tag :type="statusType(row.status)">{{ row.status }}</el-tag>
+          <el-tag :type="statusType(row.status)">{{ statusLabel(row.status) }}</el-tag>
         </template>
       </el-table-column>
       <el-table-column label="Auth 文件" width="140">
@@ -69,7 +63,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import api from '../api'
-import { statusType } from '../status'
+import { statusType, statusLabel, EXECUTE_STATUS_FILTER_OPTIONS } from '../status'
 
 const results = ref([])
 const statusFilter = ref('')

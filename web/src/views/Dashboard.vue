@@ -55,7 +55,7 @@
         <el-table-column prop="email" label="邮箱" min-width="220" />
         <el-table-column prop="status" label="状态" width="120">
           <template #default="{ row }">
-            <el-tag :type="statusType(row.status)" size="small">{{ row.status }}</el-tag>
+            <el-tag :type="statusType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column prop="phase" label="阶段" width="120" />
@@ -74,7 +74,7 @@
 <script setup>
 import { ref, reactive, onMounted } from 'vue'
 import api from '../api'
-import { statusType, isPlus } from '../status'
+import { statusType, statusLabel, isPlus } from '../status'
 
 const stats = reactive({ total: 0, plus: 0, success: 0, error: 0, noJpProxy: 0, noPromo: 0, verifyError: 0 })
 const results = ref([])
