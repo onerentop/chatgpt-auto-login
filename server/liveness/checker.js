@@ -1,45 +1,25 @@
 // server/liveness/checker.js
-// Probes a ChatGPT access_token against /backend-api/accounts/check
-// through the main proxy and decides alive_status.
+// Probes a ChatGPT access_token against /backend-api/accounts/check via the
+// Python curl_cffi sub-process (chatgpt_register/liveness_probe.py).
+//
+// Why Python? Cloudflare's TLS fingerprint check blocks Node's https.request
+// regardless of proxy. curl_cffi with impersonate='chrome131' is the same
+// approach used by stripe_init.py / protocol_register.py / checkout_link.py
+// everywhere else in this project.
 
-const DEFAULT_PROXY = 'http://127.0.0.1:7890';
-const CHECK_URL = 'https://chatgpt.com/backend-api/accounts/check/v4-2023-04-27';
-const FETCH_TIMEOUT_MS = 10_000;
-
-// Node 22's built-in fetch (undici) uses a global dispatcher that ignores
-// HTTP_PROXY env vars. To actually route through the main :7890 proxy we have
-// to construct a request manually with HttpsProxyAgent — same pattern used in
-// server/discord-gateway.js (with the same UND_ERR_INVALID_ARG comment).
-function _requestViaProxy(url, { method, headers, signal, proxyUrl }) {
-  const https = require('https');
-  const { URL } = require('url');
-  const { HttpsProxyAgent } = require('https-proxy-agent');
-  const u = new URL(url);
-  const agent = new HttpsProxyAgent(proxyUrl);
-  return new Promise((resolve, reject) => {
-    const req = https.request({
-      method, agent,
-      hostname: u.hostname, port: u.port || 443,
-      path: u.pathname + u.search, headers,
-    }, (res) => {
-      const chunks = [];
-      res.on('data', (c) => chunks.push(c));
-      res.on('end', () => {
-        const text = Buffer.concat(chunks).toString('utf-8');
-        resolve({
-          status: res.statusCode,
-          ok: res.statusCode >= 200 && res.statusCode < 300,
-          json: async () => JSON.parse(text),
-          text: async () => text,
-        });
-      });
-      res.on('error', reject);
-    });
-    if (signal) signal.addEventListener('abort', () => req.destroy(new Error('aborted')), { once: true });
-    req.on('error', reject);
-    req.end();
-  });
+const { spawn } = require('child_process');
+const path = require('path');
+let proxyMgr;  // lazy require to avoid cycle at module load
+function getProxyUrl() {
+  try {
+    proxyMgr = proxyMgr || require('../proxy');
+    return proxyMgr.getProxyUrl() || '';
+  } catch { return ''; }
 }
+
+const SCRIPT = path.join(__dirname, '..', '..', 'chatgpt_register', 'liveness_probe.py');
+const FETCH_TIMEOUT_MS = 10_000;
+const SPAWN_TIMEOUT_MS = 12_000;  // 10s request + 2s startup grace
 
 function decodeJwtExp(jwt) {
   try {
@@ -67,62 +47,100 @@ function extractPlanType(json) {
   );
 }
 
-async function probe(accessToken, opts = {}) {
-  const { signal, fetchImpl, proxyUrl = DEFAULT_PROXY } = opts;
+// Translate Python terminal object → alive_status/alive_reason per spec §3.3.
+function mapTerminal(parsed) {
+  if (parsed.status === 'ok' && parsed.http === 200) {
+    return mapPlanType(parsed.plan_type || 'unknown');
+  }
+  const http = parsed.http;
+  const reason = parsed.reason || '';
+  if (http === 401) return { alive_status: 'token_expired', alive_reason: 'check 401' };
+  if (http === 403 && /cloudflare/i.test(reason)) {
+    return { alive_status: 'proxy_error', alive_reason: 'cloudflare blocked' };
+  }
+  if (http === 403) return { alive_status: 'login_fail', alive_reason: 'check 403 forbidden' };
+  if (http === 429) return { alive_status: 'network_error', alive_reason: 'check 429' };
+  if (http >= 500) return { alive_status: 'network_error', alive_reason: `check ${http}` };
+  if (http === 0 && /exception/i.test(reason)) {
+    return { alive_status: 'network_error', alive_reason: reason.slice(0, 60) };
+  }
+  return { alive_status: 'network_error', alive_reason: reason.slice(0, 60) || `check ${http}` };
+}
 
+async function probe(accessToken, opts = {}) {
+  const { signal, spawnImpl, proxyUrl } = opts;
+
+  // Local JWT exp check — short-circuit expired tokens (no Python spawn).
   const exp = decodeJwtExp(accessToken);
   if (exp && exp * 1000 < Date.now()) {
     return { alive_status: 'token_expired', alive_reason: 'jwt expired' };
   }
 
-  // Production path goes through HttpsProxyAgent to the main :7890 proxy
-  // (account was registered through that IP — direct fetch from a CN IP gets
-  // a Cloudflare 403). Tests inject fetchImpl to skip the proxy.
-  const ctl = new AbortController();
-  const timer = setTimeout(() => ctl.abort(new Error('check timeout')), FETCH_TIMEOUT_MS);
-  if (signal) signal.addEventListener('abort', () => ctl.abort(signal.reason), { once: true });
+  const doSpawn = spawnImpl || ((cmd, args, options) => spawn(cmd, args, options));
+  const effectiveProxy = (proxyUrl !== undefined) ? proxyUrl : getProxyUrl();
 
-  let res;
-  try {
-    if (fetchImpl) {
-      res = await fetchImpl(CHECK_URL, {
-        method: 'GET',
-        headers: { Authorization: `Bearer ${accessToken}`, 'User-Agent': 'Mozilla/5.0' },
-        signal: ctl.signal,
-      });
-    } else {
-      res = await _requestViaProxy(CHECK_URL, {
-        method: 'GET',
-        headers: { Authorization: `Bearer ${accessToken}`, 'User-Agent': 'Mozilla/5.0' },
-        signal: ctl.signal,
-        proxyUrl,
-      });
-    }
-  } catch (e) {
-    clearTimeout(timer);
-    const code = e?.cause?.code || e?.code || '';
-    if (code === 'ECONNRESET' || code === 'ECONNREFUSED' || /reset|refused/i.test(String(e.message))) {
-      return { alive_status: 'proxy_error', alive_reason: `proxy ${code || 'reset'}` };
-    }
-    if (e?.name === 'AbortError') {
-      return { alive_status: 'network_error', alive_reason: 'check timeout' };
-    }
-    return { alive_status: 'network_error', alive_reason: `check err: ${String(e.message || e).slice(0, 40)}` };
-  }
-  clearTimeout(timer);
+  return new Promise((resolve) => {
+    let settled = false;
+    let stdoutLast = '';
+    let stderrBuf = '';
+    const py = doSpawn('py', ['-3', SCRIPT], { stdio: ['pipe', 'pipe', 'pipe'] });
 
-  if (res.status === 401) return { alive_status: 'token_expired', alive_reason: 'check 401' };
-  if (res.status === 403) return { alive_status: 'login_fail', alive_reason: 'check 403 forbidden' };
-  if (res.status === 429) return { alive_status: 'network_error', alive_reason: 'check 429' };
-  if (res.status >= 500) return { alive_status: 'network_error', alive_reason: `check ${res.status}` };
-  if (!res.ok) return { alive_status: 'network_error', alive_reason: `check ${res.status}` };
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      try { py.kill(); } catch {}
+      resolve({ alive_status: 'network_error', alive_reason: 'probe timeout' });
+    }, SPAWN_TIMEOUT_MS);
 
-  let body;
-  try { body = await res.json(); } catch { body = null; }
-  if (!body) return { alive_status: 'network_error', alive_reason: 'check schema mismatch' };
+    if (signal) signal.addEventListener('abort', () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try { py.kill(); } catch {}
+      resolve({ alive_status: 'network_error', alive_reason: 'aborted' });
+    }, { once: true });
 
-  const planType = extractPlanType(body);
-  return mapPlanType(planType);
+    py.stdout.on('data', (data) => {
+      for (const line of data.toString().split('\n').filter(l => l.trim())) {
+        try {
+          const p = JSON.parse(line);
+          if (p.log) console.log(p.log);
+          else stdoutLast = line;
+        } catch {
+          stdoutLast = line;
+        }
+      }
+    });
+    py.stderr.on('data', (data) => { stderrBuf += data.toString(); });
+
+    py.on('error', (e) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({ alive_status: 'network_error', alive_reason: `spawn error: ${(e.code || e.message || '').toString().slice(0, 40)}` });
+    });
+
+    py.on('close', () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      let parsed;
+      try { parsed = JSON.parse(stdoutLast); }
+      catch {
+        resolve({ alive_status: 'network_error', alive_reason: `probe unparsable: ${stderrBuf.slice(-60).trim()}` });
+        return;
+      }
+      resolve(mapTerminal(parsed));
+    });
+
+    const stdinPayload = JSON.stringify({
+      access_token: accessToken,
+      proxy_url: effectiveProxy || null,
+      impersonate: 'chrome131',
+      timeout_ms: FETCH_TIMEOUT_MS,
+    });
+    try { py.stdin.write(stdinPayload); py.stdin.end(); } catch {}
+  });
 }
 
-module.exports = { probe, decodeJwtExp, mapPlanType, extractPlanType };
+module.exports = { probe, decodeJwtExp, mapPlanType, extractPlanType, mapTerminal };
