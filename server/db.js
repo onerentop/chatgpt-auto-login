@@ -60,6 +60,14 @@ async function initDB() {
       PRIMARY KEY (tag, channel)
     );
     CREATE INDEX IF NOT EXISTS idx_proxy_blacklist_expires ON proxy_blacklist(expires_at);
+    CREATE TABLE IF NOT EXISTS liveness_logs (
+      id        INTEGER PRIMARY KEY AUTOINCREMENT,
+      timestamp TEXT NOT NULL,
+      email     TEXT DEFAULT '',
+      level     TEXT DEFAULT 'info',
+      message   TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_liveness_logs_id_desc ON liveness_logs(id DESC);
   `);
 
   // Wire blacklist persistence module to the live DB
@@ -256,6 +264,33 @@ const logsDB = {
   cleanup() { db.run("DELETE FROM execution_logs WHERE id NOT IN (SELECT id FROM execution_logs ORDER BY id DESC LIMIT 5000)"); save(); },
 };
 
+let _livenessLogWriteCount = 0;
+const LIVENESS_LOGS_MAX = 5000;
+const livenessLogsDB = {
+  add({ email, level, message, timestamp }) {
+    db.run("INSERT INTO liveness_logs (timestamp, email, level, message) VALUES (?,?,?,?)",
+      [timestamp || new Date().toISOString(), email || '', level || 'info', message || '']);
+    if (++_livenessLogWriteCount % 20 === 0) {
+      db.run(`DELETE FROM liveness_logs WHERE id NOT IN (SELECT id FROM liveness_logs ORDER BY id DESC LIMIT ${LIVENESS_LOGS_MAX})`);
+      save();
+    } else if (_livenessLogWriteCount % 5 === 0) {
+      save();  // periodic disk flush — every 5 entries
+    }
+  },
+  recent(limit = 200) {
+    const lim = Math.max(1, Math.min(Number(limit) || 200, 1000));
+    const results = [];
+    const stmt = db.prepare(`SELECT timestamp, email, level, message FROM liveness_logs ORDER BY id DESC LIMIT ${lim}`);
+    while (stmt.step()) results.push(stmt.getAsObject());
+    stmt.free();
+    return results.reverse();  // chronological order for UI
+  },
+  clear() {
+    db.run("DELETE FROM liveness_logs");
+    save();
+  },
+};
+
 // Map a sql.js exec() result to an array of objects using column names.
 // Robust to schema changes (column reorder / new columns).
 function mapRows(result) {
@@ -268,4 +303,4 @@ function mapRows(result) {
   });
 }
 
-module.exports = { initDB, accountsDB, statusDB, logsDB, save };
+module.exports = { initDB, accountsDB, statusDB, logsDB, livenessLogsDB, save };

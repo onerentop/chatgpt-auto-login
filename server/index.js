@@ -33,7 +33,7 @@ initDB().then(() => {
   const checker = require('./liveness/checker');
   const codexFile = require('./liveness/codex-file');
   const { lightLogin } = require('./liveness/light-login');
-  const { accountsDB, statusDB } = require('./db');
+  const { accountsDB, statusDB, livenessLogsDB } = require('./db');
   const fs = require('fs');
 
   function readProtocolMode() {
@@ -67,6 +67,7 @@ initDB().then(() => {
     }),
     codexFile,
     config: { get protocolMode() { return readProtocolMode(); } },
+    livenessLogsDB,
   });
 
   app.use('/api/accounts', accountsRoutes);
@@ -74,7 +75,7 @@ initDB().then(() => {
   app.use('/api/execute', executeRoutes(io));
   app.use('/api/results', resultsRoutes);
   app.use('/api/proxy', proxyRoutes);
-  app.use('/api/liveness', livenessRoutes(livenessRunner, accountsDB));
+  app.use('/api/liveness', livenessRoutes(livenessRunner, accountsDB, livenessLogsDB));
 
   const distPath = path.join(__dirname, '..', 'web', 'dist');
   app.use(express.static(distPath));

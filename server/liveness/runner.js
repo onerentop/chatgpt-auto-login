@@ -16,7 +16,7 @@ function emptySummary() {
   return s;
 }
 
-function createRunner({ io, statusDB, accountsDB, checker, lightLogin, codexFile, config }) {
+function createRunner({ io, statusDB, accountsDB, checker, lightLogin, codexFile, config, livenessLogsDB }) {
   let state = {
     running: false,
     batchId: null,
@@ -50,7 +50,11 @@ function createRunner({ io, statusDB, accountsDB, checker, lightLogin, codexFile
       const tok = existing?.access_token || '';
 
       const onLog = (level, message) => {
-        io.emit('liveness-log', { email, level: level || 'info', message });
+        const lvl = level || 'info';
+        io.emit('liveness-log', { email, level: lvl, message });
+        // Persist to DB so the panel survives a page refresh. Synchronous +
+        // best-effort: a write failure must not interrupt the probe flow.
+        try { livenessLogsDB?.add({ email, level: lvl, message }); } catch {}
       };
 
       let probeRes = null;

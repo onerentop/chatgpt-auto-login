@@ -247,7 +247,30 @@ async function load() {
     restoreSelection()
   } catch {}
 }
-onMounted(load)
+// Hydrate the liveness log panel from DB so panel survives a page refresh.
+// Backend persists every onLog call from runner.dispatchOne; we replay the
+// last 200 entries here in chronological order. Avoid duplicating entries
+// that are already in socketState.logs (e.g. if connectSocket pushed a few
+// before this load fires) by checking timestamps already present.
+async function loadLivenessLogs() {
+  try {
+    const r = await api.get('/liveness/logs?limit=200')
+    const existing = new Set(socketState.logs.filter(l => l.source === 'liveness').map(l => l.timestamp + '|' + l.message))
+    for (const log of (r.data || [])) {
+      const key = log.timestamp + '|' + log.message
+      if (existing.has(key)) continue
+      socketState.logs.push({
+        timestamp: log.timestamp,
+        email: log.email || '',
+        level: log.level || 'info',
+        message: (log.message?.startsWith('[') ? log.message : `[liveness] ${log.message}`),
+        source: 'liveness',
+      })
+    }
+    if (socketState.logs.length > 500) socketState.logs.splice(0, socketState.logs.length - 500)
+  } catch {}
+}
+onMounted(() => { load(); loadLivenessLogs() })
 // Auto-expand log panel when liveness starts; user controls collapsing afterwards.
 watch(() => socketState.liveness.running, (now) => {
   if (now && !logsExpanded.value.includes('liveness-logs')) {

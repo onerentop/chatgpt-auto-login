@@ -5,7 +5,7 @@
 
 const express = require('express');
 
-module.exports = function livenessRoutes(runner, accountsDB) {
+module.exports = function livenessRoutes(runner, accountsDB, livenessLogsDB) {
   const router = express.Router();
 
   router.post('/start', (req, res) => {
@@ -27,6 +27,19 @@ module.exports = function livenessRoutes(runner, accountsDB) {
 
   router.get('/status', (req, res) => {
     res.json(runner.status());
+  });
+
+  // Returns the last N persisted liveness logs in chronological order so the
+  // UI panel can hydrate immediately on page load (otherwise the panel would
+  // be empty after refresh — live socket events only fill new entries).
+  router.get('/logs', (req, res) => {
+    if (!livenessLogsDB) return res.json([]);
+    const limit = Math.max(1, Math.min(Number(req.query.limit) || 200, 1000));
+    try {
+      res.json(livenessLogsDB.recent(limit));
+    } catch (e) {
+      res.status(500).json({ error: String(e.message || e) });
+    }
   });
 
   return router;
