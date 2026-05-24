@@ -1,5 +1,30 @@
 # Changelog
 
+## v2.26.0 — 2026-05-24
+
+### Account Liveness Check (Phase A — Browser Mode)
+
+Accounts 页加 "测活选中 / 测活全部" 顶部按钮，对账号批量调 `/backend-api/accounts/check` 判 Plus 订阅是否还在 + access_token 是否还能用。本地 JWT 过期或返 401 时自动密码 + OTP 重登拿 `/api/auth/session` 的 access_token、手工拼装 `cpa-auth/codex-{email}.json`，**不走** PKCE。
+
+**核心改动：**
+
+- **DB schema**：`account_status` 加 3 列 `alive_status / alive_checked_at / alive_reason`，PRAGMA-gated ALTER 防御性迁移存量库。新 `statusDB.setAlive` / `clearAlive` 与 `statusDB.set` 同样的 merge-aware 不变式 — 测活写入绝不污染 `status` / `payment_link*` 列。
+- **独立模块** `server/liveness/`：4 个核心模块（`checker.js` / `light-login.js` / `codex-file.js` / `runner.js`）+ `server/routes/liveness.js`。runner 3 并发 + 1s 节流，跟 `PipelineEngine` / `ProtocolEngine` 完全解耦、与主流水线可并行。
+- **Lazy hybrid 流程**：先用现存 access_token 调 `/backend-api/accounts/check`；2xx 直接判 plan_type；返 401 或本地 JWT 过期才走 `lightLogin` 重登拿新 token、覆写 codex-{email}.json、再调 check。
+- **8 种 alive_status**：`plus / canceled / login_fail / token_expired / proxy_error / network_error / unknown / checking`，与执行流水线 status 完全独立的维度。
+- **UI**：Accounts.vue 顶部 toolbar + 活性 / 上次测活 列 + 活性筛选下拉。Socket.IO 三事件 `liveness-status / liveness-progress / liveness-complete` 通过 `socketState` 推送，watch 桥接到每行 `_aliveStatus / _aliveReason / _aliveCheckedAt`。
+- **不动 sub2api**：与 `utils.saveCPAAuthFile` 不同，`server/liveness/codex-file.js` **只** 写 `cpa-auth/codex-{email}.json`，sub2api 文件由 sub2api 服务自己处理。grep 验证：`server/liveness/*.js` 源码零提及 sub2api。
+
+**端到端验证：**
+
+- **141 个 tests passing**（既有 96 + 6 payment-link + 5 db-alive + 11 checker + 7 codex-file + 9 light-login + 8 runner + 5 routes-liveness = 141；超 spec §9.1 写的 35 因 mapPlanType / sanitize / protocolMode 等子单元拆开单测）。
+- **关键不变式 verified**：`server/liveness/codex-file.js` 源码 0 处 `sub2api` write；db `setAlive` 不污染 `status` / `payment_link*` 通过 db-alive.test.js 第 3 例锁。
+- **Spec / Plan**：`docs/superpowers/specs/2026-05-24-account-liveness-check-design.md` + `docs/superpowers/plans/2026-05-24-account-liveness-check.md`。
+
+**Phase B 待办：**
+
+协议模式 light-login（`config.protocolMode=true` 时的密码+OTP 重登）—— 现在协议模式只能 check 未过期 token，需重登的账号标 `alive_status='login_fail', reason='liveness not yet supported in protocol mode'`。后续单独立 spec 处理 `chatgpt_register/liveness_login.py` 实现。
+
 ## v2.21.0 — 2026-05-24
 
 ### Main Proxy Node Whitelist
