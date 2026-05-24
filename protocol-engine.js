@@ -102,6 +102,13 @@ class ProtocolEngine extends EventEmitter {
   getStatus() { return this.status; }
 
   emitStatus(data) {
+    // 从 proxyMgr 注入代理上下文。merge-aware statusDB.set 在缺失时保留旧值；
+    // 这里始终注入（除非完全取不到状态），覆盖刚发生的代理切换。
+    try {
+      const proxyMgr = require('./server/proxy');
+      const st = proxyMgr.getState();
+      data = { ...data, proxyNode: st.currentNode || '', exitIp: st.exitIp || '' };
+    } catch {}
     this.emit('account-status', data);
     try {
       const { statusDB } = require('./server/db');

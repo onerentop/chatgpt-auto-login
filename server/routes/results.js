@@ -24,6 +24,8 @@ router.get('/', (req, res) => {
       reason: s.reason,
       hasAuthFile: s.has_auth_file === 1 || fs.existsSync(path.join(CPA_AUTH_DIR, emailToAuthFilename(s.email, 'cpa'))) || fs.existsSync(path.join(CPA_AUTH_DIR, emailToAuthFilename(s.email, 'sub2api'))),
       updatedAt: s.updated_at,
+      proxyNode: s.proxy_node || '',
+      exitIp: s.exit_ip || '',
       alive_status: s.alive_status || 'unknown',
       alive_checked_at: s.alive_checked_at || '',
       alive_reason: s.alive_reason || '',
