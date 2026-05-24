@@ -13,7 +13,7 @@
 
     <!-- v2.28 #6: Row 2 — 筛选 -->
     <el-row style="margin-bottom: 8px" :gutter="8" align="middle">
-      <el-input v-model="search" placeholder="搜索 (邮箱/RT/Client ID/TOTP/密码)" clearable style="width:240px" />
+      <el-input v-model="search" placeholder="搜索 (邮箱/RT/Client ID/TOTP/密码) — 按 / 聚焦" clearable style="width:280px" data-hotkey="search" />
       <el-select v-model="statusFilter" placeholder="状态" clearable multiple collapse-tags collapse-tags-tooltip style="width:180px;margin-left:8px">
         <el-option v-for="opt in EXECUTE_STATUS_FILTER_OPTIONS" :key="opt.value" :label="opt.label" :value="opt.value" />
       </el-select>
@@ -214,7 +214,7 @@
       </el-form>
       <template #footer>
         <el-button @click="showEdit = false">取消</el-button>
-        <el-button type="primary" @click="saveEdit">{{ editMode ? '保存' : '添加' }}</el-button>
+        <el-button type="primary" data-hotkey="submit" @click="saveEdit">{{ editMode ? '保存' : '添加' }}</el-button>
       </template>
     </el-dialog>
   </div>

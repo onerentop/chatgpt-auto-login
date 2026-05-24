@@ -3,7 +3,7 @@
     <template #header>
       <div style="display: flex; justify-content: space-between; align-items: center">
         <span>配置设置</span>
-        <el-button type="primary" :loading="saving" @click="handleSave">保存配置</el-button>
+        <el-button type="primary" :loading="saving" data-hotkey="submit" @click="handleSave">保存配置</el-button>
       </div>
     </template>
 

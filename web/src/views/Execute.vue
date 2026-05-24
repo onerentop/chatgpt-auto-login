@@ -41,7 +41,7 @@
     </el-row>
     <el-row style="margin-bottom: 12px">
       <el-col :span="24">
-        <el-input v-model="search" placeholder="搜索邮箱..." clearable style="width:200px" />
+        <el-input v-model="search" placeholder="搜索邮箱… 按 / 聚焦" clearable style="width:220px" data-hotkey="search" />
         <el-select v-model="statusFilter" placeholder="状态" clearable style="width:130px;margin-left:8px">
           <el-option v-for="opt in EXECUTE_STATUS_FILTER_OPTIONS" :key="opt.value" :label="opt.label" :value="opt.value" />
         </el-select>

@@ -60,8 +60,12 @@
 import { useRoute } from 'vue-router'
 import { Monitor, User, Setting, VideoPlay, Document } from '@element-plus/icons-vue'
 import { socketState, reconnectSocket } from '../socket'
+import { useHotkeys } from '../composables/useHotkeys'
 
 const route = useRoute()
+// Global hotkeys (/, Ctrl+Enter) — registered once at the layout level so
+// each page-level view doesn't need to wire them up individually.
+useHotkeys()
 </script>
 
 <style scoped>
