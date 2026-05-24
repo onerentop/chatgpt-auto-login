@@ -1,7 +1,12 @@
 <template>
   <el-container style="height: 100vh">
     <el-aside width="200px" class="aside">
-      <div class="logo">GPT Dashboard</div>
+      <div class="logo">
+        <span>GPT Dashboard</span>
+        <el-button link size="small" style="margin-left:auto;color:#bfcbd9" :title="dark ? '切换到亮色模式' : '切换到暗色模式'" @click="toggle">
+          <el-icon><Moon v-if="!dark" /><Sunny v-else /></el-icon>
+        </el-button>
+      </div>
       <el-menu
         :default-active="route.path"
         router
@@ -58,14 +63,16 @@
 
 <script setup>
 import { useRoute } from 'vue-router'
-import { Monitor, User, Setting, VideoPlay, Document } from '@element-plus/icons-vue'
+import { Monitor, User, Setting, VideoPlay, Document, Moon, Sunny } from '@element-plus/icons-vue'
 import { socketState, reconnectSocket } from '../socket'
 import { useHotkeys } from '../composables/useHotkeys'
+import { useDarkMode } from '../composables/useDarkMode'
 
 const route = useRoute()
 // Global hotkeys (/, Ctrl+Enter) — registered once at the layout level so
 // each page-level view doesn't need to wire them up individually.
 useHotkeys()
+const { dark, toggle } = useDarkMode()
 </script>
 
 <style scoped>
@@ -78,7 +85,8 @@ useHotkeys()
   height: 60px;
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
+  padding: 0 16px;
   color: #fff;
   font-size: 18px;
   font-weight: bold;
@@ -86,7 +94,8 @@ useHotkeys()
 }
 
 .main {
-  background-color: #f0f2f5;
+  /* Use Element Plus CSS vars so background tracks dark mode toggle. */
+  background-color: var(--el-bg-color-page, #f0f2f5);
   padding: 20px;
   overflow-y: auto;
 }
