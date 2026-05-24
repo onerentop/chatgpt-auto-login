@@ -202,6 +202,42 @@ function createRunner({ io, statusDB, accountsDB, checker, lightLogin, codexFile
     } catch {}
 
     result.alive_reason = clipReason(result.alive_reason);
+
+    // v2.32.0: 把 alive 终态同步到 status 字段（Execute.vue 可见）。
+    // 测活是 ground truth —— 用户跑测活就是想刷新视图，按映射表无条件
+    // 覆盖 status；唯一例外：alive=plus 且 status=plus_no_rt 时保留
+    // plus_no_rt（plus_no_rt 含"Plus 但没拿到 refresh_token"语义，alive=plus
+    // 验证不到 RT 状态，不该降级覆盖）。
+    try {
+      const aliveToStatus = {
+        plus: 'plus',
+        deactivated: 'deactivated',
+        canceled: 'canceled',
+        token_expired: 'token_expired',
+        login_fail: 'login_fail',
+      };
+      const mapped = aliveToStatus[result.alive_status];
+      if (mapped) {
+        const persisted = statusDB.get(email);
+        const skipDowngrade = (mapped === 'plus' && persisted?.status === 'plus_no_rt');
+        if (!skipDowngrade) {
+          statusDB.set(email, {
+            status: mapped,
+            phase: '',
+            progress: 0,
+            reason: result.alive_reason || '',
+          });
+          io.emit('account-status', {
+            email,
+            status: mapped,
+            phase: '',
+            progress: 0,
+            reason: result.alive_reason || '',
+          });
+        }
+      }
+    } catch {}
+
     statusDB.setAlive(email, result);
     state.done++;
     if (result.alive_status !== 'plus') state.failed++;

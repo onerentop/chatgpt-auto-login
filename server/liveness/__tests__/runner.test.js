@@ -8,7 +8,9 @@ function mkEnv(opts = {}) {
   const dbCalls = [];
   const io = { emit: (name, payload) => events.push({ name, payload }) };
   const statusDB = {
-    setAlive: (email, data) => dbCalls.push({ email, ...data }),
+    setAlive: (email, data) => dbCalls.push({ kind: 'setAlive', email, ...data }),
+    set: opts.statusSetSpy || (() => {}),
+    get: opts.statusGetSpy || ((email) => null),
     clearAlive: () => {},
   };
   const accountsDB = {
@@ -352,4 +354,84 @@ test('runner: blacklist mid-retry triggers explicit await rotate', async () => {
   const badIdx3 = calls.findIndex(c => c.kind === 'bad' && c.reason.includes('a3'));
   assert.ok(badIdx2 < rotateIdx, 'rotate after a2 vote');
   assert.ok(rotateIdx < badIdx3, 'rotate before a3 vote (because await)');
+});
+
+test('runner: alive=plus 同步 status=plus (v2.32.0)', async () => {
+  const setCalls = [];
+  const env = mkEnv({
+    accounts: [{ email: 'sp@x.com', password: 'p', client_id: 'c', refresh_token: 'r' }],
+    checker: {
+      probe: async () => ({ alive_status: 'plus', alive_reason: 'check ok' }),
+      verifyDeactivated: async () => ({ status: 'error', reason: 'na' }),
+    },
+    codexFile: { read: async () => ({ access_token: 'tok' }), write: async () => {} },
+    statusSetSpy: (email, data) => setCalls.push({ email, ...data }),
+    statusGetSpy: () => ({ status: 'idle' }),
+  });
+  const runner = createRunner(env);
+  runner.start(['sp@x.com']);
+  await new Promise(r => setTimeout(r, 1500));
+  const c = setCalls.find(x => x.email === 'sp@x.com');
+  assert.ok(c, 'statusDB.set was called');
+  assert.strictEqual(c.status, 'plus');
+  assert.strictEqual(c.phase, '');
+  assert.strictEqual(c.progress, 0);
+});
+
+test('runner: alive=deactivated 覆盖 status (无论原值)', async () => {
+  const setCalls = [];
+  const env = mkEnv({
+    accounts: [{ email: 'sd@x.com', password: 'p', client_id: 'c', refresh_token: 'r' }],
+    checker: {
+      probe: async () => ({ alive_status: 'deactivated', alive_reason: 'account_deactivated' }),
+      verifyDeactivated: async () => ({ status: 'error', reason: 'na' }),
+    },
+    codexFile: { read: async () => ({ access_token: 'tok' }), write: async () => {} },
+    statusSetSpy: (email, data) => setCalls.push({ email, ...data }),
+    statusGetSpy: () => ({ status: 'plus' }),
+  });
+  const runner = createRunner(env);
+  runner.start(['sd@x.com']);
+  await new Promise(r => setTimeout(r, 1500));
+  const c = setCalls.find(x => x.email === 'sd@x.com');
+  assert.ok(c, 'statusDB.set was called');
+  assert.strictEqual(c.status, 'deactivated');
+});
+
+test('runner: alive=network_error 不同步 status', async () => {
+  const setCalls = [];
+  const env = mkEnv({
+    accounts: [{ email: 'sn@x.com', password: 'p', client_id: 'c', refresh_token: 'r' }],
+    checker: {
+      probe: async () => ({ alive_status: 'network_error', alive_reason: 'check 503' }),
+      verifyDeactivated: async () => ({ status: 'error', reason: 'na' }),
+    },
+    codexFile: { read: async () => ({ access_token: 'tok' }), write: async () => {} },
+    statusSetSpy: (email, data) => setCalls.push({ email, ...data }),
+    statusGetSpy: () => ({ status: 'idle' }),
+  });
+  const runner = createRunner(env);
+  runner.start(['sn@x.com']);
+  await new Promise(r => setTimeout(r, 5500));
+  const c = setCalls.find(x => x.email === 'sn@x.com');
+  assert.strictEqual(c, undefined, 'statusDB.set must NOT be called for network_error');
+});
+
+test('runner: alive=plus 不降级 plus_no_rt', async () => {
+  const setCalls = [];
+  const env = mkEnv({
+    accounts: [{ email: 'snr@x.com', password: 'p', client_id: 'c', refresh_token: 'r' }],
+    checker: {
+      probe: async () => ({ alive_status: 'plus', alive_reason: 'check ok' }),
+      verifyDeactivated: async () => ({ status: 'error', reason: 'na' }),
+    },
+    codexFile: { read: async () => ({ access_token: 'tok' }), write: async () => {} },
+    statusSetSpy: (email, data) => setCalls.push({ email, ...data }),
+    statusGetSpy: () => ({ status: 'plus_no_rt' }),
+  });
+  const runner = createRunner(env);
+  runner.start(['snr@x.com']);
+  await new Promise(r => setTimeout(r, 1500));
+  const c = setCalls.find(x => x.email === 'snr@x.com');
+  assert.strictEqual(c, undefined, 'plus 不该降级覆盖 plus_no_rt');
 });
