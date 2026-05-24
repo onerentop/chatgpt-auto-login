@@ -53,11 +53,11 @@
     <el-table-column label="操作" width="80">
       <template #default="{ row }">
         <el-button
-          v-if="row._status === 'error' || row._status === 'idle'"
+          v-if="row._status === 'idle' || isFailedToRetry(row._status)"
           size="small" text type="primary"
           :disabled="running"
-          @click="emit('row-action', { email: row.email, action: row._status === 'error' ? 'retry' : 'execute' })"
-        >{{ row._status === 'error' ? '重试' : '执行' }}</el-button>
+          @click="emit('row-action', { email: row.email, action: row._status === 'idle' ? 'execute' : 'retry' })"
+        >{{ row._status === 'idle' ? '执行' : '重试' }}</el-button>
       </template>
     </el-table-column>
     <el-table-column type="expand">
@@ -95,7 +95,7 @@
 
 <script setup>
 import { ref, watch } from 'vue'
-import { statusType, statusLabel } from '../status'
+import { statusType, statusLabel, isFailedToRetry } from '../status'
 
 const props = defineProps({
   rows: { type: Array, required: true },
