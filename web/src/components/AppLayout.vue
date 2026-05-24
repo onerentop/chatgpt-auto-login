@@ -3,7 +3,12 @@
     <el-aside width="200px" class="aside">
       <div class="logo">
         <span>GPT Dashboard</span>
-        <el-button link size="small" style="margin-left:auto;color:#bfcbd9" :title="dark ? '切换到亮色模式' : '切换到暗色模式'" @click="toggle">
+        <el-badge :value="notificationState.unread" :hidden="notificationState.unread === 0" style="margin-left:auto">
+          <el-button link size="small" style="color:#bfcbd9" title="通知中心" @click="openNotifications">
+            <el-icon><Bell /></el-icon>
+          </el-button>
+        </el-badge>
+        <el-button link size="small" style="margin-left:8px;color:#bfcbd9" :title="dark ? '切换到亮色模式' : '切换到暗色模式'" @click="toggle">
           <el-icon><Moon v-if="!dark" /><Sunny v-else /></el-icon>
         </el-button>
       </div>
@@ -58,21 +63,80 @@
       </el-alert>
       <slot />
     </el-main>
+
+    <!-- FX-13 notification center drawer -->
+    <el-drawer
+      v-model="notificationDrawerOpen"
+      title="通知中心"
+      direction="rtl"
+      size="380px"
+      :before-close="handleDrawerClose"
+    >
+      <template #header>
+        <div style="display:flex;align-items:center;width:100%">
+          <span style="font-weight:500">通知中心</span>
+          <span style="color:#909399;margin-left:8px;font-size:12px">共 {{ notificationState.items.length }} 条</span>
+          <span style="flex:1" />
+          <el-button size="small" :disabled="notificationState.items.length === 0" @click="clearAll">清空</el-button>
+        </div>
+      </template>
+      <div v-if="notificationState.items.length === 0" style="text-align:center;color:#c0c4cc;padding:32px">
+        暂无通知
+      </div>
+      <div v-else>
+        <div
+          v-for="item in notificationState.items"
+          :key="item.id"
+          style="border-bottom:1px solid var(--el-border-color-lighter);padding:8px 4px"
+        >
+          <div style="display:flex;align-items:center;gap:8px">
+            <el-tag size="small" :type="tagType(item.level)">{{ levelLabel(item.level) }}</el-tag>
+            <strong style="font-size:13px">{{ item.title || '(无标题)' }}</strong>
+            <span style="margin-left:auto;font-size:11px;color:#909399">{{ formatTime(item.ts) }}</span>
+          </div>
+          <div v-if="item.message" style="margin-top:4px;font-size:12px;color:#606266;word-break:break-all;font-family:inherit">
+            {{ item.message }}
+          </div>
+        </div>
+      </div>
+    </el-drawer>
   </el-container>
 </template>
 
 <script setup>
+import { ref } from 'vue'
 import { useRoute } from 'vue-router'
-import { Monitor, User, Setting, VideoPlay, Document, Moon, Sunny } from '@element-plus/icons-vue'
+import { Monitor, User, Setting, VideoPlay, Document, Moon, Sunny, Bell } from '@element-plus/icons-vue'
 import { socketState, reconnectSocket } from '../socket'
 import { useHotkeys } from '../composables/useHotkeys'
 import { useDarkMode } from '../composables/useDarkMode'
+import { notificationState, markAllRead, clearAll as clearAllNotifications } from '../notifications'
 
 const route = useRoute()
 // Global hotkeys (/, Ctrl+Enter) — registered once at the layout level so
 // each page-level view doesn't need to wire them up individually.
 useHotkeys()
 const { dark, toggle } = useDarkMode()
+
+const notificationDrawerOpen = ref(false)
+function openNotifications() {
+  notificationDrawerOpen.value = true
+  // Reset unread the moment the user opens the drawer; treat the drawer
+  // as the "I've seen the new ones" signal even if they immediately close it.
+  markAllRead()
+}
+function handleDrawerClose(done) { done() }
+function clearAll() { clearAllNotifications() }
+function tagType(level) {
+  return level === 'error' ? 'danger' : level === 'warning' ? 'warning' : level === 'success' ? 'success' : 'info'
+}
+function levelLabel(level) {
+  return ({ error: '错误', warning: '警告', success: '成功', info: '信息' })[level] || level
+}
+function formatTime(ts) {
+  const d = new Date(ts)
+  return d.toLocaleTimeString('zh-CN', { hour12: false }) + ' ' + d.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })
+}
 </script>
 
 <style scoped>
