@@ -1,5 +1,98 @@
 # Changelog
 
+## v2.29.0 — 2026-05-25
+
+### 代理 / 前端 UX / 横切硬化 — 4 路审计后 20 项一次性 ship
+
+不动登录/支付/JSON 凭证主管道。spec 见
+`docs/superpowers/specs/2026-05-25-v2.29-proxy-ux-and-hardening-design.md`。
+
+**横切硬化（6 项）：**
+
+- **HX-1a/1b DB 原子写 + save 串行化**：`server/db.js#save()` 改成
+  `tmp + rename` 原子落盘，断电不会再留半截 `data.db`；并发 set()
+  通过 `_saveQueue.then(...)` 串行化，避免快照互相覆盖。新增
+  `save.flush()` 供测试 / 优雅退出 await。
+- **HX-6 config.json 原子写**：`server/routes/config.js#writeConfig`
+  同样改 `tmp + renameSync`。
+- **HX-7 默认绑 127.0.0.1**：`server.listen(PORT, HOST, …)`，
+  `HOST` 默认 loopback；远程访问需显式 `set HOST=0.0.0.0`，
+  启动时显眼警告 dashboard 无认证。CORS allow-list 同步加入
+  `http://${HOST}:3000`。
+- **HX-3 engine.stop() async**：浏览器 / 协议两套引擎 stop() 改
+  async，按 browser.close() → chromeProc.kill() → tempDir rm
+  顺序 await，避免 fire-and-forget 让新一轮 engine 撞旧资源。
+  /execute 路由构造新 engine 前显式 `await engine.stop()` 兜底
+  清掉 LogCapture monkey-patch + tempdir。
+- **HX-2 LogCapture 兜底脱敏**：`server/logger.js` 新增
+  `redact()`，过滤 JWT 三段 / `access_token=…` / `refresh_token=…`
+  / `id_token=…` URL 参数 / `Bearer <token>` / "OTP|code|verification
+  code|sms code" 紧邻数字。覆盖 server.log + Socket.IO 推送两路。
+  start() idempotent，二次调用不嵌套 wrapper（避免多次切引擎让
+  console.log 被层层包装）。
+
+**代理（4 项）：**
+
+- **PX-1 `getState()` 字段白名单**：不再 `{ ..._state }` spread，
+  去掉 `subscriptionUrl`（含 token）和 `outbounds`（含 vmess UUID
+  / ss 密码）；新增 `hasSubscription: bool` + `subscriptionHost:
+  string|null` 让前端仍能展示"已配置 + 主机名"。
+- **PX-2 rotate 串行化**：模块级 `_rotateLock` + `withRotateLock`
+  helper，`rotate / rotateJp / switchTo` 以及 refresh 末尾的
+  selector 同步都过同一把锁，防止 `recordBadAttempt` 的 fire-
+  and-forget rotate 与显式 await rotate 竞态 `_state.currentNode`
+  + Clash API PUT /proxies。
+- **PX-3 refresh 后同步 selector**：sing-box config 写
+  `default = filtered[0]`，但 `_state.currentNode = filtered[
+  rotationIndex]` 在 `rotationIndex != 0` 时不一致。`refresh()`
+  末尾主动调 `clashApi.switchSelector(SELECTOR_TAG, currentNode)`
+  对齐，避免下一次 `recordBadAttempt` 冤枉错节点。
+- **PX-5 黑名单 auto/manual 分两步清**：`rotate()` 兜底"全部 bad
+  → clear"分支先只清 `source === 'auto'`，保留运维 manual 拉黑；
+  清完依然无可用节点才退化为全清，防止死锁。
+
+**前端 UX（10 项）：**
+
+- **FX-1 Dashboard / Results 用 statusLabel**：状态 tag 从原始
+  code (`verify_error`) 改 `statusLabel`（"Stripe验证失败"）。
+- **FX-2 侧栏菜单顺序 + Results 入口**：仪表盘 / 账号管理 / 执行
+  控制 / 执行结果 / 配置设置。之前 Results 是孤儿路由，必须改
+  URL 才能进。
+- **FX-3 WebSocket 断线横幅**：AppLayout 主区顶部 sticky 警告
+  + 手动重连按钮，比 Execute 顶部的小 tag 显眼。
+- **FX-6 Config dirty form 守卫**：watch form 计 isDirty；
+  `onBeforeRouteLeave` + `beforeunload` 双重保护未保存改动。
+- **FX-7 键盘快捷键基础三键**：`useHotkeys` composable 全局注册
+  `/` 聚焦搜索（焦点在 INPUT 时不抢）+ `Ctrl+Enter` 触发
+  `[data-hotkey="submit"]`。Esc 仍由 Element Plus 弹窗承担。
+- **FX-8 Accounts 6 个筛选写 URL**：`useUrlSyncedFilters`
+  composable 让 search / status / plan / auth / alive / stale
+  双向同步到 `route.query`，刷新 / 复制粘 URL 都保持筛选。
+- **FX-9 全 FAILED_TO_RETRY 行内重试**：`AccountTableRows.vue`
+  重试按钮显示条件从 `error || idle` 扩到 `isFailedToRetry()`
+  全部 9 个终态，不再必须勾选→顶部"重试失败"。
+- **FX-11 删除选中 confirmDanger**：从 popconfirm（一键，误点率
+  高）改 `confirmDanger`，N > 5 时要求输入数字 N 才确认，防止
+  误点批量删除。
+- **FX-12 Results 状态下拉用单一来源**：v-for
+  `EXECUTE_STATUS_FILTER_OPTIONS`（status.js），不再硬编码 12 项。
+- **FX-14 Config 黑名单 polling visibility 暂停**：tab 隐藏停
+  setInterval；可见时重启并触发一次 loadBlacklist。
+
+**工程：**
+
+- npm scripts `test` / `test:py`：以前要手敲一长串 `node --test`，
+  现在 `npm test` 一键跑（158 个 case：143 旧 + 15 新增覆盖
+  HX-1/HX-2/PX-1/PX-3/PX-5）。
+
+**未做（留 v3.0 / 下次 spec）：**
+
+PX-4（sing-box stop-after-start-success）、PX-7（主动健康检查）、
+PX-8（Clash secret + 端口自动）、FX-4（Execute Pipeline HUD）、
+FX-5（后端 batch-delete）、HX-10（LogCapture 重写）、HX-11（zod
+schema 校验）、HX-13（Windows tree-kill）、`/healthz` + metrics、
+`better-sqlite3` 迁移、ProxyManager 类化。
+
 ## v2.28.0 — 2026-05-25
 
 ### Ops UX Fixes — 10 个 P1 改进一次性 ship
