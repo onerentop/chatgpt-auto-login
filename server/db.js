@@ -34,6 +34,9 @@ async function initDB() {
       payment_link TEXT DEFAULT '',
       payment_link_pk TEXT DEFAULT '',
       payment_link_at TEXT DEFAULT '',
+      alive_status TEXT DEFAULT 'unknown',
+      alive_checked_at TEXT DEFAULT '',
+      alive_reason TEXT DEFAULT '',
       updated_at TEXT DEFAULT (datetime('now'))
     );
     CREATE TABLE IF NOT EXISTS execution_logs (
@@ -76,6 +79,15 @@ async function initDB() {
   }
   if (!existingCols.has('payment_link_at')) {
     db.run("ALTER TABLE account_status ADD COLUMN payment_link_at TEXT DEFAULT ''");
+  }
+  if (!existingCols.has('alive_status')) {
+    db.run("ALTER TABLE account_status ADD COLUMN alive_status TEXT DEFAULT 'unknown'");
+  }
+  if (!existingCols.has('alive_checked_at')) {
+    db.run("ALTER TABLE account_status ADD COLUMN alive_checked_at TEXT DEFAULT ''");
+  }
+  if (!existingCols.has('alive_reason')) {
+    db.run("ALTER TABLE account_status ADD COLUMN alive_reason TEXT DEFAULT ''");
   }
 
   // One-time migration of old status values
@@ -155,10 +167,16 @@ const statusDB = {
     const payment_link_at = ('paymentLink' in incoming && incoming.paymentLink)
       ? new Date().toISOString()
       : (existing.payment_link_at || '');
+    const existingAlive = {
+      alive_status: existing.alive_status || 'unknown',
+      alive_checked_at: existing.alive_checked_at || '',
+      alive_reason: existing.alive_reason || '',
+    };
     db.run(
-      "INSERT OR REPLACE INTO account_status (email, status, phase, progress, reason, has_auth_file, payment_link, payment_link_pk, payment_link_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,datetime('now'))",
+      "INSERT OR REPLACE INTO account_status (email, status, phase, progress, reason, has_auth_file, payment_link, payment_link_pk, payment_link_at, alive_status, alive_checked_at, alive_reason, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))",
       [email, status, phase, progress || '', reason || '', has_auth_file ? 1 : 0,
-       payment_link, payment_link_pk, payment_link_at]
+       payment_link, payment_link_pk, payment_link_at,
+       existingAlive.alive_status, existingAlive.alive_checked_at, existingAlive.alive_reason]
     );
     save();
   },
@@ -167,6 +185,26 @@ const statusDB = {
   resetRunning() { db.run("UPDATE account_status SET status='idle', phase='', reason='Stopped' WHERE status='running'"); save(); },
   clearPaymentLink(email) {
     db.run("UPDATE account_status SET payment_link='', payment_link_pk='', payment_link_at='' WHERE email=?", [email]);
+    save();
+  },
+  setAlive(email, data) {
+    const existing = this.get(email) || {};
+    const incoming = data || {};
+    const alive_status = incoming.alive_status || existing.alive_status || 'unknown';
+    const alive_reason = ('alive_reason' in incoming) ? (incoming.alive_reason || '') : (existing.alive_reason || '');
+    const alive_checked_at = new Date().toISOString();
+    db.run(
+      "INSERT OR REPLACE INTO account_status (email, status, phase, progress, reason, has_auth_file, payment_link, payment_link_pk, payment_link_at, alive_status, alive_checked_at, alive_reason, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))",
+      [email,
+       existing.status || 'idle', existing.phase || '', existing.progress || '', existing.reason || '',
+       existing.has_auth_file ? 1 : 0,
+       existing.payment_link || '', existing.payment_link_pk || '', existing.payment_link_at || '',
+       alive_status, alive_checked_at, alive_reason]
+    );
+    save();
+  },
+  clearAlive(email) {
+    db.run("UPDATE account_status SET alive_status='unknown', alive_checked_at='', alive_reason='' WHERE email=?", [email]);
     save();
   },
 };
