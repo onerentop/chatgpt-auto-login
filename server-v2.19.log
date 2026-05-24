@@ -1,0 +1,145 @@
+Server running on http://localhost:3000
+[Proxy] Fetching subscription...
+[Proxy] Total nodes parsed: 147
+[Proxy] After region filter (US): 35
+[Proxy] JP whitelist: 1/1 matched (0 missing)
+[sing-box] Starting with config E:\workspace\projects\demo\chatgpt-auto-login\bin\config.json
+[Proxy] sing-box running: main=:7890(35) jp=:7891(1)
+[Proxy] Auto-started: 35 nodes, current: lite-美国01
+[Proto-Engine] Starting 1 accounts sequentially...
+[Proto-Engine] Payment link source: api
+[1/1] === hprfvxml12008@outlook.com (protocol) ===
+[1/1] Proxy rotated → lite-美国02
+  [Proto] Using proxy: http://127.0.0.1:7890
+  [Proto] Profile: chrome136, Device: 5e2c69e2...
+  [Proto] IMAP baseline: 46
+  [Proto] Step 0: Homepage...
+  [Proto] Step 1: CSRF + Signin...
+  [Proto] Step 2: Authorize...
+  [Proto] Authorize -> /email-verification
+  [Proto] Existing account — OTP flow
+  [Proto] Step 5: Fetching OTP from IMAP...
+  [Proto] OTP: 630433
+  [Proto] OTP response: 200 page=external_url continue=https://chatgpt.com/api/auth/callback/openai?code=ac_-8lI4Ub
+  [Proto] Step 7: Getting accessToken...
+  [Proto] Following callback: https://chatgpt.com/api/auth/callback/openai?code=ac_-8lI4Ub...
+  [Proto] Callback -> https://chatgpt.com/
+  [Proto] accessToken: eyJhbGciOiJSUzI1NiIs...
+  [Proto] Done! Plan: free
+[1/1] Protocol login OK: eyJhbGciOiJSUzI1NiIsImtpZCI6IjE5MzQ0ZTY1LWJiYzktNDRkMS1hOWQwLWY5NTdiMDc5YmQwZSIsInR5cCI6IkpXVCJ9.eyJhdWQiOlsiaHR0cHM6Ly9hcGkub3BlbmFpLmNvbS92MSJdLCJjbGllbnRfaWQiOiJhcHBfWDh6WTZ2VzJwUTl0UjNkRTduSzFqTDVnSCIsImV4cCI6MTc4MDM2OTI0NiwiaHR0cHM6Ly9hcGkub3BlbmFpLmNvbS9hdXRoIjp7ImFtciI6WyJvdHAiLCJ1cm46b3BlbmFpOmFtcjpvdHBfZW1haWwiXSwiY2hhdGdwdF9hY2NvdW50X2lkIjoiZDYyMjE1NzgtMzZkZC00MmFlLWFmNzktYTdhZWNkYzE4MTFjIiwiY2hhdGdwdF9hY2NvdW50X3VzZXJfaWQiOiJ1c2VyLXhRWmRYMVVJdVhFZlBjYWJqZlpmRHN5cF9fZDYyMjE1NzgtMzZkZC00MmFlLWFmNzktYTdhZWNkYzE4MTFjIiwiY2hhdGdwdF9jb21wdXRlX3Jlc2lkZW5jeSI6Im5vX2NvbnN0cmFpbnQiLCJjaGF0Z3B0X3BsYW5fdHlwZSI6ImZyZWUiLCJjaGF0Z3B0X3VzZXJfaWQiOiJ1c2VyLXhRWmRYMVVJdVhFZlBjYWJqZlpmRHN5cCIsInVzZXJfaWQiOiJ1c2VyLXhRWmRYMVVJdVhFZlBjYWJqZlpmRHN5cCJ9LCJodHRwczovL2FwaS5vcGVuYWkuY29tL3Byb2ZpbGUiOnsiZW1haWwiOiJocHJmdnhtbDEyMDA4QG91dGxvb2suY29tIiwiZW1haWxfdmVyaWZpZWQiOnRydWV9LCJpYXQiOjE3Nzk1MDUyNDUsImlzcyI6Imh0dHBzOi8vYXV0aC5vcGVuYWkuY29tIiwianRpIjoiNTBhZjM2MmQtMGMzNi00YzIyLThlM2ItY2MzNWZhNjU5ZDgyIiwibmJmIjoxNzc5NTA1MjQ1LCJwd2RfYXV0aF90aW1lIjoxNzc5NTA1MjQ0MTc5LCJzY3AiOlsib3BlbmlkIiwiZW1haWwiLCJwcm9maWxlIiwib2ZmbGluZV9hY2Nlc3MiLCJtb2RlbC5yZXF1ZXN0IiwibW9kZWwucmVhZCIsIm9yZ2FuaXphdGlvbi5yZWFkIiwib3JnYW5pemF0aW9uLndyaXRlIl0sInNlc3Npb25faWQiOiJhdXRoc2Vzc193YUFPcWJZTjc0SU53R3JhOWFucXkwZWMiLCJzbCI6dHJ1ZSwic3ViIjoiYXV0aDB8MGJLbG9GeXJlbmxxOE5qMk1Wa2hGaWMwIn0.Pl5VGobd_2h-n1LEMaqcVWFeBNrvMRmzCB5-7Gua6sbNP7gEFWAfz-dxr790IXur4JlB9Az1JJVaSPUmIRqB9yljc-k2DHOUoOV0HoiulAlhjFX00fBwaFK8fIQ-RDd_l9Di769KK78CybP0pCeRfNfwYCglWrUvTZFtU0iAVqY9ZicnayXYGAkGRUAhsXPKDZCXeRx_L3PM3ixHV9AKrNOOXMQ9AH8fsNf3xlGuHyKqL7ntJQ7boSTlNhg5LYAZwUyPjxOuJc3qcBQrHhleLflItVazm8sAxSf3Es1llFlPHeJnEiClMPD1xJFLPlnivckd4s21sId6ePCyaVKq0OEBfJlw9twnQN_IYQKzCXEBruq3KewR1XtITkRDAPGPeJXdDEr5sSuYYncgpj8GvXFPtoRoxCj0k7bZVD9CiCZ3mV2-mdh0d-0tgAEH-pWR8OosCdf3L3KsJu8r-nhRaByWvqpX2XHZSRzNUm5KFqNq2veuDrxxvBkMHt_mFh6GKR9_05KNzBm-Vt-0a88HioZoGB0UTTjE85gLzh_CcCO29dhLcGNsbLGJLes6QKy4vKgFV8gIgJ1kr6GWcFlldUP91XKea_s9ifOtMB-i0X6ke-0lINjW5ep32dks00_WSY_vq93NkoF32xcyNajA_tEaZFd4wsGXN73DdPcn7a8
+[1/1] Checkout: hprfvxml12008@outlook.com...
+  [Checkout] Attempt 1/3 with impersonate=chrome124
+[1/1] Link obtained
+[1/1] Link: https://pay.openai.com/c/pay/cs_live_a1fd1EtWn4aGwUYQz6ncjbuX8h4TZu8C28nVInrWwubnzqscmaLRUlrfmW#fidnandhYHdWcXxpYCc%2FJ2FgY2RwaXEnKSdpamZkaWAnPydgaycpJ3ZwZ3Zmd2x1cWxqa1BrbHRwYGtgdnZAa2RnaWBhJz9jZGl2YCknYnBkZmRoamlgU2R3bGRrcSc%2FJ2Zqa3F3amknKSdkdWxOYHwnPyd1blppbHNgWjA0TUp3VnJGM200a31Cakw2aVFEYldvXFN3fzFhUDZjU0pkZ3xGZk5XNnVnQE9icEZTRGl0Rn1hfUZQc2pXbTRdUnJXZGZTbGpzUDZuSU5zdW5vbTJMdG5SNTVsXVR2b2o2aycpJ2N3amhWYHdzYHcnP3F3cGApJ2dkZm5id2pwa2FGamlqdyc%2FJyZjY2NjY2MnKSdpZHxqcHFRfHVgJz8ndmxrYmlgWmxxYGgnKSdga2RnaWBVaWRmYG1qaWFgd3YnP3F3cGB4JSUl
+[1/1] Phase 2.5: Verifying $0 via Stripe init...
+  [StripeInit] impersonate=chrome124, cs=cs_live_a1fd1EtWn4aGwUYQz..., pk=pk_live_51HOrSw..., proxy=(set)
+[1/1] ✓ Verified $0 + coupons=[ChatGPT Plus - 1 Month Free Trial]
+[1/1] Opening payment: https://pay.openai.com/c/pay/cs_live_a1fd1EtWn4aGwUYQz6ncjbuX8h4TZu8C28nVInrWwubnzqscmaLRUlrfmW#fidnandhYHdWcXxpYCc%2FJ2FgY2RwaXEnKSdpamZkaWAnPydgaycpJ3ZwZ3Zmd2x1cWxqa1BrbHRwYGtgdnZAa2RnaWBhJz9jZGl2YCknYnBkZmRoamlgU2R3bGRrcSc%2FJ2Zqa3F3amknKSdkdWxOYHwnPyd1blppbHNgWjA0TUp3VnJGM200a31Cakw2aVFEYldvXFN3fzFhUDZjU0pkZ3xGZk5XNnVnQE9icEZTRGl0Rn1hfUZQc2pXbTRdUnJXZGZTbGpzUDZuSU5zdW5vbTJMdG5SNTVsXVR2b2o2aycpJ2N3amhWYHdzYHcnP3F3cGApJ2dkZm5id2pwa2FGamlqdyc%2FJyZjY2NjY2MnKSdpZHxqcHFRfHVgJz8ndmxrYmlgWmxxYGgnKSdga2RnaWBVaWRmYG1qaWFgd3YnP3F3cGB4JSUl
+[1/1] Auto-filling payment...
+    [Pay] Starting auto-payment flow...
+    [Pay] OpenAI/Stripe page detected
+    [Pay] Due-today label not matched. amounts=[0,20] hasZero=true head="Back / Details / Subscribe to ChatGPT Plus Subscription / $0.00 / Then $20.00 per month after coupon expires / View details / Email / "
+    [Pay] Selecting PayPal...
+    [Pay] PayPal clicked: [data-testid="paypal-accordion-item-button"]
+    [Pay] Address: {"street":"1143  Douglas Dairy Road","city":"BEAUMONT","state":"Texas","zip":"77726"}
+    [Pay] Waiting for billing form...
+    [Pay] Inject step 2: #billingAddressLine1=1143  Douglas Dairy Road, #billingLocality=BEAUMONT, #billingPostalCode=77726, select=Texas, checkbox=clicked, fields=[payment-method-accordion-item-title-card:card, payment-method-accordion-item-title-paypal:paypal, billingCountry:US, billingAddressLine1:1143  Douglas Dairy , billingAddressLine2:, billingLocality:BEAUMONT, billingPostalCode:77726, billingAdministrativeArea:TX, termsOfServiceConsentCheckbox:on]
+    [Pay] OpenAI page submitted
+    [Pay] Page: https://www.paypal.com/agreements/approve?ba_token=BA-0KX530...
+    [Pay] PayPal login page detected
+    [Pay] Email: gt3129n36wjyf7c3@gmail.com
+    [Pay] PayPal login submitted
+    [Pay] PayPal login page detected
+    [Pay] Email: yr0p2llt82zvedeq@gmail.com
+    [Pay] PayPal login submitted
+    [Pay] PayPal checkout page detected
+    [Pay] Country: C2 → US (via #country)
+    [Pay] Email: k0z4h08uq91te1xz@gmail.com
+    [Pay] Address: {"street":"1653  Short Street","city":"Austin","state":"Texas","zip":"78701"}
+    [Pay] Card: 5233****4047
+    [Pay] Filled: email, phone, cardNumber, cardExpiry, cardCvv, password, firstName, lastName, billingLine1, billingCity, billingZip, billingState
+    [Pay] PayPal checkout submitted
+    [Pay] No card decline detected, proceeding
+    [Pay] SMS verification dialog detected, polling for code...
+    [Pay] SMS API attempt 1: yes|PayPal: 727592 is your security code. Don't share it.|(PayPal)|到期时间：2026-06-29 00:00:00
+
+    [Pay] Got SMS code: 727592
+    [Pay] SMS code filled (individual boxes)
+    [Pay] SMS verification submitted
+    [Pay] Waiting for payment redirect...
+    [Pay] Waiting... (https://www.paypal.com/checkoutweb/genericError?ss)
+    [Pay] Waiting... (https://www.paypal.com/checkoutweb/genericError?ss)
+    [Pay] Waiting... (https://www.paypal.com/checkoutweb/genericError?ss)
+    [Pay] Waiting... (https://www.paypal.com/checkoutweb/genericError?ss)
+    [Pay] Waiting... (https://www.paypal.com/checkoutweb/genericError?ss)
+    [Pay] Auto-payment flow completed
+[1/1] Payment incomplete: Payment redirect not detected
+[1/1] consecutive errors: 1/3
+[Proto-Engine] Complete: {"total":1,"success":0,"noLink":0,"error":1,"noJpProxy":0,"noPromo":0,"verifyError":0}
+[sing-box err] [31mERROR[0m[0152] [[38;5;62m2594999598[0m 1m18s] inbound/mixed[in-mixed]: process connection from 127.0.0.1:37821: upload: raw-read tcp 127.0.0.1:7890->127.0.0.1:37821: An existing connection was forcibly closed by the remote host.
+[Proto-Engine] Starting 1 accounts sequentially...
+[Proto-Engine] Payment link source: api
+[1/1] === osxti6295@outlook.com (protocol) ===
+[1/1] Proxy rotated → lite-美国03
+  [Proto] Using proxy: http://127.0.0.1:7890
+  [Proto] Profile: chrome133a, Device: ccd37bc2...
+  [Proto] IMAP baseline: 11
+  [Proto] Step 0: Homepage...
+  [Proto] Step 1: CSRF + Signin...
+  [Proto] Step 2: Authorize...
+  [Proto] Authorize -> /email-verification
+  [Proto] Existing account — OTP flow
+  [Proto] Step 5: Fetching OTP from IMAP...
+  [Proto] OTP: 973642
+  [Proto] OTP response: 200 page=external_url continue=https://chatgpt.com/api/auth/callback/openai?code=ac_-7tqQdc
+  [Proto] Step 7: Getting accessToken...
+  [Proto] Following callback: https://chatgpt.com/api/auth/callback/openai?code=ac_-7tqQdc...
+  [Proto] Callback -> https://chatgpt.com/
+  [Proto] accessToken: eyJhbGciOiJSUzI1NiIs...
+  [Proto] Done! Plan: free
+[1/1] Protocol login OK: eyJhbGciOiJSUzI1NiIsImtpZCI6IjE5MzQ0ZTY1LWJiYzktNDRkMS1hOWQwLWY5NTdiMDc5YmQwZSIsInR5cCI6IkpXVCJ9.eyJhdWQiOlsiaHR0cHM6Ly9hcGkub3BlbmFpLmNvbS92MSJdLCJjbGllbnRfaWQiOiJhcHBfWDh6WTZ2VzJwUTl0UjNkRTduSzFqTDVnSCIsImV4cCI6MTc4MDM2OTQ0OSwiaHR0cHM6Ly9hcGkub3BlbmFpLmNvbS9hdXRoIjp7ImFtciI6WyJvdHAiLCJ1cm46b3BlbmFpOmFtcjpvdHBfZW1haWwiXSwiY2hhdGdwdF9hY2NvdW50X2lkIjoiNWU2ZWE0ZGEtNDUyMS00N2NhLTkwMTUtMzU0MGExZWFiOTNmIiwiY2hhdGdwdF9hY2NvdW50X3VzZXJfaWQiOiJ1c2VyLXppOU83bDM2dE9MQ3puc3B4ZXVpTjNlWF9fNWU2ZWE0ZGEtNDUyMS00N2NhLTkwMTUtMzU0MGExZWFiOTNmIiwiY2hhdGdwdF9jb21wdXRlX3Jlc2lkZW5jeSI6Im5vX2NvbnN0cmFpbnQiLCJjaGF0Z3B0X3BsYW5fdHlwZSI6ImZyZWUiLCJjaGF0Z3B0X3VzZXJfaWQiOiJ1c2VyLXppOU83bDM2dE9MQ3puc3B4ZXVpTjNlWCIsInVzZXJfaWQiOiJ1c2VyLXppOU83bDM2dE9MQ3puc3B4ZXVpTjNlWCJ9LCJodHRwczovL2FwaS5vcGVuYWkuY29tL3Byb2ZpbGUiOnsiZW1haWwiOiJvc3h0aTYyOTVAb3V0bG9vay5jb20iLCJlbWFpbF92ZXJpZmllZCI6dHJ1ZX0sImlhdCI6MTc3OTUwNTQ0OCwiaXNzIjoiaHR0cHM6Ly9hdXRoLm9wZW5haS5jb20iLCJqdGkiOiI5YzYyZDRlMi03ZWVjLTQxNTAtOTczNi0zOWJmMjA2YzM4MzAiLCJuYmYiOjE3Nzk1MDU0NDgsInB3ZF9hdXRoX3RpbWUiOjE3Nzk1MDU0NDc0MTUsInNjcCI6WyJvcGVuaWQiLCJlbWFpbCIsInByb2ZpbGUiLCJvZmZsaW5lX2FjY2VzcyIsIm1vZGVsLnJlcXVlc3QiLCJtb2RlbC5yZWFkIiwib3JnYW5pemF0aW9uLnJlYWQiLCJvcmdhbml6YXRpb24ud3JpdGUiXSwic2Vzc2lvbl9pZCI6ImF1dGhzZXNzX21kN2JrUERBbHJWNXdtWFMxNUxmMm9BVyIsInNsIjp0cnVlLCJzdWIiOiJhdXRoMHxOREk4RWptUGVnTHhjb3NOUEQ4T29sYksifQ.ZWmxuV3vGLCF-zEK2aiGzMFW7rqtZEOBMciggz54_dwqO1vr72B0L0M9hLyiBQCoDWYPA46Km11wk-kEfy-tmhsbDue79R6N5eFdhyw8x-UxIhskSxouhLeKKj8ns3MQ5U_ghYsig_Zn26kfPCK9t2vqze8-Ij8DeT4D2fax6h0md66Eb0rF9DPMR9Sd9QJdfp_P4A_QaEVHxoACqdA0r5-uG7KsQBtFLYg253tqhtBZiPPGLxiT4TIJp_bCZxetftjooLDKCaUYmT_mCfZEhjGPVCDzidalcuCmNo4sscyJ9wSn9IxJXAuAR44MXxHDVL58BV2XuR8A6rUaJXG2YU0L8LktdjOFWhf2TxMyqZO1JVX4SBBLgoXcXj3sM0pkCXRY_oZXnY5uh4ZIMy9Iv9xi4orCBRIWrtvb1CD_fC_d2pJZ-zS4RI7fFyd2_0oVAlimfRkUjTGSSDG0rKpD120N8P8pXWC2IiYwjwrKJNW7kNVpC_yiHZRYEOXgKzVbsyZOt29j42aDqHob_kk0YBeyIGBz9y4l7fxAbKzg4oKYQ3GPN1TI8xtGXPIuUIEPA3hwxx5ZPyIvmBZwtjDCGdph9rExb0pFJ5MnD68q3WpTvjf3b4miDSt0LqjX3DuborXgeX22e-B8DSlNa3-QQye9dbw3NQI9PVr9KzAxUl0
+[1/1] Checkout: osxti6295@outlook.com...
+  [Checkout] Attempt 1/3 with impersonate=chrome136
+[1/1] Link obtained
+[1/1] Link: https://pay.openai.com/c/pay/cs_live_a1rCAPiPzMdAJTcDL2ff5auI0Jm2QaaGUuDyhILsNE2HhGF4IYnrjl82AB#fidnandhYHdWcXxpYCc%2FJ2FgY2RwaXEnKSdpamZkaWAnPydgaycpJ3ZwZ3Zmd2x1cWxqa1BrbHRwYGtgdnZAa2RnaWBhJz9jZGl2YCknYnBkZmRoamlgU2R3bGRrcSc%2FJ2Zqa3F3amknKSdkdWxOYHwnPyd1blppbHNgWjA0TUp3VnJGM200a31Cakw2aVFEYldvXFN3fzFhUDZjU0pkZ3xGZk5XNnVnQE9icEZTRGl0Rn1hfUZQc2pXbTRdUnJXZGZTbGpzUDZuSU5zdW5vbTJMdG5SNTVsXVR2b2o2aycpJ2N3amhWYHdzYHcnP3F3cGApJ2dkZm5id2pwa2FGamlqdyc%2FJyZjY2NjY2MnKSdpZHxqcHFRfHVgJz8ndmxrYmlgWmxxYGgnKSdga2RnaWBVaWRmYG1qaWFgd3YnP3F3cGB4JSUl
+[1/1] Phase 2.5: Verifying $0 via Stripe init...
+  [StripeInit] impersonate=chrome142, cs=cs_live_a1rCAPiPzMdAJTcDL..., pk=pk_live_51HOrSw..., proxy=(set)
+[1/1] ✓ Verified $0 + coupons=[ChatGPT Plus - 1 Month Free Trial]
+[1/1] Opening payment: https://pay.openai.com/c/pay/cs_live_a1rCAPiPzMdAJTcDL2ff5auI0Jm2QaaGUuDyhILsNE2HhGF4IYnrjl82AB#fidnandhYHdWcXxpYCc%2FJ2FgY2RwaXEnKSdpamZkaWAnPydgaycpJ3ZwZ3Zmd2x1cWxqa1BrbHRwYGtgdnZAa2RnaWBhJz9jZGl2YCknYnBkZmRoamlgU2R3bGRrcSc%2FJ2Zqa3F3amknKSdkdWxOYHwnPyd1blppbHNgWjA0TUp3VnJGM200a31Cakw2aVFEYldvXFN3fzFhUDZjU0pkZ3xGZk5XNnVnQE9icEZTRGl0Rn1hfUZQc2pXbTRdUnJXZGZTbGpzUDZuSU5zdW5vbTJMdG5SNTVsXVR2b2o2aycpJ2N3amhWYHdzYHcnP3F3cGApJ2dkZm5id2pwa2FGamlqdyc%2FJyZjY2NjY2MnKSdpZHxqcHFRfHVgJz8ndmxrYmlgWmxxYGgnKSdga2RnaWBVaWRmYG1qaWFgd3YnP3F3cGB4JSUl
+[1/1] Auto-filling payment...
+    [Pay] Starting auto-payment flow...
+    [Pay] OpenAI/Stripe page detected
+    [Pay] Due-today label not matched. amounts=[0,20] hasZero=true head="Back / Details / Subscribe to ChatGPT Plus Subscription / $0.00 / Then $20.00 per month after coupon expires / View details / Email / "
+    [Pay] Selecting PayPal...
+    [Pay] PayPal clicked: [data-testid="paypal-accordion-item-button"]
+    [Pay] Address: {"street":"3666  Karen Lane","city":"Louisville","state":"Kentucky","zip":"40207"}
+    [Pay] Waiting for billing form...
+    [Pay] Inject step 2: #billingAddressLine1=3666  Karen Lane, #billingLocality=Louisville, #billingPostalCode=40207, select=Kentucky, checkbox=clicked, fields=[payment-method-accordion-item-title-card:card, payment-method-accordion-item-title-paypal:paypal, billingCountry:US, billingAddressLine1:3666  Karen Lane, billingAddressLine2:, billingLocality:Louisville, billingPostalCode:40207, billingAdministrativeArea:KY, termsOfServiceConsentCheckbox:on, agent_identity_token:, checkbox:on]
+    [Pay] OpenAI page submitted
+    [Pay] Waiting for PayPal redirect...
+    [Pay] PayPal login page detected
+    [Pay] Email: h4olj81yyi5f8e4o@gmail.com
+    [Pay] PayPal login submitted
+    [Pay] PayPal login page detected
+    [Pay] Email: 71s2mfqkiryyzbbp@gmail.com
+    [Pay] PayPal login submitted
+    [Pay] PayPal checkout page detected
+    [Pay] Country: C2 → US (via #country)
+    [Pay] Email: 8qmiposs72wxlqg2@gmail.com
+    [Pay] Address: {"street":"739  Dye Street","city":"Mesa","state":"Arizona","zip":"85205"}
+    [Pay] Card: 5501****7092
+    [Pay] Filled: email, phone, cardNumber, cardExpiry, cardCvv, password, firstName, lastName, billingLine1, billingCity, billingZip, billingState
+    [Pay] PayPal checkout submitted
+    [Pay] No card decline detected, proceeding
+    [Pay] SMS verification dialog detected, polling for code...
+    [Pay] SMS API attempt 1: yes|PayPal: 307251 is your security code. Don't share it.|(PayPal)|到期时间：2026-06-29 00:00:00
+
+    [Pay] Got SMS code: 307251
+    [Pay] SMS code filled (individual boxes)
+    [Pay] SMS verification submitted
+    [Pay] Waiting for payment redirect...
+    [Pay] Payment succeeded! (redirect_status=succeeded)
+    [Pay] Auto-payment flow completed
+  [CPA] Saved: E:\workspace\projects\demo\chatgpt-auto-login\cpa-auth\codex-osxti6295-at-outlook-com.json
+  [Sub2API] Saved: E:\workspace\projects\demo\chatgpt-auto-login\cpa-auth\sub2api-osxti6295-at-outlook-com.json
+[Proto-Engine] Complete: {"total":1,"success":1,"noLink":0,"error":0,"noJpProxy":0,"noPromo":0,"verifyError":0}

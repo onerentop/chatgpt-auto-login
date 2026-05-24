@@ -65,7 +65,7 @@ test('happy path: returns accessToken/accountId/expiresAtIso', async () => {
 
 test('bad password rejects with bad password', async () => {
   await assert.rejects(
-    lightLogin({ email: 'a@x.com', password: 'wrong', login_type: 'outlook' },
+    lightLogin({ email: 'a@x.com', password: 'wrong', login_type: 'outlook', client_id: 'c', refresh_token: 'r' },
       { protocolMode: false, playwrightConnect: async () => fakeBrowser('bad-password'), getOtp: fakeOtp.ok }),
     /bad password/
   );
@@ -73,7 +73,7 @@ test('bad password rejects with bad password', async () => {
 
 test('OTP timeout rejects with otp timeout', async () => {
   await assert.rejects(
-    lightLogin({ email: 'a@x.com', password: 'p', login_type: 'outlook' },
+    lightLogin({ email: 'a@x.com', password: 'p', login_type: 'outlook', client_id: 'c', refresh_token: 'r' },
       { protocolMode: false, playwrightConnect: async () => fakeBrowser('otp-timeout'), getOtp: fakeOtp.timeout }),
     /otp timeout/
   );
@@ -81,7 +81,7 @@ test('OTP timeout rejects with otp timeout', async () => {
 
 test('captcha rejects with captcha', async () => {
   await assert.rejects(
-    lightLogin({ email: 'a@x.com', password: 'p', login_type: 'outlook' },
+    lightLogin({ email: 'a@x.com', password: 'p', login_type: 'outlook', client_id: 'c', refresh_token: 'r' },
       { protocolMode: false, playwrightConnect: async () => fakeBrowser('captcha'), getOtp: fakeOtp.ok }),
     /captcha/
   );
@@ -89,7 +89,7 @@ test('captcha rejects with captcha', async () => {
 
 test('null session rejects with no session', async () => {
   await assert.rejects(
-    lightLogin({ email: 'a@x.com', password: 'p', login_type: 'outlook' },
+    lightLogin({ email: 'a@x.com', password: 'p', login_type: 'outlook', client_id: 'c', refresh_token: 'r' },
       { protocolMode: false, playwrightConnect: async () => fakeBrowser('no-session'), getOtp: fakeOtp.ok }),
     /no session/
   );
@@ -97,7 +97,7 @@ test('null session rejects with no session', async () => {
 
 test('proxy reset rejects with proxy reset', async () => {
   await assert.rejects(
-    lightLogin({ email: 'a@x.com', password: 'p', login_type: 'outlook' },
+    lightLogin({ email: 'a@x.com', password: 'p', login_type: 'outlook', client_id: 'c', refresh_token: 'r' },
       { protocolMode: false, playwrightConnect: async () => fakeBrowser('proxy-reset'), getOtp: fakeOtp.ok }),
     /proxy reset/
   );
@@ -108,5 +108,13 @@ test('missing password rejects with no password', async () => {
     lightLogin({ email: 'a@x.com', password: '', login_type: 'outlook' },
       { protocolMode: false, playwrightConnect: async () => fakeBrowser('ok'), getOtp: fakeOtp.ok }),
     /no password/
+  );
+});
+
+test('outlook account missing IMAP creds rejects with outlook oauth missing', async () => {
+  await assert.rejects(
+    lightLogin({ email: 'noimap@outlook.com', password: 'p', login_type: 'outlook' },
+      { protocolMode: false, playwrightConnect: async () => fakeBrowser('ok'), getOtp: fakeOtp.ok }),
+    /outlook oauth missing/
   );
 });

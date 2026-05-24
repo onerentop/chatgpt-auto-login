@@ -23,6 +23,9 @@ async function lightLogin(account, opts = {}) {
 
   if (protocolMode) throw new LivenessLoginNotImplementedError();
   if (!account?.password) throw new Error('no password');
+  if (account.login_type === 'outlook' && (!account.client_id || !account.refresh_token)) {
+    throw new Error('outlook oauth missing');
+  }
 
   const browser = await playwrightConnect();
   let ctx;
