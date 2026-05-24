@@ -1,5 +1,25 @@
 # Changelog
 
+## v2.27.0 — 2026-05-24
+
+### Skip Phase 1 on Access-Token Cache Hit
+
+Building on v2.25's payment-link cache (Phase 2 + 2.5 skip), this release also persists the protocol-login `accessToken + session JSON` to `account_status`. On retry of a failed account, if the JWT exp is still in the future (with 60s buffer), `result` is reconstituted from the DB and the entire Phase 1 login is skipped — saving the 30-60s OTP+auth0 round-trip on top of v2.25's 8-25s savings.
+
+**核心改动：**
+
+- **DB schema**：`account_status` 加 3 列 `last_access_token / last_session_json / last_access_token_at`，PRAGMA-gated ALTER 防御性迁移存量库。
+- **statusDB.set 扩展 merge**：camelCase 入参 `accessToken / sessionJson`；未传时保留 DB 现值（同 v2.25 paymentLink 套路）；新 helper `clearAccessToken` 用于支付成功后清除。
+- **双引擎同步**：`protocol-engine.js` 和 `server/engine.js` 都在 `dispatchOne` 入口加 cached-login 分支，紧跟 v2.26.1 引入的 `prevPersisted` snapshot。
+- **JWT exp 校验**：复用 v2.26 `server/liveness/checker.js` 导出的 `decodeJwtExp` 工具——单一来源、不重复实现。
+- **失败兜底**：cached token 还有效但 OpenAI 已 revoke（改密等）→ Phase 3 page.goto(link) 仍 OK（link 自带 stripe session）；Phase 5 PKCE 重登失败 → plus_no_rt 兜底，下次测活会标 token_expired。
+
+**预期收益：** cache + token 都命中的重试场景，账号耗时从 68-145s 缩到 30-60s（节省 **40-90s/账号**）。
+
+**Spec / Plan**：`docs/superpowers/specs/2026-05-24-skip-login-on-cache-hit-design.md` + `docs/superpowers/plans/2026-05-24-skip-login-on-cache-hit.md`。
+
+**测试**：`__tests__/db-access-token.test.js` 5 个新单元 + 集成 smoke。146 测试通过。
+
 ## v2.26.0 — 2026-05-24
 
 ### Account Liveness Check (Phase A — Browser Mode)

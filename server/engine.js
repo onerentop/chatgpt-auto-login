@@ -204,12 +204,30 @@ class PipelineEngine extends EventEmitter {
         // remains visible after we transition into the new run.
         const prevPersisted = statusDB.get(account.email) || {};
 
-        this.emitStatus( {
-          email: account.email,
-          status: 'running',
-          phase: 'login',
-          progress,
-        });
+        // Cached-login fast path: if a previous login persisted a JWT and the
+        // exp is still in the future (with 60s buffer), reconstitute
+        // loginResult from the DB and skip the browser login entirely.
+        const JWT_BUFFER_SEC_LOGIN = 60;
+        let loginResult = null;
+        if (prevPersisted.last_access_token) {
+          const { decodeJwtExp } = require('./liveness/checker');
+          const exp = decodeJwtExp(prevPersisted.last_access_token);
+          if (exp > Date.now() / 1000 + JWT_BUFFER_SEC_LOGIN) {
+            let session = null;
+            try { session = JSON.parse(prevPersisted.last_session_json || '{}'); }
+            catch { session = null; }
+            if (session) {
+              loginResult = {
+                accessToken: prevPersisted.last_access_token,
+                session,
+                lastOtp: '',
+              };
+              const minLeft = Math.floor((exp - Date.now() / 1000) / 60);
+              console.log(`${p} Phase 1: reusing cached access token (exp in ${minLeft} min)`);
+              this.emitStatus({ email: account.email, status: 'running', phase: 'cached-login', progress });
+            }
+          }
+        }
 
         console.log(`${p} === ${account.email} ===`);
 
@@ -219,6 +237,7 @@ class PipelineEngine extends EventEmitter {
         this._browser = null;
         this._tempDir = tempDir;
         let finalResult = { email: account.email, status: 'error', paymentLink: '', reason: '' };
+        let browser = null;
 
         // Rotate proxy node before each account (if proxy enabled)
         if (proxyMgr.getState().enabled) {
@@ -232,13 +251,20 @@ class PipelineEngine extends EventEmitter {
 
         try {
           if (this.stopFlag) break;
+          if (!loginResult) {
           // Phase 1: Login & get accessToken
           currentPhase = 'login';
+          this.emitStatus( {
+            email: account.email,
+            status: 'running',
+            phase: 'login',
+            progress,
+          });
           console.log(`${p} Phase 1: Login...`);
           this._chromeProc = launchChrome(port, tempDir, { proxyServer: proxyMgr.getProxyUrl() || undefined });
           this._browser = await waitForCDP(port);
-          const browser = this._browser;
-          const loginResult = await loginAccount(browser, account);
+          browser = this._browser;
+          loginResult = await loginAccount(browser, account);
 
           if (loginResult.status !== 'success' || !loginResult.accessToken) {
             const isDeactivated = loginResult.status === 'deactivated';
@@ -273,6 +299,16 @@ class PipelineEngine extends EventEmitter {
             try { proxyMgr.recordGoodAttempt(proxyMgr.getState().currentNode, 'main'); } catch {}
           }
           console.log(`${p} Login OK, accessToken obtained.`);
+          } // end if (!loginResult)
+
+          // Persist the freshly-obtained token so the next retry can skip
+          // the browser login entirely.
+          if (loginResult && loginResult.accessToken) {
+            statusDB.set(account.email, {
+              accessToken: loginResult.accessToken,
+              sessionJson: JSON.stringify(loginResult.session || {}),
+            });
+          }
 
           // Check plan type from session
           const planType =
@@ -284,6 +320,7 @@ class PipelineEngine extends EventEmitter {
 
           if (isPlusOrAbove) {
             statusDB.clearPaymentLink(account.email);
+            statusDB.clearAccessToken(account.email);
             console.log(`${p} Already Plus!`);
             finalResult = { email: account.email, status: 'plus_no_rt', paymentLink: '', reason: '' };
 
@@ -497,6 +534,7 @@ class PipelineEngine extends EventEmitter {
 
                 if (paymentOk) {
                   statusDB.clearPaymentLink(account.email);
+                  statusDB.clearAccessToken(account.email);
                   finalResult.status = 'plus_no_rt';
                   console.log(`${p} Payment succeeded (redirect_status=succeeded)`);
                 } else if (paymentStatus === 'aborted') {
