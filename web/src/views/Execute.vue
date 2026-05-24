@@ -85,6 +85,7 @@
           @expand-change="onExpand"
           @row-action="onRowAction"
           @auth-download="onAuthDownload"
+          @row-click="onRowClick"
         />
       </el-collapse-item>
     </el-collapse>
@@ -274,6 +275,16 @@ function onRowAction({ email, action }) {
 
 function onAuthDownload({ email, format }) {
   downloadAuth(email, format)
+}
+
+function onRowClick({ row, column, event }) {
+  // Restored from pre-refactor behavior: clicking the row body (excluding
+  // selection/expand columns + el-button/el-dropdown/a children) toggles
+  // that row's selection. Quick-select UX for operators.
+  if (column?.type === 'selection' || column?.type === 'expand') return
+  if (event?.target?.closest('.el-button, .el-dropdown, a')) return
+  const status = row._status || 'idle'
+  groupRefs.value[status]?.toggleRowSelection?.(row)
 }
 
 async function startExec(emails) {

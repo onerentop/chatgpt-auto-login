@@ -117,7 +117,8 @@ function formatTs(ts) {
 // plus 组 → running 组）必须靠 globalSelectedSet 重新 toggle。
 //
 // 为什么不 watch globalSelectedSet 自身：本组的选中变化通过 emit
-// 'group-selection-change' → 父组件 → setSelectionFromRows → 全局 Set 写入；
+// 'group-selection-change' → 父组件 onGroupSelectionChange 直接 mutate
+// globalSelectedSet（add/delete）；
 // 其他组的选中变化对本组无影响（不在本表的 rows 里）。watch Set 会引入
 // 无穷循环（emit → Set 变 → watch 触发 → toggleRowSelection → 再 emit）。
 //
@@ -137,6 +138,9 @@ defineExpose({
   },
   toggleRowExpansion(row, expanded) {
     tableRef.value?.toggleRowExpansion(row, expanded)
+  },
+  toggleRowSelection(row) {
+    tableRef.value?.toggleRowSelection(row)
   },
 })
 </script>
