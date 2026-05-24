@@ -190,7 +190,9 @@ const statusDB = {
   setAlive(email, data) {
     const existing = this.get(email) || {};
     const incoming = data || {};
-    const alive_status = incoming.alive_status || existing.alive_status || 'unknown';
+    const alive_status = ('alive_status' in incoming)
+      ? (incoming.alive_status || 'unknown')
+      : (existing.alive_status || 'unknown');
     const alive_reason = ('alive_reason' in incoming) ? (incoming.alive_reason || '') : (existing.alive_reason || '');
     const alive_checked_at = new Date().toISOString();
     db.run(
