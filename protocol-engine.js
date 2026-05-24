@@ -220,6 +220,12 @@ class ProtocolEngine extends EventEmitter {
         currentEmail = account.email;
         const errorsBefore = summary.error;
 
+        // Snapshot the persisted row BEFORE any emitStatus call wipes it to
+        // status='running'. The cache-check below reads this snapshot, not
+        // the live DB row, so the user's previous failure (verify_error etc.)
+        // is still visible after we transition into the new run.
+        const prevPersisted = statusDB.get(account.email) || {};
+
         // Step 1: Protocol login
         this.emitStatus({ email: account.email, status: 'running', phase: 'protocol-login', progress });
         console.log(`[${progress}] === ${account.email} (protocol) ===`);
@@ -318,13 +324,12 @@ class ProtocolEngine extends EventEmitter {
         // detector handles stale links by throwing → status='no_link', which
         // won't be in REUSE_STATUSES on the next retry → forced full refetch.
         const REUSE_STATUSES = new Set(['error', 'aborted', 'paypal_captcha', 'verify_error']);
-        const cached = statusDB.get(account.email);
         let usedCachedLink = false;
-        if (cached && cached.payment_link && REUSE_STATUSES.has(cached.status)) {
-          link = cached.payment_link;
-          fetchResult = { link, pk: cached.payment_link_pk || '', title: 'cached', raw: '' };
+        if (prevPersisted.payment_link && REUSE_STATUSES.has(prevPersisted.status)) {
+          link = prevPersisted.payment_link;
+          fetchResult = { link, pk: prevPersisted.payment_link_pk || '', title: 'cached', raw: '' };
           usedCachedLink = true;
-          console.log(`[${progress}] Phase 2: reusing cached payment link (was ${cached.status} at ${cached.payment_link_at})`);
+          console.log(`[${progress}] Phase 2: reusing cached payment link (was ${prevPersisted.status} at ${prevPersisted.payment_link_at})`);
         }
 
         let linkFetchOk = usedCachedLink;

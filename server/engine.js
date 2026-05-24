@@ -198,6 +198,12 @@ class PipelineEngine extends EventEmitter {
         const progress = `${i + 1}/${filtered.length}`;
         const p = `[${progress}]`;
 
+        // Snapshot the persisted row BEFORE any emitStatus call wipes status
+        // to 'running'. The cache-check further down reads this snapshot, not
+        // the live DB row, so the user's previous failure (verify_error etc.)
+        // remains visible after we transition into the new run.
+        const prevPersisted = statusDB.get(account.email) || {};
+
         this.emitStatus( {
           email: account.email,
           status: 'running',
@@ -320,15 +326,14 @@ class PipelineEngine extends EventEmitter {
             // stale links (becomes status='no_link', which is not in
             // REUSE_STATUSES → next retry forces full refetch).
             const REUSE_STATUSES = new Set(['error', 'aborted', 'paypal_captcha', 'verify_error']);
-            const cached = statusDB.get(account.email);
             let usedCachedLink = false;
 
             this.emitStatus({ email: account.email, status: 'running', phase: currentPhase, progress });
             let discord;  // keep variable name to minimize downstream diff
-            if (cached && cached.payment_link && REUSE_STATUSES.has(cached.status)) {
-              discord = { link: cached.payment_link, pk: cached.payment_link_pk || '', title: 'cached', raw: '' };
+            if (prevPersisted.payment_link && REUSE_STATUSES.has(prevPersisted.status)) {
+              discord = { link: prevPersisted.payment_link, pk: prevPersisted.payment_link_pk || '', title: 'cached', raw: '' };
               usedCachedLink = true;
-              console.log(`${p} Phase 2: reusing cached payment link (was ${cached.status} at ${cached.payment_link_at})`);
+              console.log(`${p} Phase 2: reusing cached payment link (was ${prevPersisted.status} at ${prevPersisted.payment_link_at})`);
             }
             if (!usedCachedLink) {
               for (let dRetry = 0; dRetry < 3; dRetry++) {
