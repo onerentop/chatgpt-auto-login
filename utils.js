@@ -347,11 +347,11 @@ async function fetchTokensViaPKCE(browser, account, lastOtp) {
       }
 
       // STATE: add-phone (OpenAI requires phone verification for Codex)
-      // v2.38.0: 号池启用时自动填手机 + 接 SMS + 填验证码 + 提交；
-      //   disabled 时回退 needsPhone（向后兼容）。
-      // v2.39.0: 按 cfg.phonePool.provider 分流 local / zhusms，
-      //   通用 Playwright 部分（填手机 → submit → 等 SMS 框 → 填 code → 提交 →
-      //   等 OAuth callback → continue）共用。
+      // v2.38.0: 号池启用 → 自动填手机 + 接 SMS + 填验证码 + 提交；disabled → needsPhone 回退
+      // v2.39.0: 按 cfg.phonePool.provider 分流 local / zhusms
+      // v2.39.4: 包成 retry loop（最多 3 次）。OpenAI 红字"无法发送验证码" → rollback + 换号
+      //   - 仅 SMS 框真出现时才算"号被 OpenAI 接受"，local 模式 binding 保留 / zhusms 不退余额
+      //   - 红字 → local 模式 releaseBinding 撤回 binding / zhusms cancelOrder
       if (await isAddPhonePage(page)) {
         const fs = require('fs');
         const pathMod = require('path');
@@ -371,73 +371,108 @@ async function fetchTokensViaPKCE(browser, account, lastOtp) {
         } catch {}
 
         const provider = cfg.phonePool.provider || 'local';
-        let phone, smsCodeFn, releaseFn;
+        const MAX_PHONE_ATTEMPTS = 3;
+        let success = false;
+        let lastReason = null;
 
-        if (provider === 'zhusms') {
-          // v2.39.0: zhusms 远程 provider
-          const zhusms = require('./server/zhusms-provider');
-          const z = cfg.phonePool.zhusms || {};
-          if (!z.cardKey) {
-            console.log('  [PKCE] zhusms provider: cardKey not configured');
-            return { phonePoolEmpty: true };
-          }
-          try {
-            const order = await zhusms.takeOrder(z.cardKey, z.baseUrl || 'https://zhusms.com', z.service || 'codex', proxyUrl);
-            if (!order) {
-              console.log('  [PKCE] zhusms: takeOrder returned null (余额耗尽 / 服务异常)');
-              return { phonePoolEmpty: true };
+        for (let attempt = 1; attempt <= MAX_PHONE_ATTEMPTS; attempt++) {
+          let phone, smsCodeFn, releaseFn;
+
+          if (provider === 'zhusms') {
+            const zhusms = require('./server/zhusms-provider');
+            const z = cfg.phonePool.zhusms || {};
+            if (!z.cardKey) {
+              console.log('  [PKCE] zhusms provider: cardKey not configured');
+              return lastReason ? { phoneVerifyFail: lastReason } : { phonePoolEmpty: true };
             }
-            phone = order.phone;
-            smsCodeFn = () => zhusms.pollOrderSms(order.order_no, z.baseUrl || 'https://zhusms.com', {
+            try {
+              const order = await zhusms.takeOrder(z.cardKey, z.baseUrl || 'https://zhusms.com', z.service || 'codex', proxyUrl);
+              if (!order) {
+                console.log(`  [PKCE] zhusms takeOrder null (attempt ${attempt}) — 余额耗尽 / 服务异常`);
+                return lastReason ? { phoneVerifyFail: lastReason } : { phonePoolEmpty: true };
+              }
+              phone = order.phone;
+              smsCodeFn = () => zhusms.pollOrderSms(order.order_no, z.baseUrl || 'https://zhusms.com', {
+                pollIntervalMs: cfg.phonePool.smsPollIntervalMs || 3000,
+                maxAttempts: cfg.phonePool.smsMaxAttempts || 30,
+                proxyUrl,
+                cardKey: z.cardKey,
+              });
+              releaseFn = () => zhusms.cancelOrder(order.order_no, z.baseUrl || 'https://zhusms.com', z.cardKey, proxyUrl);
+            } catch (e) {
+              console.log(`  [PKCE] zhusms takeOrder failed: ${e?.message?.slice(0, 60)}`);
+              return { phoneVerifyFail: 'zhusms-take-fail' };
+            }
+          } else {
+            const phonePool = require('./server/phone-pool');
+            const { getRawDb } = require('./server/db');
+            const max = cfg.phonePool.maxBindingsPerPhone || 5;
+            const allotted = phonePool.acquirePhone(getRawDb(), account.email, max);
+            if (!allotted) {
+              console.log(`  [PKCE] phone pool exhausted (attempt ${attempt})`);
+              return lastReason ? { phoneVerifyFail: lastReason } : { phonePoolEmpty: true };
+            }
+            phone = allotted.phone;
+            smsCodeFn = () => phonePool.fetchSmsCode(allotted.smsApiUrl, {
               pollIntervalMs: cfg.phonePool.smsPollIntervalMs || 3000,
               maxAttempts: cfg.phonePool.smsMaxAttempts || 30,
               proxyUrl,
-              cardKey: z.cardKey,  // v2.39.3: pollOrderSms 现在需要 cardKey 以拿 session cookie
             });
-            releaseFn = () => zhusms.cancelOrder(order.order_no, z.baseUrl || 'https://zhusms.com', z.cardKey, proxyUrl);
+            // v2.39.4: local 模式现在支持回滚 binding（OpenAI 拒号场景）
+            releaseFn = () => phonePool.releaseBinding(getRawDb(), allotted.phone, account.email);
+          }
+
+          try {
+            console.log(`  [PKCE] add-phone (attempt ${attempt}/${MAX_PHONE_ATTEMPTS}): filling ${phone} (provider=${provider})`);
+            await page.fill('input[type="tel"], input[autocomplete="tel"]', phone);
+            await page.click('button[type="submit"]');
+            // 短等 SMS 框；不出现就检查红字
+            let smsBoxAppeared = false;
+            try {
+              await page.waitForSelector('input[autocomplete="one-time-code"], input[name*="code" i]', { timeout: 8000 });
+              smsBoxAppeared = true;
+            } catch {}
+
+            if (!smsBoxAppeared) {
+              // 检查 OpenAI 红字（中文「无法向此电话号码发送验证码」/ 英文 "Unable to send"）
+              const rejectedNode = await page.locator(':text-matches("无法向此电话号码发送验证码|Unable to send verification|cannot send a verification", "i")').first().isVisible({ timeout: 1500 }).catch(() => false);
+              if (rejectedNode) {
+                console.log(`  [PKCE] OpenAI 拒绝 ${phone} (attempt ${attempt}/${MAX_PHONE_ATTEMPTS}) — 换号重试`);
+                if (releaseFn) try { await releaseFn(); } catch {}
+                lastReason = 'phone-rejected-by-openai';
+                continue;  // 内层 for 取下一号
+              }
+              // 既不是 SMS 框也不是红字 → submit-error
+              throw new Error('submit-error: SMS box not appeared, no rejection text');
+            }
+
+            // SMS 框出现 → OpenAI 接受了号，开始接码
+            console.log(`  [PKCE] add-phone: polling SMS code (${provider})...`);
+            const code = await smsCodeFn();
+            console.log(`  [PKCE] add-phone: got SMS code, filling and submitting`);
+            await page.fill('input[autocomplete="one-time-code"], input[name*="code" i]', code);
+            await page.click('button[type="submit"]');
+            await page.waitForURL(u => /\/oauth\/callback|code=/.test(u), { timeout: 30000 });
+            console.log('  [PKCE] add-phone: verification done, continuing PKCE');
+            success = true;
+            break;  // 跳出 retry loop
           } catch (e) {
-            console.log(`  [PKCE] zhusms takeOrder failed: ${e?.message?.slice(0, 60)}`);
-            return { phoneVerifyFail: 'zhusms-take-fail' };
+            // SMS 框出现后的失败（sms-poll-timeout / submit / waitForURL 超时）
+            // 不属于"号被拒"场景 → 不重试，直接 fail
+            if (releaseFn) try { await releaseFn(); } catch {}
+            const reason = e?.message?.includes('sms-poll-timeout') ? 'sms-timeout'
+              : (e?.message?.includes('submit-error') ? 'submit-error' : 'submit-error');
+            console.log(`  [PKCE] add-phone failed: ${reason} (${e?.message?.slice(0, 80)})`);
+            return { phoneVerifyFail: reason };
           }
-        } else {
-          // 既有 local 路径（v2.38.0）
-          const phonePool = require('./server/phone-pool');
-          const { getRawDb } = require('./server/db');
-          const max = cfg.phonePool.maxBindingsPerPhone || 5;
-          const allotted = phonePool.acquirePhone(getRawDb(), account.email, max);
-          if (!allotted) {
-            console.log('  [PKCE] phone pool exhausted for this account');
-            return { phonePoolEmpty: true };
-          }
-          phone = allotted.phone;
-          smsCodeFn = () => phonePool.fetchSmsCode(allotted.smsApiUrl, {
-            pollIntervalMs: cfg.phonePool.smsPollIntervalMs || 3000,
-            maxAttempts: cfg.phonePool.smsMaxAttempts || 30,
-            proxyUrl,
-          });
-          releaseFn = null;  // local 模式 binding 永久，无释放
         }
 
-        // 通用 Playwright 填表 + 接码 + 提交 + 等 callback + continue（两个 provider 共用）
-        try {
-          console.log(`  [PKCE] add-phone: filling ${phone} (provider=${provider})`);
-          await page.fill('input[type="tel"], input[autocomplete="tel"]', phone);
-          await page.click('button[type="submit"]');
-          await page.waitForSelector('input[autocomplete="one-time-code"], input[name*="code" i]', { timeout: 15000 });
-          console.log(`  [PKCE] add-phone: polling SMS code (${provider})...`);
-          const code = await smsCodeFn();
-          console.log(`  [PKCE] add-phone: got SMS code, filling and submitting`);
-          await page.fill('input[autocomplete="one-time-code"], input[name*="code" i]', code);
-          await page.click('button[type="submit"]');
-          await page.waitForURL(u => /\/oauth\/callback|code=/.test(u), { timeout: 30000 });
-          console.log('  [PKCE] add-phone: verification done, continuing PKCE');
-          continue;
-        } catch (e) {
-          if (releaseFn) try { await releaseFn(); } catch {}
-          const reason = e?.message?.includes('sms-poll-timeout') ? 'sms-timeout' : 'submit-error';
-          console.log(`  [PKCE] add-phone failed: ${reason} (${e?.message?.slice(0, 60)})`);
-          return { phoneVerifyFail: reason };
+        if (success) {
+          continue;  // 外层 PKCE 主循环
         }
+        // 3 次都被 OpenAI 拒
+        console.log(`  [PKCE] all ${MAX_PHONE_ATTEMPTS} phones rejected by OpenAI`);
+        return { phoneVerifyFail: 'all-phones-rejected' };
       }
 
       // STATE 4: about-you (first-time registration)

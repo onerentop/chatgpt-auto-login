@@ -1,5 +1,23 @@
 # Changelog
 
+## v2.39.4 — 2026-05-25
+
+### add_phone OpenAI 拒号 → rollback + retry (最多 3 次)
+
+实测发现 OpenAI 偶尔在 add_phone 提交后红字「无法向此电话号码发送验证码」（号本身没问题，但 OpenAI 在它那边判定不发）。v2.39.3 之前会直接 `phone_verify_fail` 单号挂掉。
+
+**新增**
+
+- **`server/phone-pool.js:releaseBinding(db, phone, email)`** — 撤销刚刚 `acquirePhone` 建立的临时 binding；`DELETE phone_bindings` + `bindings_used = MAX(0, -1)`。仅"OpenAI 没真正发短信"场景调用，v2.37.0「永久 binding」语义在正常路径不变。
+- **`utils.js:fetchTokensViaPKCE`** add_phone 分支包成 retry loop（`MAX_PHONE_ATTEMPTS=3`）：
+  1. 提交手机后短等 8s `input[autocomplete="one-time-code"]`
+  2. 没出现就用 Playwright `locator(':text-matches("无法向此电话号码发送验证码|Unable to send verification|cannot send a verification", "i")')` 查红字
+  3. 红字命中 → `releaseFn()` 撤回（local: `releaseBinding`；zhusms: `cancelOrder`）→ 拿下一号
+  4. SMS 框真出现 → 进入接码流程；这之后失败（`sms-timeout` / `submit-error`）不再 retry（号已被 OpenAI 接受）
+- **不变式**：binding 计数只在 SMS 框出现时增加（即 OpenAI 真发了短信）；3 次全拒 → `{phoneVerifyFail: 'all-phones-rejected'}`
+
+**测试**：206 tests pass（既有 phone-pool / zhusms 覆盖未破）。
+
 ## v2.39.0 — 2026-05-25
 
 ### zhusms 远程接码 Provider 并列接入

@@ -96,6 +96,17 @@ function acquirePhone(db, email, maxBindingsPerPhone) {
 }
 
 /**
+ * v2.39.4: 撤销刚刚 acquirePhone 建立的临时 binding。
+ * 当 OpenAI 拒绝该号（"无法发送验证码"红字）时，号本身没被 OpenAI 用 →
+ * 不该消耗 bindings_used 名额 → 删除 binding 行 + bindings_used MAX(0, -1)。
+ * v2.37.0 原设计是「永久 binding」，本函数仅用于"OpenAI 上没真正发短信"的回退场景。
+ */
+function releaseBinding(db, phone, email) {
+  db.run('DELETE FROM phone_bindings WHERE phone = ? AND email = ?', [phone, email])
+  db.run('UPDATE phone_pool SET bindings_used = MAX(0, bindings_used - 1) WHERE phone = ?', [phone])
+}
+
+/**
  * 轮询 smsApiUrl，regex /\b(\d{6})\b/ 提取 6 位数字。
  * - signal 支持 AbortController
  * - proxyUrl (v2.38.0) 可选，提供时走 HttpsProxyAgent（跟 server/discord-gateway.js 同模式），
@@ -139,4 +150,4 @@ async function fetchSmsCode(smsApiUrl, { pollIntervalMs = 3000, maxAttempts = 30
   throw new Error('sms-poll-timeout')
 }
 
-module.exports = { listPhones, importPhones, exportPhones, deletePhone, acquirePhone, fetchSmsCode }
+module.exports = { listPhones, importPhones, exportPhones, deletePhone, acquirePhone, releaseBinding, fetchSmsCode }
