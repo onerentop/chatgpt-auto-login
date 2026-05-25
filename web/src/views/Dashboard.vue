@@ -96,7 +96,6 @@
     <SectionCard title="近期执行" flush>
       <template #extra>
         <el-button text size="small" @click="reload" :loading="loading">刷新</el-button>
-        <el-button text size="small" type="primary" @click="router.push('/results')">查看全部 →</el-button>
       </template>
       <EmptyState
         v-if="!loading && recentResults.length === 0"

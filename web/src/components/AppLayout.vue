@@ -44,9 +44,6 @@
           <el-menu-item index="/execute">
             <el-icon><VideoPlay /></el-icon><span>执行控制</span>
           </el-menu-item>
-          <el-menu-item index="/results">
-            <el-icon><Document /></el-icon><span>执行结果</span>
-          </el-menu-item>
           <el-menu-item index="/phone-pool">
             <el-icon><Iphone /></el-icon><span>号池</span>
           </el-menu-item>
@@ -156,7 +153,6 @@ onMounted(() => {
     registerCommand({ id: 'nav.dashboard', group: '导航', label: '前往：仪表盘', keywords: 'dashboard home', action: () => router.push('/') }),
     registerCommand({ id: 'nav.accounts',  group: '导航', label: '前往：账号管理', keywords: 'accounts', action: () => router.push('/accounts') }),
     registerCommand({ id: 'nav.execute',   group: '导航', label: '前往：执行控制', keywords: 'execute run', action: () => router.push('/execute') }),
-    registerCommand({ id: 'nav.results',   group: '导航', label: '前往：执行结果', keywords: 'results history', action: () => router.push('/results') }),
     registerCommand({ id: 'nav.config',    group: '导航', label: '前往：配置设置', keywords: 'config settings', action: () => router.push('/config') }),
     registerCommand({ id: 'theme.toggle',  group: '主题', label: '切换暗色 / 亮色模式', keywords: 'dark light theme toggle', action: toggle }),
     registerCommand({ id: 'app.notifications', group: '导航', label: '打开通知中心', keywords: 'notifications bell', action: openNotifications }),
