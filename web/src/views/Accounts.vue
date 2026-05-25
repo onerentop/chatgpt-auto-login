@@ -8,44 +8,66 @@
       </template>
     </PageHeader>
 
-    <!-- Toolbar — 筛选 + 选中操作两行 -->
+    <!-- Toolbar — 单行筛选 + 单行测活控制 -->
     <SectionCard flush>
       <div class="ac-toolbar">
         <div class="ac-toolbar__row">
-          <el-input v-model="search" placeholder="搜索 (邮箱/RT/Client ID/TOTP/密码) — 按 / 聚焦" clearable
-                    style="width:300px" data-hotkey="search" />
+          <el-input v-model="search" placeholder="搜索邮箱 / RT / Client ID / TOTP / 密码  按 / 聚焦" clearable
+                    style="flex:1;max-width:380px" data-hotkey="search" />
           <el-select v-model="statusFilter" placeholder="状态" clearable multiple collapse-tags collapse-tags-tooltip style="width:170px">
             <el-option v-for="opt in EXECUTE_STATUS_FILTER_OPTIONS" :key="opt.value" :label="opt.label" :value="opt.value" />
           </el-select>
-          <el-select v-model="planFilter" placeholder="Plan" clearable style="width:110px">
-            <el-option label="Plus" value="plus" />
-            <el-option label="Free" value="free" />
-            <el-option label="未知" value="unknown" />
-          </el-select>
-          <el-select v-model="authFilter" placeholder="Auth" clearable style="width:110px">
-            <el-option label="已生成" value="yes" />
-            <el-option label="未生成" value="no" />
-          </el-select>
-          <el-select v-model="aliveFilter" placeholder="活性" clearable multiple collapse-tags collapse-tags-tooltip size="small" style="width:170px">
-            <el-option v-for="o in aliveFilterOptions" :key="o.value" :label="o.label" :value="o.value" />
-          </el-select>
-          <el-button size="small" text @click="aliveFilter = ['unknown']">仅看未测试</el-button>
-          <el-button size="small" :type="staleOnly ? 'primary' : ''" text @click="staleOnly = !staleOnly">7 天未测</el-button>
-          <el-button size="small" text :disabled="!hasAnyFilter" @click="resetFilters">重置</el-button>
+          <el-popover placement="bottom-end" :width="320" trigger="click">
+            <template #reference>
+              <el-button>
+                更多筛选
+                <el-tag v-if="advancedFilterCount > 0" type="primary" size="small" round style="margin-left:6px">
+                  {{ advancedFilterCount }}
+                </el-tag>
+              </el-button>
+            </template>
+            <div class="ac-advanced">
+              <div class="ac-advanced__row">
+                <label class="ac-advanced__label">Plan</label>
+                <el-select v-model="planFilter" placeholder="不限" clearable style="flex:1">
+                  <el-option label="Plus" value="plus" />
+                  <el-option label="Free" value="free" />
+                  <el-option label="未知" value="unknown" />
+                </el-select>
+              </div>
+              <div class="ac-advanced__row">
+                <label class="ac-advanced__label">Auth 文件</label>
+                <el-select v-model="authFilter" placeholder="不限" clearable style="flex:1">
+                  <el-option label="已生成" value="yes" />
+                  <el-option label="未生成" value="no" />
+                </el-select>
+              </div>
+              <div class="ac-advanced__row">
+                <label class="ac-advanced__label">活性</label>
+                <el-select v-model="aliveFilter" placeholder="不限" clearable multiple collapse-tags style="flex:1">
+                  <el-option v-for="o in aliveFilterOptions" :key="o.value" :label="o.label" :value="o.value" />
+                </el-select>
+              </div>
+              <div class="ac-advanced__row">
+                <el-button size="small" text @click="aliveFilter = ['unknown']">仅看未测试</el-button>
+                <el-button size="small" :type="staleOnly ? 'primary' : ''" text @click="staleOnly = !staleOnly">7 天未测</el-button>
+                <span style="flex:1" />
+                <el-button size="small" text :disabled="!hasAnyFilter" @click="resetFilters">重置全部</el-button>
+              </div>
+            </div>
+          </el-popover>
           <span class="app-spacer" />
           <el-tag round>{{ filteredAccounts.length }} / {{ accounts.length }}</el-tag>
         </div>
-        <div class="ac-toolbar__row">
-          <el-button :disabled="selected.length === 0" @click="exportSelected">导出选中 ({{ selected.length }})</el-button>
-          <el-dropdown :disabled="selected.length === 0" @command="downloadSelectedAs" split-button size="default">
-            下载选中 ({{ selected.length }})
-            <template #dropdown>
-              <el-dropdown-menu>
-                <el-dropdown-item command="cpa">CPA 格式</el-dropdown-item>
-                <el-dropdown-item command="sub2api">Sub2API 格式</el-dropdown-item>
-              </el-dropdown-menu>
-            </template>
-          </el-dropdown>
+        <!-- Row 2: 测活全局控制（与选中无关；选中相关的操作走底部 ContextActionBar） -->
+        <div class="ac-toolbar__row ac-toolbar__row--liveness">
+          <span class="ac-toolbar__group-label">测活</span>
+          <el-button type="primary" :disabled="livenessRunning" @click="checkAllWithConfirm">测活全部</el-button>
+          <el-button v-if="livenessRunning" type="danger" @click="stopLiveness">停止测活</el-button>
+          <el-tag v-if="livenessRunning" type="info" size="small">
+            {{ socketState.liveness.done }}/{{ socketState.liveness.total }} (✗{{ socketState.liveness.failed }})
+          </el-tag>
+          <span class="app-spacer" />
           <el-dropdown @command="downloadAllAs" split-button size="default">
             下载全部 (ZIP)
             <template #dropdown>
@@ -55,23 +77,27 @@
               </el-dropdown-menu>
             </template>
           </el-dropdown>
-          <el-button :disabled="selected.length === 0" @click="clearAllSelection">取消选中</el-button>
-          <el-button v-if="selected.length > 0" type="danger" :loading="batchDeleting" @click="confirmDelSelected">
-            {{ batchDeleting ? '删除中…' : `删除选中 (${selected.length})` }}
-          </el-button>
-          <span class="app-spacer" />
-          <el-divider direction="vertical" />
-          <el-button type="primary" :disabled="selected.length === 0 || livenessRunning" @click="startLiveness('selected')">
-            测活选中 ({{ selected.length }})
-          </el-button>
-          <el-button type="primary" :disabled="livenessRunning" @click="checkAllWithConfirm">测活全部</el-button>
-          <el-button v-if="livenessRunning" type="danger" @click="stopLiveness">停止测活</el-button>
-          <el-tag v-if="livenessRunning" type="info" size="small">
-            {{ socketState.liveness.done }}/{{ socketState.liveness.total }} (✗{{ socketState.liveness.failed }})
-          </el-tag>
         </div>
       </div>
     </SectionCard>
+
+    <!-- v2.35 ContextActionBar — bulk operations slide-in at bottom when selected > 0 -->
+    <ContextActionBar :count="selected.length" label="个账号" @clear="clearAllSelection">
+      <el-button @click="exportSelected">导出</el-button>
+      <el-dropdown @command="downloadSelectedAs" split-button size="default">
+        下载
+        <template #dropdown>
+          <el-dropdown-menu>
+            <el-dropdown-item command="cpa">CPA 格式</el-dropdown-item>
+            <el-dropdown-item command="sub2api">Sub2API 格式</el-dropdown-item>
+          </el-dropdown-menu>
+        </template>
+      </el-dropdown>
+      <el-button type="primary" :disabled="livenessRunning" @click="startLiveness('selected')">测活</el-button>
+      <el-button type="danger" :loading="batchDeleting" @click="confirmDelSelected">
+        {{ batchDeleting ? '删除中…' : '删除' }}
+      </el-button>
+    </ContextActionBar>
 
     <SectionCard v-if="oldLogs.length > 0 || newLogs.length > 0" title="测活日志" flush>
       <el-collapse v-model="oldLogsExpanded">
@@ -227,6 +253,7 @@
 
 <script setup>
 import { ref, computed, onMounted, nextTick, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { DocumentCopy } from '@element-plus/icons-vue'
 import api from '../api'
@@ -237,6 +264,7 @@ import { useUrlSyncedFilters } from '../composables/useUrlSyncedFilters'
 import { confirmDanger } from '../composables/useConfirmDanger'
 import PageHeader from '../components/ui/PageHeader.vue'
 import SectionCard from '../components/ui/SectionCard.vue'
+import ContextActionBar from '../components/ui/ContextActionBar.vue'
 
 const tableRef = ref(null)
 const accounts = ref([])
@@ -272,6 +300,18 @@ const hasAnyFilter = computed(() =>
   !!search.value || statusFilter.value.length > 0 || !!planFilter.value
   || !!authFilter.value || aliveFilter.value.length > 0 || staleOnly.value
 )
+
+// v2.35 — count of advanced (popover-hidden) filters that are active.
+// Used as a badge on the "更多筛选" button so users can see at a glance
+// when filters are applied behind the popover.
+const advancedFilterCount = computed(() => {
+  let n = 0
+  if (planFilter.value) n++
+  if (authFilter.value) n++
+  if (aliveFilter.value.length > 0) n++
+  if (staleOnly.value) n++
+  return n
+})
 
 function resetFilters() {
   search.value = ''
@@ -379,7 +419,22 @@ async function loadLivenessLogs() {
     if (socketState.logs.length > 500) socketState.logs.splice(0, socketState.logs.length - 500)
   } catch {}
 }
-onMounted(() => { load(); loadLivenessLogs() })
+onMounted(() => {
+  load()
+  loadLivenessLogs()
+  // v2.35 — react to ?action=import / ?action=add from Dashboard task cards
+  // or Command Palette navigations. Clear the query after opening so a refresh
+  // doesn't keep re-opening the modal.
+  const route = useRoute()
+  const router = useRouter()
+  if (route.query.action === 'import') {
+    showImport.value = true
+    router.replace({ query: { ...route.query, action: undefined } })
+  } else if (route.query.action === 'add') {
+    openAdd()
+    router.replace({ query: { ...route.query, action: undefined } })
+  }
+})
 // Auto-expand log panel when liveness starts; user controls collapsing afterwards.
 watch(() => socketState.liveness.running, (now) => {
   if (now && !newLogsExpanded.value.includes('new')) {
@@ -630,7 +685,8 @@ async function downloadSelectedAs(format) {
 <style scoped>
 :deep(.el-table__body tr) { cursor: pointer; }
 
-/* Toolbar — two rows of filters + actions; gap pulled from token scale. */
+/* Toolbar — v2.35: one filter row + one liveness/global-action row.
+ * Bulk per-selection actions moved to ContextActionBar (bottom slide-in). */
 .ac-toolbar {
   display: flex;
   flex-direction: column;
@@ -642,6 +698,36 @@ async function downloadSelectedAs(format) {
   align-items: center;
   gap: var(--sp-2);
   flex-wrap: wrap;
+}
+.ac-toolbar__row--liveness {
+  padding-top: var(--sp-2);
+  border-top: 1px dashed var(--app-border-soft);
+}
+.ac-toolbar__group-label {
+  font-size: var(--fs-sm);
+  color: var(--app-text-mute);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 600;
+  margin-right: var(--sp-1);
+}
+
+/* Advanced filters popover */
+.ac-advanced {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+.ac-advanced__row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+.ac-advanced__label {
+  width: 72px;
+  flex-shrink: 0;
+  font-size: var(--fs-md);
+  color: var(--app-text-2);
 }
 
 .liveness-log-list {
