@@ -1,5 +1,60 @@
 # Changelog
 
+## v2.34.0 — 2026-05-25
+
+### 前端重设计 — design tokens + 信息架构统一 + 通用组件
+
+保留所有功能 / API / 业务逻辑，重做视觉系统与页面层级。spec 见
+`docs/superpowers/specs/2026-05-25-v2.34-frontend-redesign-design.md`。
+
+**新增设计基础（B1 / B2）：**
+
+- `web/src/styles/tokens.css`：`--app-*` 自命名空间，与 `--el-*`
+  并存不冲突。亮 + 暗双套色板、间距 4-px scale、字号 5 档、字体
+  system stack、圆角、三档极轻阴影。
+- `web/src/components/ui/PageHeader.vue` / `SectionCard.vue` /
+  `EmptyState.vue` 三个通用组件，统一页面壳、卡片、空数据视觉。
+
+**全局壳重做（B3）：**
+
+- AppLayout 拆三段：sticky 顶栏（56px）/ 侧栏 / 主区。
+- 顶栏左 logo + 当前页标题（route.meta.title），右 socket 状态
+  药丸 + 通知铃铛 + 暗色切换；不再挤在 logo 区。
+- 侧栏配色由硬编码 navy `#304156` 改 surface（亮=白 / 暗=深 surface）；
+  menu item 用 token 化 hover/active 高亮。
+- 主区 max-width 1440 居中；统一 24px padding。
+
+**5 视图重排（B4–B8）：**
+
+- **Dashboard**：PageHeader + KPI grid（CSS auto-fill minmax 180/1fr），
+  7 张紧凑卡片，可点击跳 `/accounts?status=…` 带筛选。
+- **Accounts**：PageHeader（含 Plus/失败动态计数）+ Toolbar 从 4 行
+  收到 2 行（筛选 / 选中操作 + 全局操作 + 测活）。测活日志在无数据
+  时整段隐藏；行高亮颜色 token 化。
+- **Execute**：PageHeader 副标题动态读 socketState.accountStatuses，
+  显示"当前 user@xxx · phase"；mode / link source 提到顶部 actions
+  槽；toolbar 2 行（操作 / 筛选）。
+- **Results**：PageHeader 含 Plus/Auth 计数 + 主按钮[刷新][下载全部
+  ZIP]；新增 EmptyState 引导。
+- **Config**：PageHeader 保留[未保存]tag + [保存配置]按钮提顶；7 tab
+  从横排改 `tab-position="left"`，左 rail + 右表单。
+
+**暗色 polish（B9）：**
+
+- AccountTableRows 行高亮 / 内联颜色 / 代理 banner 全部迁 token，
+  暗色自动跟随；终端日志区刻意保留黑底。
+
+**工程：**
+
+- 182/182 测试全绿（后端无改动；前端无测试）。
+- 10 个 batch 共 10 commits，每个 batch 验证 npm run build 成功。
+- 构建产物体积浮动 < 5%。
+
+**不变 / 保留**：所有 API、socket 协议、status.js 单一来源、
+selection.js、v2.33 行高亮逻辑、v2.32 实时 socket 订阅、v2.30
+通知中心 / batch-delete、v2.29 dirty 守卫 / 快捷键 / URL 筛选 /
+WebSocket 断线横幅。不引新 npm 依赖。
+
 ## v2.33.1 — 2026-05-25
 
 ### Hotfix: running 专属高亮色，不再与 warning 撞色
