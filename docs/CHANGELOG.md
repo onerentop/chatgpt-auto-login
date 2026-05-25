@@ -2,58 +2,45 @@
 
 ## v2.34.0 — 2026-05-25
 
-### 前端重设计 — design tokens + 信息架构统一 + 通用组件
+### Execute 分组锁定 + 视图切换
 
-保留所有功能 / API / 业务逻辑，重做视觉系统与页面层级。spec 见
-`docs/superpowers/specs/2026-05-25-v2.34-frontend-redesign-design.md`。
+两个独立但相关的 UX 改进：
 
-**新增设计基础（B1 / B2）：**
+**Part A — Sticky grouping**
 
-- `web/src/styles/tokens.css`：`--app-*` 自命名空间，与 `--el-*`
-  并存不冲突。亮 + 暗双套色板、间距 4-px scale、字号 5 档、字体
-  system stack、圆角、三档极轻阴影。
-- `web/src/components/ui/PageHeader.vue` / `SectionCard.vue` /
-  `EmptyState.vue` 三个通用组件，统一页面壳、卡片、空数据视觉。
+v2.27 引入分组面板后，运行时 row 跨组跳跃（idle → running → 终态
+plus / error）让用户跟丢 —— 刚看的一行跑着跑着就跳到别的组里去了。
 
-**全局壳重做（B3）：**
+修复：`Execute.vue:startExec` 时给 `filteredRows` 设
+`_groupStatus = _status` 快照。`groupAccountsByStatus` 改读
+`_groupStatus || _status || 'idle'`。socket 更新只动 `_status`
+（驱动 v2.33 的行颜色），但 row 留在原组。
 
-- AppLayout 拆三段：sticky 顶栏（56px）/ 侧栏 / 主区。
-- 顶栏左 logo + 当前页标题（route.meta.title），右 socket 状态
-  药丸 + 通知铃铛 + 暗色切换；不再挤在 logo 区。
-- 侧栏配色由硬编码 navy `#304156` 改 surface（亮=白 / 暗=深 surface）；
-  menu item 用 token 化 hover/active 高亮。
-- 主区 max-width 1440 居中；统一 24px padding。
+- **解锁时机：仅页面刷新**（`loadResults()` 重建 `accounts.value` 时新
+  row 没 `_groupStatus` → 回到真实分组）。不主动清。
+- **二次执行覆盖快照**：第二次 startExec 重新设 `_groupStatus = _status`
+  —— 第二次开始时的真实状态。
+- **行颜色不锁**：v2.33 `rowClassFor(row._status)` 仍读真实 `_status`，
+  row 颜色随真实状态实时变 —— 用户既看到"还在跑/已成功"也保留视觉位置。
 
-**5 视图重排（B4–B8）：**
+**Part B — 视图切换：分组 / 平铺**
 
-- **Dashboard**：PageHeader + KPI grid（CSS auto-fill minmax 180/1fr），
-  7 张紧凑卡片，可点击跳 `/accounts?status=…` 带筛选。
-- **Accounts**：PageHeader（含 Plus/失败动态计数）+ Toolbar 从 4 行
-  收到 2 行（筛选 / 选中操作 + 全局操作 + 测活）。测活日志在无数据
-  时整段隐藏；行高亮颜色 token 化。
-- **Execute**：PageHeader 副标题动态读 socketState.accountStatuses，
-  显示"当前 user@xxx · phase"；mode / link source 提到顶部 actions
-  槽；toolbar 2 行（操作 / 筛选）。
-- **Results**：PageHeader 含 Plus/Auth 计数 + 主按钮[刷新][下载全部
-  ZIP]；新增 EmptyState 引导。
-- **Config**：PageHeader 保留[未保存]tag + [保存配置]按钮提顶；7 tab
-  从横排改 `tab-position="left"`，左 rail + 右表单。
+toolbar 加 `<el-switch v-model="groupingEnabled">`（默认开 = 分组）。
 
-**暗色 polish（B9）：**
+- **分组（默认）**：既有 `<el-collapse>` + groups + AccountTableRows
+- **平铺**：单 `<AccountTableRows :rows="flatSortedRows">`，按 GROUP_ORDER
+  业务优先序排（Plus 在上、运行中、错误、已删除... 依次），同 status
+  内稳定插入序
 
-- AccountTableRows 行高亮 / 内联颜色 / 代理 banner 全部迁 token，
-  暗色自动跟随；终端日志区刻意保留黑底。
+选择跨视图保持一致（复用既有 globalSelectedSet）。`onGroupSelectionChange`
+平铺分支用 clearSelection + 重建确保选择 Set 与 UI 同步。
 
-**工程：**
+**测试**：`__tests__/status-groups.test.js` +2（_groupStatus 优先于
+_status / falsy fallback）。`groupAccountsByStatus` 改动**向后兼容**
+—— Accounts.vue 不受影响（其 row 没 `_groupStatus` 概念）。
 
-- 182/182 测试全绿（后端无改动；前端无测试）。
-- 10 个 batch 共 10 commits，每个 batch 验证 npm run build 成功。
-- 构建产物体积浮动 < 5%。
-
-**不变 / 保留**：所有 API、socket 协议、status.js 单一来源、
-selection.js、v2.33 行高亮逻辑、v2.32 实时 socket 订阅、v2.30
-通知中心 / batch-delete、v2.29 dirty 守卫 / 快捷键 / URL 筛选 /
-WebSocket 断线横幅。不引新 npm 依赖。
+**Spec / Plan**：`docs/superpowers/specs/2026-05-25-execute-sticky-grouping-and-view-toggle-design.md`
++ `docs/superpowers/plans/2026-05-25-execute-sticky-grouping-and-view-toggle.md`。
 
 ## v2.33.1 — 2026-05-25
 
