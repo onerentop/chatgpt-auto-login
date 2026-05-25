@@ -1,5 +1,28 @@
 # Changelog
 
+## v2.40.4 — 2026-05-26
+
+### 账号风控号 → 标记 saturated（永久排除给所有后续账号）
+
+v2.40.3 协议侧能识别 `fraud_guard` / `rate_limit_exceeded` 立刻 break 不 retry，但**该号仍可被其他账号 acquire** —— 既然 OpenAI 已经对它 flag，给其他账号继续用大概率仍被拒，浪费 SMS 名额。
+
+**用户诉求**：出现 fraud_guard / rate_limit 的号，**无论已经使用了几次**，都直接标记为「用满」（`bindings_used = maxBindingsPerPhone`），让 acquirePhone SQL 的 `WHERE bindings_used < max` 自动排除给所有后续账号用。
+
+**实现**：
+
+- **`server/phone-pool.js:markPhoneSaturated(db, phone, max)`** —— 新函数，把 `bindings_used` 直接拉到 `max`。**不删 binding 行**（保留历史），**不可逆**（手动 UPDATE 可恢复）。
+- **`protocol-engine.js:_finalizePhoneVerify`** `rate-limited` / `fraud-blocked` 分支改：local provider 调 `markPhoneSaturated`（不是 releaseFn）；zhusms 仍 cancelOrder。
+- **`utils.js:fetchTokensViaPKCE`** add_phone 分支加账号风控 red-text 检测（"suspicious behavior" / "similar to yours" / "too many phone verification" / "rate limit" / "fraud"），命中时调 `saturateFn`（v2.40.4 新增 binding helper）+ 立刻 break，返 `{phoneVerifyFail: 'account-blocked'}`。
+- **测试 +1**：`P5c markPhoneSaturated 拉 bindings_used 到 max 排除所有后续账号`（218 pass）。
+
+**DB 修复**：本次 v2.40.4 把已观测触发风控的 2 个号 `+12153910969`（fraud_guard）+ `+12282351427`（rate_limit_exceeded）已在生产 DB 标记 saturated。
+
+**语义说明**：
+
+- `bindings_used >= max`：号在 OpenAI 那边已被 flag，所有未来 acquire 直接跳过
+- binding 行保留：历史"哪个账号在该号上失败过" 不丢
+- 恢复方法：OpenAI 风控通常 24-72h 解除，可手工 `UPDATE phone_pool SET bindings_used = <N> WHERE phone = ?`，N < max 即可重新启用该号
+
 ## v2.40.3 — 2026-05-26
 
 ### 协议侧 add_phone 区分账号级风控 vs 号问题（+ rebuild_session 白名单）

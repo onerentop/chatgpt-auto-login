@@ -89,6 +89,24 @@ test('P5 acquirePhone 同 email 不重绑同 phone', () => {
   assert.strictEqual(r3, null, '同 email 全部 phone 用尽 → null')
 })
 
+test('P5c v2.40.4 markPhoneSaturated 拉 bindings_used 到 max 排除所有后续账号', () => {
+  const db = freshDb()
+  db.run("INSERT INTO phone_pool (phone, sms_api_url, bindings_used) VALUES ('+14642840651', 'http://A.com', 1)")
+  db.run("INSERT INTO phone_pool (phone, sms_api_url, bindings_used) VALUES ('+15001234567', 'http://B.com', 0)")
+  // 给 A 加一个 binding 模拟真实场景
+  db.run("INSERT INTO phone_bindings (phone, email) VALUES ('+14642840651', 'a@x.com')")
+  // OpenAI 给 b@x.com 返 fraud_guard → mark A saturated
+  phonePool.markPhoneSaturated(db, '+14642840651', 3)
+  // A bindings_used 应该 = 3 (max)，binding 行不变
+  const r1 = db.exec("SELECT bindings_used FROM phone_pool WHERE phone='+14642840651'")
+  assert.strictEqual(r1[0].values[0][0], 3, 'markSaturated 把 bindings_used 拉到 max')
+  const r2 = db.exec("SELECT COUNT(*) FROM phone_bindings WHERE phone='+14642840651'")
+  assert.strictEqual(r2[0].values[0][0], 1, 'binding 行不变')
+  // c@x.com 再 acquire → 跳过 A 拿 B
+  const r3 = phonePool.acquirePhone(db, 'c@x.com', 3)
+  assert.strictEqual(r3.phone, '+15001234567', 'A saturated 自动跳过')
+})
+
 test('P5b v2.40.1 acquirePhone excludePhones 排除 retry 已尝试的号', () => {
   const db = freshDb()
   db.run("INSERT INTO phone_pool (phone, sms_api_url, bindings_used) VALUES ('+14642840651', 'http://A.com', 0)")

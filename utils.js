@@ -377,7 +377,7 @@ async function fetchTokensViaPKCE(browser, account, lastOtp) {
         const triedPhones = [];  // v2.40.1: 已 attempt 过的号，acquirePhone 排除
 
         for (let attempt = 1; attempt <= MAX_PHONE_ATTEMPTS; attempt++) {
-          let phone, smsCodeFn, releaseFn;
+          let phone, smsCodeFn, releaseFn, saturateFn;
 
           if (provider === 'zhusms') {
             const zhusms = require('./server/zhusms-provider');
@@ -425,6 +425,9 @@ async function fetchTokensViaPKCE(browser, account, lastOtp) {
             });
             // v2.39.4: local 模式现在支持回滚 binding（OpenAI 拒号场景），同步落盘
             releaseFn = () => { phonePool.releaseBinding(getRawDb(), allotted.phone, account.email); save(); };
+            // v2.40.4: 账号风控场景把号标记 saturated（bindings_used → max），
+            // 让 acquirePhone SQL `WHERE bindings_used < max` 自动排除给所有后续账号用。
+            saturateFn = () => { phonePool.markPhoneSaturated(getRawDb(), allotted.phone, max); save(); };
           }
 
           try {
@@ -439,6 +442,14 @@ async function fetchTokensViaPKCE(browser, account, lastOtp) {
             } catch {}
 
             if (!smsBoxAppeared) {
+              // v2.40.4: 先检测账号级风控（rate_limit / fraud_guard）—— 换号也拒，立刻 break + saturate
+              const accountBlocked = await page.locator(':text-matches("suspicious behavior|similar to yours|too many phone verification|too many.*request|rate.{0,5}limit|fraud", "i")').first().isVisible({ timeout: 1500 }).catch(() => false);
+              if (accountBlocked) {
+                console.log(`  [PKCE] 账号风控触发于 ${phone} — 标记号 saturated，立刻 break`);
+                if (saturateFn) try { await saturateFn(); } catch {}
+                else if (releaseFn) try { await releaseFn(); } catch {}  // zhusms 走 release
+                return { phoneVerifyFail: 'account-blocked' };
+              }
               // v2.40.1: red-text 检测扩展 — 加 "Invalid phone number" 覆盖 OpenAI voip_phone_disallowed 实际渲染文案
               const rejectedNode = await page.locator(':text-matches("无法向此电话号码发送验证码|Unable to send verification|cannot send a verification|Invalid phone number", "i")').first().isVisible({ timeout: 1500 }).catch(() => false);
               if (rejectedNode) {

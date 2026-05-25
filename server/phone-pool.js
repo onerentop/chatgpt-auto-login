@@ -104,6 +104,20 @@ function acquirePhone(db, email, maxBindingsPerPhone, excludePhones = []) {
 }
 
 /**
+ * v2.40.4: 把号标记为 saturated（bindings_used 直接拉到 max），让 acquirePhone
+ * SQL 的 `WHERE bindings_used < max` 自动排除给所有后续账号用。
+ *
+ * 触发场景：OpenAI 返回 fraud_guard / rate_limit_exceeded 时，该号在 OpenAI 那边
+ * 已经被 flag（可能被多账号用过太多 SMS）—— 给其他账号继续用也大概率拒，浪费配额。
+ *
+ * 不可逆：本函数不删 binding 行，只把 bindings_used 拉到 max。原有真实绑定记录保留。
+ * 如果未来 OpenAI 风控过期想恢复，可手工 UPDATE phone_pool SET bindings_used = N。
+ */
+function markPhoneSaturated(db, phone, maxBindings) {
+  db.run('UPDATE phone_pool SET bindings_used = ? WHERE phone = ?', [maxBindings, phone])
+}
+
+/**
  * v2.39.4: 撤销刚刚 acquirePhone 建立的临时 binding。
  * 当 OpenAI 拒绝该号（"无法发送验证码"红字）时，号本身没被 OpenAI 用 →
  * 不该消耗 bindings_used 名额 → 删除 binding 行 + bindings_used MAX(0, -1)。
@@ -158,4 +172,4 @@ async function fetchSmsCode(smsApiUrl, { pollIntervalMs = 3000, maxAttempts = 30
   throw new Error('sms-poll-timeout')
 }
 
-module.exports = { listPhones, importPhones, exportPhones, deletePhone, acquirePhone, releaseBinding, fetchSmsCode }
+module.exports = { listPhones, importPhones, exportPhones, deletePhone, acquirePhone, releaseBinding, markPhoneSaturated, fetchSmsCode }
