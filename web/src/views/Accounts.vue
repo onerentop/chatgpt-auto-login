@@ -100,7 +100,7 @@
       </el-collapse-item>
     </el-collapse>
 
-    <el-table ref="tableRef" :data="filteredAccounts" stripe border size="small" row-key="email" @selection-change="onSelectionChange" @row-click="onRowClick">
+    <el-table ref="tableRef" :data="filteredAccounts" stripe border size="small" row-key="email" :row-class-name="rowClass" @selection-change="onSelectionChange" @row-click="onRowClick">
       <el-table-column type="selection" width="45" :reserve-selection="true" />
       <el-table-column type="index" label="#" width="50" />
       <el-table-column prop="email" label="邮箱" min-width="220" />
@@ -228,7 +228,7 @@ import { ref, computed, onMounted, nextTick, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { DocumentCopy } from '@element-plus/icons-vue'
 import api from '../api'
-import { PLUS_STATUSES, ERROR_STATUSES, aliveStatusType, aliveStatusLabel, ALIVE_FILTER_OPTIONS, EXECUTE_STATUS_FILTER_OPTIONS } from '../status'
+import { PLUS_STATUSES, ERROR_STATUSES, aliveStatusType, aliveStatusLabel, ALIVE_FILTER_OPTIONS, EXECUTE_STATUS_FILTER_OPTIONS, rowClassFor } from '../status'
 import { socketState } from '../socket'
 import { getSelectionSet, setSelectionFromRows, clearSelection } from '../selection'
 import { useUrlSyncedFilters } from '../composables/useUrlSyncedFilters'
@@ -384,6 +384,22 @@ watch(() => socketState.aliveStatuses, (val) => {
     }
   }
 }, { deep: true })
+
+// v2.33.0: Execute 流水线运行时，账号管理也实时反馈 row 状态变化
+watch(() => socketState.accountStatuses, (statuses) => {
+  for (const email in statuses) {
+    const row = accounts.value.find(a => a.email === email)
+    if (row) {
+      row._status = statuses[email].status || row._status
+      row._phase = statuses[email].phase || row._phase || ''
+    }
+  }
+}, { deep: true })
+
+// v2.33.0: el-table :row-class-name 钩子，按 row._status 上色
+function rowClass({ row }) {
+  return rowClassFor(row._status)
+}
 
 function openAdd() {
   editMode.value = false
@@ -611,4 +627,10 @@ async function downloadSelectedAs(format) {
 .log-warning .log-msg { color: #E6A23C; }
 .log-error .log-msg { color: #F56C6C; }
 .log-info .log-msg { color: #909399; }
+
+/* v2.33.0: 运行时整行高亮，对应 rowClassFor 返回 */
+:deep(.row-status-success td) { background-color: #f0f9eb !important; }
+:deep(.row-status-warning td) { background-color: #fdf6ec !important; }
+:deep(.row-status-danger  td) { background-color: #fef0f0 !important; }
+:deep(.row-status-info    td) { background-color: #f4f4f5 !important; }
 </style>
