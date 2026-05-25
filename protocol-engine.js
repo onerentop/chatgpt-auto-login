@@ -16,6 +16,9 @@ const { verifyCheckoutIsFree } = require('./server/stripe-verify');
 const { launchChrome, waitForCDP } = require('./server/chrome');
 const proxyMgr = require('./server/proxy');
 const { killTree } = require('./server/process-utils');
+const phonePool = require('./server/phone-pool');
+const zhusmsProvider = require('./server/zhusms-provider');
+const { getRawDb, save } = require('./server/db');
 
 const ROOT = __dirname;
 const PYTHON_SCRIPT = path.join(ROOT, 'protocol_register.py');
@@ -162,6 +165,51 @@ class ProtocolEngine extends EventEmitter {
     } catch (e) {
       console.log(`[DB] statusDB.set failed for ${data.email}: ${e.message?.slice(0, 60)}`);
     }
+  }
+
+  // v2.40.0: 协议模式 add_phone — 统一 local / zhusms provider 出参
+  async _acquirePhoneForProtocol(provider, cfg, email, proxyUrl) {
+    if (provider === 'zhusms') {
+      const z = cfg.phonePool.zhusms || {};
+      if (!z.cardKey) return {};
+      try {
+        const order = await zhusmsProvider.takeOrder(
+          z.cardKey, z.baseUrl || 'https://zhusms.com',
+          z.service || 'codex', proxyUrl,
+        );
+        if (!order) return {};
+        // 拿 session cookie 给 Python 用（避免 Python 再 activate 一次）
+        let cookie = '';
+        try {
+          cookie = await zhusmsProvider.ensureSession(z.cardKey, z.baseUrl || 'https://zhusms.com', proxyUrl);
+        } catch {}
+        return {
+          phone: order.phone,
+          smsConfig: {
+            provider: 'zhusms',
+            order_no: order.order_no,
+            base_url: z.baseUrl || 'https://zhusms.com',
+            card_key: z.cardKey,
+            cookie,
+          },
+          releaseFn: async () => {
+            try { await zhusmsProvider.cancelOrder(order.order_no, z.baseUrl || 'https://zhusms.com', z.cardKey, proxyUrl); } catch {}
+          },
+        };
+      } catch (e) {
+        console.log(`[protocol] zhusms takeOrder failed: ${e?.message?.slice(0, 60)}`);
+        return {};
+      }
+    }
+    // local
+    const max = cfg.phonePool.maxBindingsPerPhone || 5;
+    const allotted = phonePool.acquirePhone(getRawDb(), email, max);
+    if (!allotted) return {};
+    return {
+      phone: allotted.phone,
+      smsConfig: { provider: 'local', url: allotted.smsApiUrl },
+      releaseFn: async () => { phonePool.releaseBinding(getRawDb(), allotted.phone, email); },
+    };
   }
 
   // Run PKCE and emit final status. Used by both already-Plus and post-payment branches.
