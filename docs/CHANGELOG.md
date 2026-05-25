@@ -1,5 +1,43 @@
 # Changelog
 
+## v2.40.9 — 2026-05-26
+
+### 浏览器 token exchange 走代理 + 协议 first-time-consent intermediate URL fix
+
+**v2.40.9 — utils.js token exchange 走代理**：浏览器侧 add_phone 全流程代理覆盖审计发现 `utils.js:533 fetch('https://auth.openai.com/oauth/token')` Node 端 fetch **没传 agent → 直连**绕过 sing-box 代理。Node 默认 fetch 不读 HTTPS_PROXY 也不读 OS 系统代理。之前能拿 RT 是因为 auth.openai.com CDN 边缘碰巧直连可达，但 OAuth state 期间 IP 出口不一致会触发 OpenAI 风控。修复：`agent: HttpsProxyAgent(http://127.0.0.1:7890)` if proxy.enabled。
+
+**v2.40.7/8 — 协议 first-time-consent intermediate URL follow**：实测 ityg8091 fresh 账号场景：phone-otp/validate 通过 + workspace/select 200，但 response.continue_url 不是 localhost callback 而是 hydra OAuth 中间步骤 `/api/oauth/oauth2/auth?login_verifier=...`，GET 该 URL OpenAI 返 Empty reply (curl 52)。
+
+- v2.40.7: `_pkce_common.follow_continue_for_auth_code` consent fallback 检测 continue_url 非 localhost 时 follow 一次 redirect 跟 chain
+- v2.40.8: GET intermediate URL 加完整浏览器 navigation headers（Accept / Accept-Language / Sec-Fetch-Site/Mode/Dest/User / Referer）+ H1 fallback 防 HTTP/2-only reject
+
+**已 consented 账号路径不受影响**（OpenAI 直接给 localhost callback URL）—— cmdxps7772 / fbpi1478530 / ityg8091（浏览器跑过一次 consent 后协议跑）已实测拿 RT。
+
+**待 fresh alive 账号验证 first-time-consent end-to-end**（账号库批次较旧，多数已 deactivated）。
+
+**全代理审计结论**：
+
+| 调用 | 状态 |
+|---|---|
+| 协议 (Python) phone-start / phone-otp/validate / consent fallback / workspace/select / oauth/token / SMS poll | ✅ session.proxies 全覆盖 |
+| 浏览器 Chrome 内 OpenAI 请求 | ✅ `--proxy-server` |
+| 浏览器 Node fetchSmsCode / zhusms-provider | ✅ HttpsProxyAgent |
+| 浏览器 Node oauth/token | ✅ v2.40.9 修复后 HttpsProxyAgent |
+| IMAP OTP 邮件抓取（utils.js:83 + ImapFlow） | ⚠️ 直连 Microsoft/Outlook，不在 add_phone 主流程 |
+
+测试：218 Node + 17 Python pass。
+
+## v2.40.6 — 2026-05-26
+
+### PHONE_VALIDATE_PATH regression 永久 fix
+
+v2.40.0 smoke 实测确认 OpenAI phone-validate 真实端点是 `/api/accounts/phone-otp/validate`（不是 `/add-phone/validate`，后者 HTTP 404 "Invalid URL"），当时改了常量但**没 commit** → 后续 v2.40.x 多次 hotfix `git checkout protocol_phone_verify.py` 时被还原回占位。今天 objs9258 + 新号 +19043865442 实测 phone-start 200 + SMS 200 但 validate 404 → 暴露此回归。
+
+- 修：常量永久写死 `/api/accounts/phone-otp/validate`
+- 加 regression test `test_phone_validate_path_is_phone_otp` grep 源码防再次回归
+
+测试：17 Python + 218 Node pass。
+
 ## v2.40.5 — 2026-05-26
 
 ### voip_phone_disallowed 也升级到 markSaturated（号本身永久不能用）
