@@ -1,5 +1,41 @@
 # Changelog
 
+## v2.36.0 — 2026-05-25
+
+### 主题换皮 — GitHub 工具风替代 v2.35 indigo SaaS 风
+
+用户原话"现在的前端风格我不喜欢，换一种"。本轮**只换主题层 CSS**，
+所有功能 / 结构 / 业务逻辑保持 v2.35 不动。spec 见
+`docs/superpowers/specs/2026-05-25-v2.36-github-style-redesign-design.md`。
+
+**改动（3 文件）**：
+
+- 新增 `web/src/styles/v236-github.css` — GitHub Primer 主题层：
+  - 主色 `#0969da` GitHub blue 替换 indigo `#5b67f0`；success/
+    warning/danger 换 Primer 色（#1f883d / #9a6700 / #cf222e）。
+  - Surface / border / text 换 GitHub neutrals (#ffffff / #f6f8fa /
+    #d0d7de / #1f2328)。
+  - 圆角 6/6/8 统一；阴影几乎只用 1px border 区分层级。
+  - 行高亮换 GitHub diff 风（浅黄 #fff8c5 / 浅绿 #dafbe1 / 浅红
+    #ffebe9 / 浅蓝 #ddf4ff）。
+  - 按钮 hover 去 transform 仅换背景色；默认按钮用 #f6f8fa GitHub
+    gray button。
+  - 输入框 focus 用 Primer 3px 蓝色光晕 + 蓝色内描边。
+  - 暗色用 GitHub Dark Default (#0d1117 canvas / #161b22 subtle /
+    #30363d border)。
+
+- `web/src/main.js` — 在 `v235-polish.css` 之后引入 `v236-github.css`，
+  让 GitHub 主题覆盖 indigo。**保留 v235-polish.css 不删**，`git
+  revert HEAD~1..HEAD` 一次回到 indigo SaaS 风。
+
+- `web/src/components/AccountTableRows.vue` — running 行高亮蓝色从
+  硬编码改 `var(--app-row-running)` token，自动跟随 GitHub 蓝。
+
+**测试 & 构建**：184/184 全绿；web/dist 5.59s。
+
+**如不喜欢 GitHub 风可继续换**：复制 `v236-github.css` 改 token
+就是新主题；不影响功能层。
+
 ## v2.29.0 — 2026-05-25
 
 ### Liveness Protocol-Mode lightLogin（v2.26 Phase B 收尾）
