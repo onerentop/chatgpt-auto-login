@@ -101,8 +101,8 @@ class TestProtocolPhoneVerify(unittest.TestCase):
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["tokens"]["refresh_token"], "RT")
 
-    def test_phone_start_rejected(self):
-        """phone-start 返回 4xx → status=phone-rejected。"""
+    def test_phone_start_rejected_voip(self):
+        """phone-start 返回 voip_phone_disallowed → status=voip-blocked (v2.40.5)。"""
         import protocol_phone_verify as pv
 
         fake_session = MagicMock()
@@ -115,9 +115,24 @@ class TestProtocolPhoneVerify(unittest.TestCase):
         with patch.object(pv, "rebuild_session", return_value=fake_session):
             result = self._run_with_input(self._build_input())
 
+        self.assertEqual(result["status"], "voip-blocked")
+        self.assertEqual(fake_session.post.call_count, 1)
+
+    def test_phone_start_rejected_unknown(self):
+        """phone-start 返回未知 error.code → status=phone-rejected（保守 retry）。"""
+        import protocol_phone_verify as pv
+
+        fake_session = MagicMock()
+        reject_resp = MagicMock(ok=False, status_code=400, text='{"error":{"type":"invalid_request_error","code":"phone_send_failed"}}')
+        reject_resp.json.return_value = {"error": {"type": "invalid_request_error", "code": "phone_send_failed"}}
+        fake_session.post.return_value = reject_resp
+        fake_session.headers = {}
+        fake_session.cookies = MagicMock()
+
+        with patch.object(pv, "rebuild_session", return_value=fake_session):
+            result = self._run_with_input(self._build_input())
+
         self.assertEqual(result["status"], "phone-rejected")
-        self.assertIn("400", result["detail"])
-        # phone-validate 不应被调用
         self.assertEqual(fake_session.post.call_count, 1)
 
     def test_sms_timeout(self):

@@ -1,5 +1,24 @@
 # Changelog
 
+## v2.40.5 — 2026-05-26
+
+### voip_phone_disallowed 也升级到 markSaturated（号本身永久不能用）
+
+v2.40.4 把账号级风控（`fraud_guard` / `rate_limit_exceeded`）标记号 saturated，但**号本身**就是 VoIP（`voip_phone_disallowed`）这种情况还是走 phone-rejected `release + retry`。但 VoIP 是号本身属性，**对所有账号都拒** —— 没必要每个账号都试一遍才知道，应该一次性 markSaturated。
+
+**改动**：
+
+- **`protocol_phone_verify.py:classify_reject`** 加新 kind `"voip"`：error.code 含 `voip` 或 message 含 `voip` 时归本类
+- **Python `main()`** 输出 `status: "voip-blocked"`
+- **`protocol-engine.js:_finalizePhoneVerify`** 把 `voip-blocked` 加入 `markSaturated` 分支（与 `rate-limited` / `fraud-blocked` 同处理）
+- **日志措辞**：原 `[protocol] account-level block ${status}` 改 `[protocol] block-and-saturate ${status} for ${phone}`（voip 不是 account-level）
+- **测试调整**：原 `test_phone_start_rejected` 用 voip_phone_disallowed 期望 phone-rejected → 拆成 `test_phone_start_rejected_voip` (期望 voip-blocked) + `test_phone_start_rejected_unknown` (用 phone_send_failed 期望 phone-rejected 保守 retry)
+- **DB 修复**：`+19286413808`（实测 VoIP）已在生产 DB 标记 saturated
+
+**浏览器侧 utils.js 保持不变**（保守 release + retry）—— 浏览器靠 red-text 文本检测，"Invalid phone number" 也可能是其他原因，不像协议侧靠明确 error.code 那样确信。
+
+**测试**：16 Python + 218 Node pass。
+
 ## v2.40.4 — 2026-05-26
 
 ### 账号风控号 → 标记 saturated（永久排除给所有后续账号）

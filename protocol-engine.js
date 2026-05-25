@@ -257,12 +257,12 @@ class ProtocolEngine extends EventEmitter {
         lastReason = 'phone-rejected-by-openai';
         continue;
       }
-      if (result.status === 'rate-limited' || result.status === 'fraud-blocked') {
+      if (result.status === 'rate-limited' || result.status === 'fraud-blocked' || result.status === 'voip-blocked') {
         // v2.40.4: OpenAI 返 fraud_guard / rate_limit_exceeded —— 该号在 OpenAI 那边
         // 已被 flag（可能多账号过用太多 SMS）。其他账号再 acquire 该号也会被拒。
         // 修复策略：把号标记 saturated（bindings_used → max），让 acquirePhone SQL 的
         // `WHERE bindings_used < max` 自动排除给所有后续账号用。本 attempt binding 保留。
-        console.log(`[protocol] account-level block ${result.status}: ${(result.detail || '').slice(0, 500)} — marking ${phone} saturated`);
+        console.log(`[protocol] block-and-saturate ${result.status} for ${phone}: ${(result.detail || '').slice(0, 500)}`);
         if (provider === 'local') {
           try {
             const max = cfg.phonePool.maxBindingsPerPhone || 3;
