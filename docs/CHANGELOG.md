@@ -1,5 +1,59 @@
 # Changelog
 
+## v2.39.0 — 2026-05-25
+
+### zhusms 远程接码 Provider 并列接入
+
+v2.37/v2.38 完成本地号池架构（手动 import phone + sms_api_url）。
+本次新增 **zhusms.com 远程接码服务**作为可选 provider — 用户买卡密
+（一卡多次），服务端自动 round-robin 取号 + 接 SMS + 释放，不用
+维护本地 phone 列表。两个 provider 并列，用户在 Config 二选一。
+
+**新增**
+
+- **`server/zhusms-provider.js`** 包装 zhusms 5 个 endpoint（基于
+  https://zhusms.com/openapi.json）：
+  - `_activate` (POST /api/guest/activate, 卡密 → Set-Cookie session)
+  - `ensureSession` (1 小时 cookie 缓存)
+  - `takeOrder` (POST /api/order/take service=<x>, 401 时清 session 重试)
+  - `pollOrderSms` (GET /api/order/status?order_no=<x>, regex tolerant 6 位数字)
+  - `cancelOrder` (POST /api/order/cancel, 错误路径释放避免占余额)
+  - `getBalance` (GET /api/guest/me, UI 余额按钮用)
+- **`utils.js:fetchTokensViaPKCE`** add_phone 分支按 `cfg.phonePool.provider`
+  分流 local（既有）/ zhusms（新）。通用 Playwright 填表 / 接码 / 提交
+  逻辑共用，仅取号 / 接码 fn 不同
+- **`server/routes/phone-pool.js`** +1 endpoint `POST /zhusms/balance`
+- **Config 字段** `phonePool.{provider, zhusms.{cardKey, service, baseUrl}}`
+- **`web/src/views/Config.vue`** provider radio + 条件 zhusms 表单 +
+  「查询余额」按钮
+
+**绑定语义对比**
+
+| 维度 | local provider (v2.37) | zhusms provider (v2.39) |
+|---|---|---|
+| 号管理 | 用户手动 import `phone\|url` | 服务端自动 round-robin |
+| 单次成本 | 维护本地 phone 列表 | 卡密扣 1/单 |
+| 失败释放 | 无（binding 永久 +1） | `cancelOrder` 释放（不扣余额） |
+| 接码 | 每号独立 URL | `/api/order/status?order_no=<x>` |
+| 服务标签 | 无（号通用） | 按 service（codex / paypal / ...） |
+
+**不变式**：
+- Phase 1 本地号池（DB / UI / route）零改动
+- engine.js 不动（4-shape return shape 不变）
+- `payment.js` + 协议模式 + Python 不动
+- `provider='local'` (default) 时跑老路径，行为零变化
+
+**代理覆盖**：跟全局 proxy 同步 — `proxy.enabled=true` 时 zhusms
+所有 API call + SMS poll 走 `HttpsProxyAgent`，与 fetchSmsCode 一致；
+disabled 时直连。
+
+**测试**：`server/__tests__/zhusms-provider.test.js` +6（cookie 缓存
+/ take / poll 超时 / poll 拿码 / cancel form body / 401 重试）。共
+206 tests pass on v2.38.0 baseline 200。
+
+**Spec / Plan**：`docs/superpowers/specs/2026-05-25-zhusms-remote-provider-design.md`
++ `docs/superpowers/plans/2026-05-25-zhusms-remote-provider.md`。
+
 ## v2.38.0 — 2026-05-25
 
 ### 浏览器模式 PKCE add_phone 自动化 (Phase 2a/2)
