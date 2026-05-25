@@ -593,10 +593,15 @@ class PipelineEngine extends EventEmitter {
                     } else if (pkceTokens?.phonePoolEmpty) {
                       console.log(`${p} PKCE: phone pool exhausted for this account`);
                       this.emitStatus({ email: account.email, status: 'phone_pool_empty', phase: 'pkce', progress, reason: '号池已用尽或全部满' });
+                      // v2.38.0 final-review fix: 付款成功但 PKCE 没拿到 RT 仍要保存 login session
+                      // 避免 access_token 丢失（与 needsPhone fallback 行为对齐）
+                      saveCPAAuthFile(account.email, loginResult.accessToken, loginResult.session);
                       finalResult.status = 'phone_pool_empty';
                     } else if (pkceTokens?.phoneVerifyFail) {
                       console.log(`${p} PKCE: phone verify failed (${pkceTokens.phoneVerifyFail})`);
                       this.emitStatus({ email: account.email, status: 'phone_verify_fail', phase: 'pkce', progress, reason: pkceTokens.phoneVerifyFail });
+                      // v2.38.0 final-review fix: 同上
+                      saveCPAAuthFile(account.email, loginResult.accessToken, loginResult.session);
                       finalResult.status = 'phone_verify_fail';
                     } else {
                       // needsPhone (pool disabled) 或其它非成功路径 → plus_no_rt 兜底（保持既有行为）
