@@ -1,5 +1,6 @@
 import { reactive } from 'vue'
 import { io } from 'socket.io-client'
+import { recordAccountStatus, endPipeline } from './stores/pipelineStore'
 
 let socket = null
 
@@ -55,6 +56,9 @@ export function connectSocket() {
       progress: data.progress || 0,
       status: data.status || 'pending',
     }
+    // v2.35 Pipeline HUD — feed every status event into the pipeline store
+    // so the floating HUD can show current account + phase + done count.
+    recordAccountStatus({ email: data.email, status: data.status, phase: data.phase })
   })
 
   socket.on('execution-complete', (data) => {
@@ -65,6 +69,8 @@ export function connectSocket() {
       message: `Execution complete: ${s.success ?? 0} success, ${s.error ?? 0} error, ${s.noLink ?? 0} no-link`,
       level: 'success',
     })
+    // v2.35 — close the Pipeline HUD when the engine reports done.
+    endPipeline()
   })
 
   function pushLivenessLog(email, level, message, isHistorical = false) {

@@ -127,6 +127,7 @@ import { getSelectionSet, clearSelection } from '../selection'
 import AccountTableRows from '../components/AccountTableRows.vue'
 import PageHeader from '../components/ui/PageHeader.vue'
 import SectionCard from '../components/ui/SectionCard.vue'
+import { beginPipeline } from '../stores/pipelineStore'
 
 const running = ref(false)
 const accounts = ref([])
@@ -409,6 +410,9 @@ async function startExec(emails) {
     }
     await api.post('/execute', { emails: emails || undefined })
     running.value = true
+    // v2.35: kick off Pipeline HUD with the total count it'll be tracking.
+    const total = emails ? emails.length : accounts.value.length
+    beginPipeline(total)
     ElMessage.success('执行已启动')
   } catch (e) { ElMessage.error(e.response?.data?.error || '启动失败') }
 }

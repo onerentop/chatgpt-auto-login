@@ -55,6 +55,8 @@
 
       <!-- Main content area -->
       <main class="app-main">
+        <!-- Pipeline HUD — visible on every route while engine is running -->
+        <PipelineHUD />
         <el-alert
           v-if="!socketState.connected"
           type="warning"
@@ -116,6 +118,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { Monitor, User, Setting, VideoPlay, Document, Moon, Sunny, Bell, Search } from '@element-plus/icons-vue'
 import { socketState, reconnectSocket } from '../socket'
 import CommandPalette from './ui/CommandPalette.vue'
+import PipelineHUD from './ui/PipelineHUD.vue'
 import { paletteState, openPalette, registerCommand } from '../stores/commands'
 import { useHotkeys } from '../composables/useHotkeys'
 import { useDarkMode } from '../composables/useDarkMode'
