@@ -13,24 +13,12 @@
     <SectionCard flush>
       <div class="ex-toolbar">
         <div class="ex-toolbar__row">
-          <el-button type="success" :disabled="running" @click="execSelected">
-            执行选中 ({{ selectedEmails.length }})
-          </el-button>
           <el-button type="primary" :disabled="running" @click="execAll">执行全部</el-button>
           <el-button type="warning" :disabled="running || failedEmails.length === 0" @click="retryFailed">
             重试失败 ({{ failedEmails.length }})
           </el-button>
           <el-button type="danger" :disabled="!running" @click="handleStop">停止</el-button>
           <el-divider direction="vertical" />
-          <el-dropdown :disabled="selectedEmails.length === 0" @command="downloadSelectedAs" split-button size="default">
-            下载选中 ({{ selectedEmails.length }})
-            <template #dropdown>
-              <el-dropdown-menu>
-                <el-dropdown-item command="cpa">CPA 格式</el-dropdown-item>
-                <el-dropdown-item command="sub2api">Sub2API 格式</el-dropdown-item>
-              </el-dropdown-menu>
-            </template>
-          </el-dropdown>
           <el-dropdown @command="downloadAllAs" split-button size="default">
             下载全部 (ZIP)
             <template #dropdown>
@@ -40,7 +28,6 @@
               </el-dropdown-menu>
             </template>
           </el-dropdown>
-          <el-button :disabled="selectedEmails.length === 0" @click="clearAllSelection">取消选中</el-button>
           <el-divider direction="vertical" />
           <el-switch
             v-model="groupingEnabled"
@@ -114,6 +101,22 @@
       @row-click="onRowClick"
       style="margin-top:8px"
     />
+
+    <!-- v2.41.1 ContextActionBar — 选中 > 0 时底部悬浮 bar（与 Accounts v2.35 模式统一） -->
+    <ContextActionBar :count="selectedEmails.length" label="个账号" @clear="clearAllSelection">
+      <el-button type="success" :disabled="running" @click="execSelected">
+        执行选中
+      </el-button>
+      <el-dropdown @command="downloadSelectedAs" split-button size="default">
+        下载选中
+        <template #dropdown>
+          <el-dropdown-menu>
+            <el-dropdown-item command="cpa">CPA 格式</el-dropdown-item>
+            <el-dropdown-item command="sub2api">Sub2API 格式</el-dropdown-item>
+          </el-dropdown-menu>
+        </template>
+      </el-dropdown>
+    </ContextActionBar>
   </div>
 </template>
 
@@ -127,6 +130,7 @@ import { getSelectionSet, clearSelection } from '../selection'
 import AccountTableRows from '../components/AccountTableRows.vue'
 import PageHeader from '../components/ui/PageHeader.vue'
 import SectionCard from '../components/ui/SectionCard.vue'
+import ContextActionBar from '../components/ui/ContextActionBar.vue'
 import { beginPipeline } from '../stores/pipelineStore'
 
 const running = ref(false)
