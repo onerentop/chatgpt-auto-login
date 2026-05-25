@@ -102,12 +102,24 @@ function acquirePhone(db, email, maxBindingsPerPhone) {
  */
 async function fetchSmsCode(smsApiUrl, { pollIntervalMs = 3000, maxAttempts = 30, signal } = {}) {
   for (let i = 0; i < maxAttempts; i++) {
-    if (signal?.aborted) throw new Error('aborted')
+    if (signal?.aborted) {
+      // v2.37.0 final-review fix: 抛 AbortError 而非通用 Error，
+      // 让调用方 (Phase 2 PKCE) catch e?.name === 'AbortError' 不漏预检路径
+      const err = new Error('aborted')
+      err.name = 'AbortError'
+      throw err
+    }
     try {
       const resp = await fetch(smsApiUrl, { signal })
-      const text = await resp.text()
-      const m = text.match(/\b(\d{6})\b/)
-      if (m) return m[1]
+      // v2.37.0 final-review fix: HTTP 4xx/5xx 错误体里恰好含 6 位数字
+      // 不应被误识别为验证码（e.g. {"error":"rate limit 123456"}）
+      if (!resp.ok) {
+        // 继续下一轮轮询（短时网络/接码方服务抖动可能恢复）
+      } else {
+        const text = await resp.text()
+        const m = text.match(/\b(\d{6})\b/)
+        if (m) return m[1]
+      }
     } catch (e) {
       if (e?.name === 'AbortError') throw e
     }
