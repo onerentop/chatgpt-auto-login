@@ -3,6 +3,8 @@ import ElementPlus from 'element-plus'
 import 'element-plus/dist/index.css'
 // Dark theme variables — toggled via document.documentElement.classList.add('dark').
 import 'element-plus/theme-chalk/dark/css-vars.css'
+// v2.34 design tokens (must come AFTER Element Plus so our --app-* layer wins).
+import './styles/tokens.css'
 import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import App from './App.vue'
 import router from './router'

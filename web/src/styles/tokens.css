@@ -1,0 +1,129 @@
+/* v2.34 design tokens — namespaced --app-*. Layered ON TOP of Element
+ * Plus's --el-* variables; we deliberately avoid overriding --el-* so
+ * Element Plus components keep their defaults. Views and our own ui/
+ * components consume these tokens for color / spacing / typography. */
+
+:root {
+  /* === Color — semantic surface + text === */
+  --app-bg:          #f7f8fa;
+  --app-surface:     #ffffff;
+  --app-surface-2:   #fafbfc;
+  --app-border:      #e4e7eb;
+  --app-border-soft: #eef0f3;
+  --app-text:        #1f2937;
+  --app-text-2:      #4b5563;
+  --app-text-3:      #6b7280;
+  --app-text-mute:   #9ca3af;
+
+  /* Brand colors — re-exported with semantic names so consumers don't
+   * tie themselves to Element Plus's --el-color-primary directly. */
+  --app-brand:   var(--el-color-primary);
+  --app-success: var(--el-color-success);
+  --app-warning: var(--el-color-warning);
+  --app-danger:  var(--el-color-danger);
+  --app-info:    var(--el-color-info);
+
+  /* Row highlights (v2.33 sourced) — re-keyed as tokens so they follow
+   * theme. AccountTableRows.vue :deep(.row-status-*) consumes these. */
+  --app-row-success: #f0f9eb;
+  --app-row-warning: #fdf6ec;
+  --app-row-danger:  #fef0f0;
+  --app-row-info:    #f4f4f5;
+
+  /* Sidebar — surface-toned, not navy. Active item uses faint brand bg. */
+  --app-sidebar-bg:             #ffffff;
+  --app-sidebar-border:         var(--app-border);
+  --app-sidebar-text:           var(--app-text-2);
+  --app-sidebar-text-active:    var(--app-brand);
+  --app-sidebar-item-active-bg: #eef4ff;
+  --app-sidebar-width:          220px;
+
+  /* Topbar */
+  --app-header-bg:     #ffffff;
+  --app-header-border: var(--app-border);
+  --app-header-height: 56px;
+
+  /* Spacing — 4-px scale */
+  --sp-1: 4px;  --sp-2: 8px;  --sp-3: 12px;
+  --sp-4: 16px; --sp-5: 24px; --sp-6: 32px; --sp-7: 48px;
+
+  /* Type scale */
+  --fs-xs: 11px; --fs-sm: 12px; --fs-md: 13px;
+  --fs-lg: 14px; --fs-xl: 16px; --fs-2xl: 20px; --fs-3xl: 24px;
+
+  /* Type families */
+  --ff-base: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+             "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue",
+             Helvetica, Arial, sans-serif;
+  --ff-mono: ui-monospace, SFMono-Regular, "JetBrains Mono", "Consolas",
+             "Liberation Mono", Menlo, monospace;
+
+  /* Radius */
+  --rad-sm: 4px; --rad-md: 8px; --rad-lg: 12px;
+
+  /* Shadow — three barely-perceptible levels */
+  --sh-1: 0 1px 2px rgba(15, 23, 42, 0.04);
+  --sh-2: 0 2px 8px rgba(15, 23, 42, 0.06);
+  --sh-3: 0 6px 24px rgba(15, 23, 42, 0.08);
+
+  /* Motion */
+  --tr-fast: 120ms ease;
+  --tr-base: 200ms ease;
+}
+
+html.dark {
+  --app-bg:          #0f1419;
+  --app-surface:     #1a2028;
+  --app-surface-2:   #141a22;
+  --app-border:      #2a3340;
+  --app-border-soft: #232a35;
+  --app-text:        #e5e7eb;
+  --app-text-2:      #cbd1d9;
+  --app-text-3:      #9ca3af;
+  --app-text-mute:   #6b7280;
+
+  --app-row-success: rgba(103, 194, 58, 0.12);
+  --app-row-warning: rgba(230, 162, 60, 0.12);
+  --app-row-danger:  rgba(245, 108, 108, 0.12);
+  --app-row-info:    rgba(144, 147, 153, 0.10);
+
+  --app-sidebar-bg:             #141a22;
+  --app-sidebar-border:         var(--app-border);
+  --app-sidebar-item-active-bg: rgba(64, 158, 255, 0.16);
+
+  --app-header-bg:     #141a22;
+  --app-header-border: var(--app-border);
+
+  --sh-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --sh-2: 0 2px 8px rgba(0, 0, 0, 0.5);
+  --sh-3: 0 6px 24px rgba(0, 0, 0, 0.6);
+}
+
+/* Global baseline. body bg follows token so dark mode auto-applies. */
+html, body {
+  margin: 0;
+  padding: 0;
+}
+body {
+  font-family: var(--ff-base);
+  font-size: var(--fs-lg);
+  color: var(--app-text-2);
+  background: var(--app-bg);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+code, pre, .mono {
+  font-family: var(--ff-mono);
+}
+
+/* Common utility classes used by views — keep them small + obvious so a
+ * grep on the classname tells you what it is. */
+.app-page {
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: var(--sp-5);
+}
+.app-stack { display: flex; flex-direction: column; gap: var(--sp-4); }
+.app-stack--lg { gap: var(--sp-5); }
+.app-row { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
+.app-spacer { flex: 1; }
