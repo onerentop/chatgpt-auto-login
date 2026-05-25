@@ -257,6 +257,13 @@ class ProtocolEngine extends EventEmitter {
         lastReason = 'phone-rejected-by-openai';
         continue;
       }
+      if (result.status === 'rate-limited' || result.status === 'fraud-blocked') {
+        // v2.40.3: 账号级风控（rate_limit_exceeded / fraud_guard）—— 换号也会拒，立刻 break
+        console.log(`[protocol] account-level block ${result.status}: ${(result.detail || '').slice(0, 500)}`);
+        if (releaseFn) try { await releaseFn(); } catch {}
+        try { save(); } catch {}
+        return { phoneVerifyFail: result.status };
+      }
       if (result.status === 'sms-timeout' || result.status === 'validate-error' || result.status === 'submit-error') {
         // OpenAI 那边号没真用（spawn 失败 / SMS 没到 / OpenAI 拒验证码）→ release
         // v2.40.2 fix：原 submit-error 也归 post-validate-error 错（spawn 失败时号根本没用上）

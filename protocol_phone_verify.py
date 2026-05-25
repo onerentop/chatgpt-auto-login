@@ -17,22 +17,36 @@ from _pkce_common import (
 # smoke test 失败再补回。
 
 
-def is_phone_rejected(resp):
-    """判定 phone-start 响应是否表示 OpenAI 拒号。
-    Phase 0 confirmed: HTTP 4xx + body.error.type == 'invalid_request_error' 即拒号
-    （已观测 error.code = 'voip_phone_disallowed'；其它 code 后续累积）。
-    所有 4xx 一律算 rejected（保守策略）—— release+retry 比 hang/submit-error 好。
+def classify_reject(resp):
+    """v2.40.3: 细分 OpenAI phone-start 拒号类型。返回 (kind, detail)。
+    kind:
+        None         → 不是拒号（200 / 5xx / 网络错误等）
+        "rate-limit" → rate_limit_exceeded —— 账号级速率限制，换号也会拒，立刻 break
+        "fraud"      → fraud_guard 类（"phone numbers similar to yours suspicious"）—— 账号风控
+        "phone"      → 号本身问题（voip_phone_disallowed 等）—— release + retry 换号
     """
-    if 400 <= resp.status_code < 500:
-        return True
+    if not (400 <= resp.status_code < 500):
+        return (None, "")
     try:
         data = resp.json()
         err = data.get("error") or {}
-        if err.get("type") == "invalid_request_error":
-            return True
+        code = (err.get("code") or "").lower()
+        msg = err.get("message") or ""
     except Exception:
-        pass
-    return False
+        code = ""
+        msg = (resp.text or "")[:200]
+    if "rate_limit" in code or "rate limit" in msg.lower() or "too many" in msg.lower():
+        return ("rate-limit", f"{code}: {msg[:200]}")
+    if "fraud" in code or "suspicious" in msg.lower() or "similar to yours" in msg.lower():
+        return ("fraud", f"{code}: {msg[:200]}")
+    # 其他 4xx + invalid_request_error 视为号问题
+    return ("phone", f"{code or 'HTTP'} {resp.status_code}: {msg[:200]}")
+
+
+def is_phone_rejected(resp):
+    """v2.40.0 兼容 wrapper — 仍返 boolean。新代码用 classify_reject。"""
+    kind, _ = classify_reject(resp)
+    return kind is not None
 
 
 def has_sms_prompt(resp):
@@ -127,8 +141,18 @@ def main():
         timeout=30,
     )
     _log(f"verify: phone-start status={r.status_code} body={(r.text or '')[:200]}")
-    if is_phone_rejected(r):
-        print(json.dumps({"status": "phone-rejected", "detail": f"HTTP {r.status_code} {r.text[:300]}"}), flush=True)
+    reject_kind, reject_detail = classify_reject(r)
+    if reject_kind == "rate-limit":
+        # 账号级 rate limit，换号也会拒 → 立刻 break，不浪费 spawn
+        print(json.dumps({"status": "rate-limited", "detail": reject_detail}), flush=True)
+        return
+    if reject_kind == "fraud":
+        # 账号被 fraud_guard 拦，换号也大概率拒
+        print(json.dumps({"status": "fraud-blocked", "detail": reject_detail}), flush=True)
+        return
+    if reject_kind == "phone":
+        # 号本身问题，可以 retry 换号
+        print(json.dumps({"status": "phone-rejected", "detail": reject_detail}), flush=True)
         return
     if not has_sms_prompt(r):
         print(json.dumps({"status": "submit-error", "detail": f"phone-start unexpected: {r.status_code} {r.text[:300]}"}), flush=True)

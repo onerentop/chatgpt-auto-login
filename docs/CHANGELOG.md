@@ -1,5 +1,34 @@
 # Changelog
 
+## v2.40.3 — 2026-05-26
+
+### 协议侧 add_phone 区分账号级风控 vs 号问题（+ rebuild_session 白名单）
+
+v2.40.2 上线后 objs9258 实测两次 phone-start 都 HTTP 400 但 error.code 不同：
+
+- `+12153910969` → `code: "fraud_guard"`（"We've detected suspicious behavior from phone numbers similar to yours"）
+- `+12282351427` → `code: "rate_limit_exceeded"`（"You've made too many phone verification requests"）
+
+**问题**：v2.40.2 把所有 4xx 一律归 `phone-rejected` retry 换号 —— 但这两个 code 是**账号-级**封锁，换号也被拒，retry 浪费 spawn / SMS 名额。
+
+**修复**：
+
+- **`protocol_phone_verify.py:classify_reject(resp)`** —— 新函数细分拒号类型：
+  - `"rate-limit"` ← `rate_limit_exceeded` / "too many" / "rate limit" 关键词
+  - `"fraud"` ← `fraud_guard` / "suspicious" / "similar to yours" 关键词
+  - `"phone"` ← 其它 4xx（如 `voip_phone_disallowed`，号本身问题）
+  - `None` ← 不是拒号
+- **Python `main()`** 按 kind 输出对应 status：`rate-limited` / `fraud-blocked` / `phone-rejected`
+- **`protocol-engine.js:_finalizePhoneVerify`** 加新分支：`rate-limited` / `fraud-blocked` → **立刻 break + release**，不浪费 retry attempt
+- 既有 `phone-rejected` → release + retry（语义不变）
+- 既有 `is_phone_rejected(resp)` boolean wrapper 保留，但内部走 `classify_reject`
+
+**附带**：`_pkce_common.rebuild_session` candidate 用 KNOWN_GOOD 白名单提前过滤（含 `chrome133a` 别名），防止 curl_cffi lazy validation 拿到 invalid Session 后 phone-start 才挂。
+
+**未做**：浏览器侧 `utils.js` red-text 检测应该也区分账号锁不 retry —— 留 v2.40.4 处理（浏览器侧需 `page.on('response')` 监听 HTTP API + body 解析）。
+
+**测试**：217 Node + 15 Python pass。
+
 ## v2.40.2 — 2026-05-26
 
 ### 协议侧 protocol_phone_verify spawn 几个 hotfix
