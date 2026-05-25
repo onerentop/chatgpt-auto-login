@@ -1,5 +1,25 @@
 # Changelog
 
+## v2.40.2 — 2026-05-26
+
+### 协议侧 protocol_phone_verify spawn 几个 hotfix
+
+v2.40.1 上线后 objs9258 实测发现 3 个 `protocol_phone_verify.py` 边缘问题：
+
+1. **`rebuild_session` UA `Chrome/148` → curl_cffi 没 `chrome148` profile → `ImpersonateError`** —— v2.40.0 fallback 单一 `chrome120` 也未必在 curl_cffi 支持列表（取决于 curl_cffi 版本）。修：candidate loop 7 个 profile 逐个 try（UA-derived + chrome146/142/136/131/124/120/chrome 通用别名），与 `protocol_register.py:_CHROME_PROFILES` 对齐。
+2. **Python `print(json.dumps(...))` 不带 `flush=True`** —— Node 端 spawn 180s timeout SIGKILL 时 stdout buffer 没刷盘，Node 收到空 → fallback "python exit 1" 误归 post-validate-error 保留 binding。修：10 处 status print 全部 `flush=True`；top-level `try/except` 包 `main()` 保证未捕获异常也输出 JSON。
+3. **`_finalizePhoneVerify` 把 spawn `submit-error` 误归 post-validate-error 保留 binding** —— `submit-error` 是 spawn 失败/python crash/stdin 错，号实际没用上，binding 应该 release。修：把 `submit-error` 也归到 `sms-timeout`/`validate-error` 同处理路径（release + break）。
+
+**附加调试改进**：
+
+- `protocol_phone_verify.py:main()` 加 step-by-step `_log`：stdin 字节数、cookies 数、UA Chrome 版本、proxy / no proxy、phone-start status + body 前缀。
+- `protocol_phone_verify.py` 错误 `r.text` 截断 120 → 300 字符（看完整 OpenAI error.code）。
+- `protocol-engine.js` spawn stderr 截断 200 → 800、detail 日志 80 → 500。
+
+**Smoke 验证**：objs9258 触发 add_phone retry loop —— v2.40.1 excludePhones 工作（两次 attempt 取不同号 +12153910969 / +12282351427），v2.40.2 spawn flush 工作（两次都正确返 `phone-rejected` 状态），v2.40.2 release 工作（DB binding 干净不被错误保留）。
+
+**未解决业务问题**：objs9258 两个号都被 OpenAI 拒 (`HTTP 400 invalid_request_error`) —— 推测 OpenAI 对该账号短窗口内多 phone-start 风控。**不是代码问题**，等待 / 换账号 / 隔时间重试可恢复。
+
 ## v2.40.1 — 2026-05-26
 
 ### add_phone retry 反复取同号 + 浏览器 voip 文案漏检 + 默认 maxBinding 3

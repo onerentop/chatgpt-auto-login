@@ -89,22 +89,31 @@ def poll_sms(sms_cfg, max_attempts=30, interval=3, proxy_url=None):
 
 
 def main():
+    _log("verify: main() entered")
     try:
-        inp = json.loads(sys.stdin.read())
+        raw = sys.stdin.read()
+        _log(f"verify: stdin read {len(raw)} bytes")
+        inp = json.loads(raw)
     except Exception as e:
-        print(json.dumps({"status": "submit-error", "detail": f"bad stdin: {e}"}))
+        print(json.dumps({"status": "submit-error", "detail": f"bad stdin: {e}"}), flush=True)
         return
 
     ss = inp.get("session_state") or {}
     phone = inp.get("phone", "")
     sms_cfg = inp.get("sms") or {}
     proxy_url = inp.get("proxy_url")
+    _ua = ss.get('user_agent', '')
+    _m = re.search(r'Chrome/(\d+)', _ua)
+    _log(f"verify: phone={phone} provider={sms_cfg.get('provider')} cookies={len(ss.get('cookies', []))} ua_chrome={_m.group(1) if _m else '?'} proxy={'yes' if proxy_url else 'no'}")
 
+    _log("verify: rebuilding session...")
     s = rebuild_session(ss, proxy_url)
+    _log("verify: session rebuilt OK")
 
     # Step 1: phone-start
     # Phase 0 confirmed: path = /api/accounts/add-phone/send, payload = {"phone_number": ...}, 无需 sentinel
     PHONE_START_PATH = "/api/accounts/add-phone/send"
+    _log(f"verify: POST {PHONE_START_PATH} phone={phone}")
     r = s.post(
         f"{AUTH}{PHONE_START_PATH}",
         json={"phone_number": phone},
@@ -117,18 +126,21 @@ def main():
         },
         timeout=30,
     )
+    _log(f"verify: phone-start status={r.status_code} body={(r.text or '')[:200]}")
     if is_phone_rejected(r):
-        print(json.dumps({"status": "phone-rejected", "detail": f"HTTP {r.status_code} {r.text[:120]}"}))
+        print(json.dumps({"status": "phone-rejected", "detail": f"HTTP {r.status_code} {r.text[:300]}"}), flush=True)
         return
     if not has_sms_prompt(r):
-        print(json.dumps({"status": "submit-error", "detail": f"phone-start unexpected: {r.status_code} {r.text[:120]}"}))
+        print(json.dumps({"status": "submit-error", "detail": f"phone-start unexpected: {r.status_code} {r.text[:300]}"}), flush=True)
         return
 
     # Step 2: poll SMS
+    _log(f"verify: polling SMS (provider={sms_cfg.get('provider')})")
     code = poll_sms(sms_cfg, max_attempts=30, interval=3, proxy_url=proxy_url)
     if not code:
-        print(json.dumps({"status": "sms-timeout"}))
+        print(json.dumps({"status": "sms-timeout"}), flush=True)
         return
+    _log(f"verify: got SMS code (len={len(code)})")
 
     # Step 3: phone-validate
     # Phase 0 推测：path = /api/accounts/add-phone/validate，无需 sentinel；smoke test 待验证
@@ -146,7 +158,7 @@ def main():
         timeout=30,
     )
     if not r.ok:
-        print(json.dumps({"status": "validate-error", "detail": f"HTTP {r.status_code} {r.text[:120]}"}))
+        print(json.dumps({"status": "validate-error", "detail": f"HTTP {r.status_code} {r.text[:300]}"}), flush=True)
         return
     data = {}
     try:
@@ -155,7 +167,7 @@ def main():
         pass
     continue_url = data.get("continue_url", "")
     if not continue_url:
-        print(json.dumps({"status": "validate-error", "detail": "no continue_url in validate response"}))
+        print(json.dumps({"status": "validate-error", "detail": "no continue_url in validate response"}), flush=True)
         return
 
     # 至此 OpenAI 已接受号 + 验证码 → 之后失败属 post-validate-error（保留 binding）
@@ -163,16 +175,16 @@ def main():
     # Step 4: follow continue → localhost:1455 → 拿 auth_code
     auth_code = follow_continue_for_auth_code(s, continue_url)
     if not auth_code:
-        print(json.dumps({"status": "post-validate-error", "detail": "no auth_code from continue_url"}))
+        print(json.dumps({"status": "post-validate-error", "detail": "no auth_code from continue_url"}), flush=True)
         return
 
     # Step 5: oauth/token exchange
     tokens = exchange_code(s, auth_code, ss["code_verifier"], ss["client_id"], ss["redirect_uri"])
     if not tokens.get("access_token"):
-        print(json.dumps({"status": "post-validate-error", "detail": "token exchange empty"}))
+        print(json.dumps({"status": "post-validate-error", "detail": "token exchange empty"}), flush=True)
         return
 
-    print(json.dumps({"status": "ok", "tokens": tokens}))
+    print(json.dumps({"status": "ok", "tokens": tokens}), flush=True)
 
 
 if __name__ == "__main__":
@@ -182,4 +194,4 @@ if __name__ == "__main__":
         main()
     except Exception as _e:
         import traceback as _tb
-        print(json.dumps({"status": "submit-error", "detail": f"{type(_e).__name__}: {str(_e)[:200]} | {_tb.format_exc()[-500:]}"}))
+        print(json.dumps({"status": "submit-error", "detail": f"{type(_e).__name__}: {str(_e)[:200]} | {_tb.format_exc()[-500:]}"}), flush=True)

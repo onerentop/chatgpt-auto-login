@@ -257,8 +257,9 @@ class ProtocolEngine extends EventEmitter {
         lastReason = 'phone-rejected-by-openai';
         continue;
       }
-      if (result.status === 'sms-timeout' || result.status === 'validate-error') {
-        // OpenAI 那边号没真用 → release
+      if (result.status === 'sms-timeout' || result.status === 'validate-error' || result.status === 'submit-error') {
+        // OpenAI 那边号没真用（spawn 失败 / SMS 没到 / OpenAI 拒验证码）→ release
+        // v2.40.2 fix：原 submit-error 也归 post-validate-error 错（spawn 失败时号根本没用上）
         console.log(`[protocol] add-phone ${result.status}: ${(result.detail || '').slice(0, 500)}`);
         if (releaseFn) try { await releaseFn(); } catch {}
         try { save(); } catch {}
