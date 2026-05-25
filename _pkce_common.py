@@ -87,3 +87,73 @@ def follow_continue_for_auth_code(session, continue_url):
         if code_match:
             auth_code = code_match.group(1)
     return auth_code
+
+
+def exchange_code(session, auth_code, code_verifier, client_id, redirect_uri):
+    """POST /oauth/token 用 authorization_code 换 tokens。返回 dict（含 access_token / refresh_token / id_token），失败时返回 {}。"""
+    try:
+        r = session.post(
+            f"{AUTH}/oauth/token",
+            json={
+                "grant_type": "authorization_code",
+                "code": auth_code,
+                "code_verifier": code_verifier,
+                "client_id": client_id,
+                "redirect_uri": redirect_uri,
+            },
+            headers={"Content-Type": "application/json", "Accept": "application/json"},
+            timeout=30,
+        )
+        if r.ok:
+            return r.json()
+        _log(f"exchange_code failed: HTTP {r.status_code} {r.text[:120]}")
+        return {}
+    except Exception as e:
+        _log(f"exchange_code exception: {str(e)[:80]}")
+        return {}
+
+
+def rebuild_session(session_state, proxy_url=None):
+    """根据 session_state（cookies + UA + device_id）重建 curl_cffi.Session。"""
+    from curl_cffi import requests as curl_requests
+    ua = session_state.get("user_agent", "")
+    m = re.search(r"Chrome/(\d+)", ua)
+    chrome_major = int(m.group(1)) if m else 120
+    impersonate = f"chrome{chrome_major}"
+    proxies = None
+    if proxy_url:
+        if proxy_url.startswith("http://"):
+            proxy_url = "socks5h://" + proxy_url[len("http://"):]
+        proxies = {"http": proxy_url, "https": proxy_url}
+    try:
+        s = curl_requests.Session(impersonate=impersonate)
+    except Exception:
+        s = curl_requests.Session(impersonate="chrome120")
+    if proxies:
+        s.proxies.update(proxies)
+    if ua:
+        s.headers.update({"User-Agent": ua})
+    for c in session_state.get("cookies", []):
+        s.cookies.set(c["name"], c["value"], domain=c.get("domain"), path=c.get("path", "/"))
+    return s
+
+
+def _serialize_cookies(session):
+    """把 curl_cffi Session 的 cookies jar 序列化为 [{name,value,domain,path}, ...] 列表，
+    供 Node 端 stdin JSON 传给下一个 spawn 的 Python 脚本恢复 session。"""
+    out = []
+    try:
+        for c in session.cookies.jar:
+            out.append({
+                "name": c.name,
+                "value": c.value,
+                "domain": getattr(c, "domain", ".openai.com") or ".openai.com",
+                "path": getattr(c, "path", "/") or "/",
+            })
+    except Exception:
+        try:
+            for k, v in session.cookies.items():
+                out.append({"name": k, "value": v, "domain": ".openai.com", "path": "/"})
+        except Exception:
+            pass
+    return out
