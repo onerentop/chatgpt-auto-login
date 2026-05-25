@@ -29,7 +29,10 @@ node --test --test-name-pattern='extractCsId' server/__tests__/stripe-verify.tes
 node --test "server/__tests__/*.test.js"
 
 # Python 依赖（仅协议模式需要）
-pip install curl_cffi
+pip install curl_cffi pyotp
+
+# pyotp 仅 v2.29+ 协议模式 liveness lightLogin 用（Gmail TOTP 账号）。
+# Outlook-only 部署可不装；缺失时 Gmail 账号测活会标 alive_reason='otp fail'。
 ```
 
 仓库**没有**配置 lint/format 工具（无 eslint/prettier/black 配置）。

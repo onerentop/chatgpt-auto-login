@@ -32,6 +32,12 @@ if %errorlevel% neq 0 (
     ) else (
         echo [OK] curl_cffi installed
     )
+    py -3 -c "import pyotp" >nul 2>&1
+    if %errorlevel% neq 0 (
+        echo [WARN] pyotp not installed — Gmail accounts cannot do protocol-mode liveness re-login
+        echo        Run: pip install pyotp
+        echo        Outlook-only deployments can skip this.
+    )
 )
 
 :: Check Chrome
