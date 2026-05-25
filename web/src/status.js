@@ -44,6 +44,19 @@ export function statusLabel(s) {
   return LABEL_MAP[s] || s || '空闲'
 }
 
+// v2.33.0: 给 <el-table> :row-class-name 用。
+// 返回 'row-status-{type}' 或 '' (idle/empty 时不高亮)。
+// 大部分 status 直接复用 statusType()；唯一例外是 running ——
+// TYPE_MAP['running'] 是 ''（statusType 回退 'info' 渲染浅灰），
+// 但运行中需要明显的"在跑"信号，所以特殊处理为 warning（浅黄）。
+export function rowClassFor(status) {
+  const st = (status || '').toLowerCase()
+  if (!st || st === 'idle') return ''
+  if (st === 'running') return 'row-status-warning'
+  const type = statusType(st) || 'info'
+  return `row-status-${type}`
+}
+
 export const PLUS_STATUSES = ['plus', 'plus_no_rt']
 export const ERROR_STATUSES = ['error', 'no_link', 'deactivated', 'no_promo', 'canceled', 'token_expired', 'login_fail']
 
