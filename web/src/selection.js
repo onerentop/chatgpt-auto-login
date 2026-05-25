@@ -16,9 +16,12 @@ export function getSelectionSet(page) {
 }
 
 export function setSelectionFromRows(page, rows) {
-  state[page] = new Set(rows.map(r => r.email))
+  if (!state[page]) state[page] = new Set()
+  else state[page].clear()
+  for (const r of rows) state[page].add(r.email)
 }
 
 export function clearSelection(page) {
-  state[page] = new Set()
+  if (state[page]) state[page].clear()
+  else state[page] = new Set()
 }
