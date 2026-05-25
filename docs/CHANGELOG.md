@@ -1,5 +1,30 @@
 # Changelog
 
+## v2.41.0 — 2026-05-26
+
+### 删除"执行结果"页面（功能跟 Accounts 重叠）
+
+v2.29.1 (FX-2) 把 Results 从孤儿路由加进侧栏菜单，但实际使用中：
+
+- 跑完即用工作流 → cpa-auth/ 文件夹 + Accounts 页"下载 CPA / Sub" 按钮已够
+- Results 页"下载所有 / 下载选中" 跟 Accounts v2.30 加的同样功能重叠
+- 用户工作流没回看历史的需求
+
+**删除范围**：
+
+- `web/src/views/Results.vue` 整个视图
+- `web/src/router.js` `/results` 路由
+- `web/src/components/AppLayout.vue` 侧栏菜单"执行结果"项 + Command Palette `nav.results` 命令
+- `web/src/views/Dashboard.vue` "近期执行"卡片右上"查看全部 →"按钮
+
+**保留**（被其他视图依赖）：
+
+- `server/routes/results.js` 全部 endpoints：`/api/results` (Dashboard 近期表格用)、`/download-all` / `/download-selected` / `/:email/auth-file` (Accounts/Execute 下载用)、`/:email/logs` (Execute 查日志用)、`/:email/retry`
+
+**UI 效果**：侧栏 6 项 → 5 项（仪表盘 / 账号管理 / 执行控制 / 号池 / 配置设置）。Dashboard "近期执行"卡片仍在；Accounts/Execute 下载与日志功能完全不变。
+
+测试：218 Node pass（无后端改动）+ web build 成功。
+
 ## v2.40.9 — 2026-05-26
 
 ### 浏览器 token exchange 走代理 + 协议 first-time-consent intermediate URL fix
