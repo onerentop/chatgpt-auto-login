@@ -1,5 +1,49 @@
 # Changelog
 
+## v2.41.3 — 2026-05-26
+
+### selection store 引用替换 bug 修复（选中数累加不清空）
+
+实测 Accounts.vue 选中 → 取消选中 → 再选中，ContextActionBar 显示选中数累加不归零。Execute.vue 同样 buggy（用户未注意到）。
+
+**根因**：`web/src/selection.js`：
+
+```js
+export function clearSelection(page) {
+  state[page] = new Set()   // ← 替换引用！
+}
+```
+
+但 view 层：
+
+```js
+const globalSelectedSet = getSelectionSet('accounts')   // 拿快照到 const
+```
+
+`const` 永远指向**初始 Set 引用**。后续 `clearSelection('accounts')` 替换 `state.accounts` 为新 Set，但 view 层的 `globalSelectedSet` 常量还指着旧 Set，永远不会被清空 → 累加。
+
+**修复**：`setSelectionFromRows` 和 `clearSelection` 都改用 in-place `.clear()`，保持引用稳定：
+
+```js
+export function setSelectionFromRows(page, rows) {
+  if (!state[page]) state[page] = new Set()
+  else state[page].clear()
+  for (const r of rows) state[page].add(r.email)
+}
+
+export function clearSelection(page) {
+  if (state[page]) state[page].clear()
+  else state[page] = new Set()
+}
+```
+
+**影响范围**：
+
+- 修 Accounts.vue（v2.41.2 引入分组视图后才暴露）
+- 修 Execute.vue（v2.34.0 以来一直 buggy，但用户未注意到）
+
+零 view 改动 — 仅 `web/src/selection.js` 5 行修改。218 Node pass。web build 成功。
+
 ## v2.41.2 — 2026-05-26
 
 ### Accounts.vue 加分组视图（plan / alive_status / loginType 三维度切换）
