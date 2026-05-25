@@ -144,6 +144,25 @@ class TestProtocolPhoneVerify(unittest.TestCase):
         # validate 不应被调用
         self.assertEqual(fake_session.post.call_count, 1)
 
+    def test_validate_error(self):
+        """phone-validate 返回 4xx → status=validate-error。"""
+        import protocol_phone_verify as pv
+
+        fake_session = MagicMock()
+        ps_resp = MagicMock(ok=True, status_code=200)
+        ps_resp.json.return_value = {"page": {"type": "phone_sms_code"}}
+        val_resp = MagicMock(ok=False, status_code=400, text='{"error":"invalid_code"}')
+        fake_session.post.side_effect = [ps_resp, val_resp]
+        fake_session.headers = {}
+        fake_session.cookies = MagicMock()
+
+        with patch.object(pv, "rebuild_session", return_value=fake_session), \
+             patch.object(pv, "get_sentinel_token", return_value=""), \
+             patch.object(pv, "poll_sms", return_value="123456"):
+            result = self._run_with_input(self._build_input())
+
+        self.assertEqual(result["status"], "validate-error")
+
 
 if __name__ == "__main__":
     unittest.main()
