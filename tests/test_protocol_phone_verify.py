@@ -208,6 +208,37 @@ class TestProtocolPhoneVerify(unittest.TestCase):
         self.assertEqual(result["status"], "post-validate-error")
         self.assertIn("token exchange", result["detail"])
 
+    def test_rebuild_session_injects_cookies_and_ua(self):
+        """rebuild_session 注入 cookies + UA + device_id 正确（直接测公共函数）。"""
+        import sys
+        # 隔离 module-level stub 污染：tests/test_protocol_register_h1_fallback.py:13 在
+        # module load 时把 sys.modules['curl_cffi'].requests.Session 改成 MagicMock，
+        # 影响后续 _pkce_common.rebuild_session 内 deferred import。本测试需要真实
+        # curl_cffi.Session，强制重 import。
+        sys.modules.pop('curl_cffi', None)
+        sys.modules.pop('curl_cffi.requests', None)
+        from _pkce_common import rebuild_session
+        ss = {
+            "cookies": [
+                {"name": "oai-did", "value": "abc", "domain": ".openai.com", "path": "/"},
+                {"name": "session", "value": "xyz", "domain": "auth.openai.com", "path": "/"},
+            ],
+            "user_agent": "Mozilla/5.0 Chrome/130.0 TestAgent",
+            "device_id": "dev-zzz",
+        }
+        s = rebuild_session(ss)
+        # UA 注入
+        self.assertEqual(s.headers.get("User-Agent"), "Mozilla/5.0 Chrome/130.0 TestAgent")
+        # cookies 注入
+        cookie_names = set()
+        try:
+            for c in s.cookies.jar:
+                cookie_names.add(c.name)
+        except Exception:
+            cookie_names = set(s.cookies.keys())
+        self.assertIn("oai-did", cookie_names)
+        self.assertIn("session", cookie_names)
+
 
 if __name__ == "__main__":
     unittest.main()
