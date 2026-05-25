@@ -14,8 +14,14 @@
   "discordAppId": "app_id",
   "phonePool": {
     "enabled": false,
+    "provider": "local",
     "maxBindingsPerPhone": 5,
     "smsPollIntervalMs": 3000,
-    "smsMaxAttempts": 30
+    "smsMaxAttempts": 30,
+    "zhusms": {
+      "cardKey": "",
+      "service": "codex",
+      "baseUrl": "https://zhusms.com"
+    }
   }
 }

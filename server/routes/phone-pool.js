@@ -55,4 +55,24 @@ router.delete('/:phone', (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
 
+// v2.39.0: zhusms 余额查询（Config 页「测试余额」按钮调）
+router.post('/zhusms/balance', async (req, res) => {
+  try {
+    const raw = fs.readFileSync(CONFIG_PATH, 'utf-8')
+    const cfg = JSON.parse(raw)
+    const z = cfg?.phonePool?.zhusms
+    if (!z?.cardKey) return res.status(400).json({ error: 'cardKey not configured' })
+    let proxyUrl = null
+    try {
+      const state = require('../proxy').getState?.()
+      if (state?.enabled) proxyUrl = 'http://127.0.0.1:7890'
+    } catch {}
+    const zhusms = require('../zhusms-provider')
+    const balance = await zhusms.getBalance(z.cardKey, z.baseUrl || 'https://zhusms.com', proxyUrl)
+    res.json({ ok: true, balance })
+  } catch (e) {
+    res.status(500).json({ error: e?.message || String(e) })
+  }
+})
+
 module.exports = router
