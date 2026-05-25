@@ -53,3 +53,37 @@ def _post_with_h1_fallback(session, url, *, json=None, headers=None, timeout=30)
         return session.post(url, json=json, headers=headers, timeout=timeout, http_version=HTTP11)
 
     return r
+
+
+def follow_continue_for_auth_code(session, continue_url):
+    """跟 continue_url 的 redirect chain，从 localhost:1455 重定向中提取 code= 参数。
+    OpenAI 内部 redirect 到 localhost:1455 会触发 ConnectionError（本机没监听），
+    需要从 exception 字符串里 regex 提 code。
+    """
+    auth_code = None
+    try:
+        r = session.get(
+            continue_url,
+            headers={"Accept": "text/html", "Upgrade-Insecure-Requests": "1"},
+            allow_redirects=True,
+            timeout=30,
+        )
+        redir_url = str(r.url)
+        if "localhost:1455" in redir_url and "code=" in redir_url:
+            auth_code = parse_qs(urlparse(redir_url).query).get("code", [None])[0]
+        # 也检查 response history（有时 final url 不带 code 但中间 redirect 带）
+        if not auth_code and hasattr(r, 'history') and r.history:
+            for hr in r.history:
+                loc = hr.headers.get("location", "") if hasattr(hr, 'headers') else ""
+                if "localhost:1455" in loc and "code=" in loc:
+                    auth_code = parse_qs(urlparse(loc).query).get("code", [None])[0]
+                    break
+    except Exception as e:
+        # ConnectionError 文本里抓 code
+        err_str = str(e)
+        import traceback
+        tb = traceback.format_exc()
+        code_match = re.search(r'code=([^&\s\'"]+)', tb + err_str)
+        if code_match:
+            auth_code = code_match.group(1)
+    return auth_code
