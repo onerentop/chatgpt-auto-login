@@ -15,8 +15,8 @@ test('rowClassFor: idle 不高亮', () => {
   assert.strictEqual(rowClassFor(undefined), '')
 })
 
-test('rowClassFor: running 强制 warning（即便 TYPE_MAP=空字符串）', () => {
-  assert.strictEqual(rowClassFor('running'), 'row-status-warning')
+test('rowClassFor: running 专属 class（v2.33.1，不复用 warning）', () => {
+  assert.strictEqual(rowClassFor('running'), 'row-status-running')
 })
 
 test('rowClassFor: success 状态（plus）', () => {
@@ -46,5 +46,5 @@ test('rowClassFor: 未知状态 fallback info', () => {
 
 test('rowClassFor: 大小写不敏感', () => {
   assert.strictEqual(rowClassFor('PLUS'), 'row-status-success')
-  assert.strictEqual(rowClassFor('Running'), 'row-status-warning')
+  assert.strictEqual(rowClassFor('Running'), 'row-status-running')
 })

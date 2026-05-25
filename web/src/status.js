@@ -47,12 +47,14 @@ export function statusLabel(s) {
 // v2.33.0: 给 <el-table> :row-class-name 用。
 // 返回 'row-status-{type}' 或 '' (idle/empty 时不高亮)。
 // 大部分 status 直接复用 statusType()；唯一例外是 running ——
-// TYPE_MAP['running'] 是 ''（statusType 回退 'info' 渲染浅灰），
-// 但运行中需要明显的"在跑"信号，所以特殊处理为 warning（浅黄）。
+// v2.33.1: running 用专属 class 'row-status-running'（不复用 warning），
+// 因为 warning 还有 plus_no_rt / token_expired / no_link / canceled 等多
+// 个共用，会导致"运行中"和这些终态颜色相同看不出差异。专属 class 配合
+// 单独的 CSS（浅蓝 + 左边框）让"正在跑"视觉突出。
 export function rowClassFor(status) {
   const st = (status || '').toLowerCase()
   if (!st || st === 'idle') return ''
-  if (st === 'running') return 'row-status-warning'
+  if (st === 'running') return 'row-status-running'
   const type = statusType(st) || 'info'
   return `row-status-${type}`
 }

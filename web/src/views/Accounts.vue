@@ -633,4 +633,8 @@ async function downloadSelectedAs(format) {
 :deep(.row-status-warning td) { background-color: #fdf6ec !important; }
 :deep(.row-status-danger  td) { background-color: #fef0f0 !important; }
 :deep(.row-status-info    td) { background-color: #f4f4f5 !important; }
+
+/* v2.33.1: running 专属浅蓝 + 左边框，避免与多状态共用的 warning 撞色 */
+:deep(.row-status-running td) { background-color: #ecf5ff !important; }
+:deep(.row-status-running td:first-child) { border-left: 4px solid #409eff !important; }
 </style>

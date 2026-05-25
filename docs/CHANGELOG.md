@@ -1,5 +1,23 @@
 # Changelog
 
+## v2.33.1 — 2026-05-25
+
+### Hotfix: running 专属高亮色，不再与 warning 撞色
+
+v2.33.0 把 `running` 映射到 warning（浅黄）—— 但 warning 还包括
+plus_no_rt / token_expired / no_link / canceled / no_jp_proxy /
+paypal_captcha 等多个终态。结果一个 token_expired 账户（浅黄）
+点执行后变 running（也浅黄），**row 颜色没变化看不出"在跑"**。
+
+**修复**：
+
+- `rowClassFor('running')` 改返回 `'row-status-running'` 专属 class
+  （不复用 `row-status-warning`）
+- 两个 Vue 文件加 CSS `.row-status-running` —— 浅蓝 `#ecf5ff`
+  背景 + 左边 4px Element Plus 主色 `#409eff` border，让"正在跑"
+  视觉强突出，与所有终态色（红/黄/绿/灰）都不同
+- 8 单测里 `running` 断言改成 `row-status-running`
+
 ## v2.33.0 — 2026-05-25
 
 ### 账号行运行时整行高亮
