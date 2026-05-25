@@ -1,5 +1,71 @@
 # Changelog
 
+## v2.38.0 — 2026-05-25
+
+### 浏览器模式 PKCE add_phone 自动化 (Phase 2a/2)
+
+v2.37.0 Phase 1 交付了号池基础设施（DB / service / 路由 / UI /
+Config）。Phase 2a 接通浏览器模式 PKCE 流程消费号池 —— ChatGPT
+要求手机号验证时自动从池里取号、Playwright 填表 + 接 SMS + 填验
+证码 + 提交、继续 token exchange。
+
+**完成流程**：
+
+```
+PKCE Playwright OAuth flow
+    │
+    ▼ 检测到 add_phone 页 (URL /add-phone 或 DOM input[type=tel])
+    │
+    ├─ config.phonePool.enabled=false → return {needsPhone:true} → plus_no_rt (兼容)
+    │
+    └─ acquirePhone(email) ──┬─ null → return {phonePoolEmpty:true} → status='phone_pool_empty'
+                              │
+                              └─ {phone, smsApiUrl} → 填 phone + submit
+                                                   → wait SMS form
+                                                   → fetchSmsCode(proxyUrl if proxy enabled)
+                                                   → 填 code + submit
+                                                   → wait /oauth/callback
+                                                   → continue PKCE 主循环 → token exchange ✓
+                                                   │
+                                                   └ 任一步失败 → {phoneVerifyFail: 'sms-timeout'|'submit-error'}
+                                                                → status='phone_verify_fail'
+```
+
+**代理覆盖**：跟全局 proxy 配置同步。`proxy.enabled=true` 时
+Chrome 已自动走 `http://127.0.0.1:7890`（既有），`fetchSmsCode` 显
+式传 proxyUrl 走 HttpsProxyAgent；`proxy.enabled=false` 时全部直连。
+
+**新增**：
+
+- **`server/phone-pool.js:fetchSmsCode`** 加 `proxyUrl` 参数（接 HttpsProxyAgent）
+- **`utils.js`** +`isAddPhonePage(page)` 导出（URL + DOM 双重判定）
+- **`utils.js:fetchTokensViaPKCE`** add_phone 分支扩展：号池消费 + Playwright 填表 +
+  接 SMS + continue 主循环（成功）or 4 种新 return shape（失败分类）
+- **`server/engine.js`** 2 处 PKCE 调用站（cached-login + post-payment）处理新 return shape
+- **新 status 码**：`phone_pool_empty` (warning) + `phone_verify_fail` (danger)，
+  加入 ERROR_STATUSES → Accounts 计划列推导 free（v2.32 规则）
+- **前端**：status.js +2 codes；3 个视图筛选下拉自动 pickup（用 EXECUTE_STATUS_FILTER_OPTIONS
+  动态生成）
+
+**不变式**：
+- `config.phonePool.enabled=false` → 完全跳过号池逻辑（向后兼容老行为）
+- 协议模式 `protocol_register.py` / `protocol-engine.js` **不动**（Phase 2b 另开 spec）
+- `payment.js` PayPal SMS 流程**不动**（继续用 config.smsApiUrl + handleSmsVerification）
+- Python 任何文件**不动**
+
+**测试**：`server/__tests__/phone-pool.test.js` +1 (P7 proxyUrl agent) +
+`server/__tests__/utils-isAddPhonePage.test.js` +3（URL match / DOM
+fallback / both miss）+ `__tests__/status-row-class.test.js` +2 断言。
+共 200 tests pass on v2.37.0 baseline 194。
+
+**Phase 2b 预览**（独立 spec，需用户先抓包）：协议模式 PKCE add_phone
+实现，需要 Python bidirectional stdin + OpenAI add_phone endpoint
+URLs（用 Chrome DevTools Network 抓 POST 请求 + payload + response shape）。
+
+**Spec / Plan**：`docs/superpowers/specs/2026-05-25-pkce-add-phone-browser-mode-design.md`
++ `docs/superpowers/plans/2026-05-25-pkce-add-phone-browser-mode.md`。
+
+
 ## v2.37.0 — 2026-05-25
 
 ### 手机号号池基础设施 (Phase 1/2)
