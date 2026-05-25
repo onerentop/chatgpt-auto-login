@@ -14,7 +14,7 @@ Reason strings MUST contain one of (matched case-insensitively by runner.js):
    bad password / no password / outlook oauth missing / otp timeout /
    otp fail / captcha / no session / proxy reset / unexpected:<...>
 """
-import sys, json, time, uuid, random
+import sys, json, uuid, random
 from datetime import datetime, timedelta, timezone
 
 # Redirect side-effect prints from chatgpt_register/* imports to stderr —
@@ -64,7 +64,14 @@ def _to_cst_iso(dt_str_or_obj):
 
 
 def _build_session(proxy_url):
-    """Mirror protocol_register.py session setup — Chrome JA3 + rotating impersonate."""
+    """Mirror protocol_register.py session setup — Chrome JA3 + rotating impersonate.
+
+    Note: protocol_register.py explicitly sets User-Agent, Accept-Language and
+    sec-ch-ua headers after Session() because it builds a full sec-ch-ua string
+    per profile.  _build_session doesn't carry that per-profile metadata, so we
+    rely on curl_cffi impersonate= injecting the UA implicitly.  If a caller
+    needs the exact UA string it can read session.headers.get("User-Agent", "").
+    """
     from curl_cffi import requests as curl_requests
     if proxy_url and proxy_url.startswith('http://'):
         proxy_url = 'socks5h://' + proxy_url[len('http://'):]
@@ -156,8 +163,8 @@ def login(email, password, login_type, client_id, refresh_token, totp_secret, pr
 
     # Step 2: submit username
     _log("Step 2: submit username")
-    sentinel = get_sentinel_token(session, device_id, flow="login_identifier",
-                                  user_agent=session.headers.get("User-Agent", ""))
+    sentinel = get_sentinel_token(session, device_id, flow="authorize_continue",
+                                  user_agent=session.headers.get("User-Agent", "")) or ""
     try:
         r = session.post(f"{AUTH}/u/login/identifier?state={state}",
                         data={"state": state, "username": email,
@@ -173,8 +180,8 @@ def login(email, password, login_type, client_id, refresh_token, totp_secret, pr
 
     # Step 3: submit password
     _log("Step 3: submit password")
-    sentinel = get_sentinel_token(session, device_id, flow="login_password",
-                                  user_agent=session.headers.get("User-Agent", ""))
+    sentinel = get_sentinel_token(session, device_id, flow="authorize_continue",
+                                  user_agent=session.headers.get("User-Agent", "")) or ""
     try:
         r = session.post(f"{AUTH}/u/login/password?state={state}",
                         data={"state": state, "username": email, "password": password,
@@ -219,7 +226,7 @@ def login(email, password, login_type, client_id, refresh_token, totp_secret, pr
         # Step 5: submit OTP
         _log(f"Step 5: submit OTP (code={code[:2]}***)")
         sentinel = get_sentinel_token(session, device_id, flow="email_otp_validate",
-                                      user_agent=session.headers.get("User-Agent", ""))
+                                      user_agent=session.headers.get("User-Agent", "")) or ""
         try:
             r = session.post(f"{AUTH}/u/email-otp/challenge?state={state}",
                             data={"state": state, "code": code, "action": "default"},
