@@ -104,3 +104,68 @@ test('local 3 attempt 全拒 → all-phones-rejected', async () => {
     assert.equal(releaseCount, 3);
   } finally { env.cleanup(); }
 });
+
+test('池空 → phonePoolEmpty', async () => {
+  const env = setupTestEnv({ phonePool: { enabled: true, provider: 'local', maxBindingsPerPhone: 3 } });
+  try {
+    let spawnCount = 0;
+    const engine = await mkEngine({
+      runResult: async () => { spawnCount++; return { status: 'ok' }; },
+      localQueue: [],  // 拿不到号
+    });
+    const r = await engine._finalizePhoneVerify({}, { email: 'a@b.c' });
+    assert.deepEqual(r, { phonePoolEmpty: true });
+    assert.equal(spawnCount, 0, '没拿到号不应 spawn');
+  } finally { env.cleanup(); }
+});
+
+test('sms-timeout 单次 break → release + phoneVerifyFail', async () => {
+  const env = setupTestEnv({ phonePool: { enabled: true, provider: 'local', maxBindingsPerPhone: 3 } });
+  try {
+    let spawnCount = 0;
+    let releaseCount = 0;
+    const engine = await mkEngine({
+      runResult: async () => { spawnCount++; return { status: 'sms-timeout' }; },
+      localQueue: [{ phone: '+1' }, { phone: '+2' }],
+      releaseFn: async () => { releaseCount++; },
+    });
+    const r = await engine._finalizePhoneVerify({}, { email: 'a@b.c' });
+    assert.deepEqual(r, { phoneVerifyFail: 'sms-timeout' });
+    assert.equal(spawnCount, 1, 'sms-timeout 不重试');
+    assert.equal(releaseCount, 1);
+  } finally { env.cleanup(); }
+});
+
+test('validate-error 单次 break → release', async () => {
+  const env = setupTestEnv({ phonePool: { enabled: true, provider: 'local', maxBindingsPerPhone: 3 } });
+  try {
+    let spawnCount = 0;
+    let releaseCount = 0;
+    const engine = await mkEngine({
+      runResult: async () => { spawnCount++; return { status: 'validate-error', detail: 'HTTP 400' }; },
+      localQueue: [{ phone: '+1' }, { phone: '+2' }],
+      releaseFn: async () => { releaseCount++; },
+    });
+    const r = await engine._finalizePhoneVerify({}, { email: 'a@b.c' });
+    assert.deepEqual(r, { phoneVerifyFail: 'validate-error' });
+    assert.equal(spawnCount, 1);
+    assert.equal(releaseCount, 1);
+  } finally { env.cleanup(); }
+});
+
+test('post-validate-error 单次 break → 不 release (binding 保留)', async () => {
+  const env = setupTestEnv({ phonePool: { enabled: true, provider: 'local', maxBindingsPerPhone: 3 } });
+  try {
+    let spawnCount = 0;
+    let releaseCount = 0;
+    const engine = await mkEngine({
+      runResult: async () => { spawnCount++; return { status: 'post-validate-error', detail: 'token exchange empty' }; },
+      localQueue: [{ phone: '+1' }, { phone: '+2' }],
+      releaseFn: async () => { releaseCount++; },
+    });
+    const r = await engine._finalizePhoneVerify({}, { email: 'a@b.c' });
+    assert.deepEqual(r, { phoneVerifyFail: 'post-validate-error' });
+    assert.equal(spawnCount, 1);
+    assert.equal(releaseCount, 0, '*** 关键: post-validate-error 不 release，binding 保留 ***');
+  } finally { env.cleanup(); }
+});
