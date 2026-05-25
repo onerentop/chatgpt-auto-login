@@ -118,6 +118,17 @@ class TestProtocolPhoneVerify(unittest.TestCase):
         self.assertEqual(result["status"], "voip-blocked")
         self.assertEqual(fake_session.post.call_count, 1)
 
+    def test_phone_validate_path_is_phone_otp(self):
+        """v2.40.6 regression: phone-validate endpoint 必须是 /api/accounts/phone-otp/validate。
+        之前 v2.40.0 smoke 实测 /add-phone/validate 返 404 后改成 /phone-otp/validate，
+        但临时改动没 commit，多次 hotfix git checkout 时被还原成占位。本测试 grep 源码防回归。"""
+        import re as _re
+        src = open('protocol_phone_verify.py', 'r', encoding='utf-8').read()
+        m = _re.search(r'PHONE_VALIDATE_PATH\s*=\s*["\']([^"\']+)["\']', src)
+        self.assertIsNotNone(m, 'PHONE_VALIDATE_PATH 常量丢失')
+        self.assertEqual(m.group(1), '/api/accounts/phone-otp/validate',
+                         'PHONE_VALIDATE_PATH 错路径（应该是 phone-otp/validate）')
+
     def test_phone_start_rejected_unknown(self):
         """phone-start 返回未知 error.code → status=phone-rejected（保守 retry）。"""
         import protocol_phone_verify as pv

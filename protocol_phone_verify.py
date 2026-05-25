@@ -174,8 +174,10 @@ def main():
     _log(f"verify: got SMS code (len={len(code)})")
 
     # Step 3: phone-validate
-    # Phase 0 推测：path = /api/accounts/add-phone/validate，无需 sentinel；smoke test 待验证
-    PHONE_VALIDATE_PATH = "/api/accounts/add-phone/validate"
+    # v2.40.0 smoke confirmed: path = /api/accounts/phone-otp/validate (NOT add-phone/validate)
+    # 对应 phone-start 响应 page.type=phone_otp_verification → endpoint 用 phone-otp 命名空间。
+    # 无需 sentinel。
+    PHONE_VALIDATE_PATH = "/api/accounts/phone-otp/validate"
     r = s.post(
         f"{AUTH}{PHONE_VALIDATE_PATH}",
         json={"code": code},  # payload 来自 Phase 0（code 字段名仍是推测）
