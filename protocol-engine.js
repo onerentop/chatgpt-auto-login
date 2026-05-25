@@ -212,6 +212,63 @@ class ProtocolEngine extends EventEmitter {
     };
   }
 
+  // v2.40.0: 协议模式 add_phone 主流程（retry 3 次，按 result.status 分流）
+  async _finalizePhoneVerify(sessionState, account) {
+    const CONFIG_PATH = path.join(ROOT, 'config.json');
+    let cfg = {};
+    try { cfg = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8')); } catch {}
+    if (!cfg?.phonePool?.enabled) {
+      return { phoneVerifyFail: 'pool-disabled' };
+    }
+
+    let proxyUrl = null;
+    try {
+      const state = proxyMgr.getState?.();
+      if (state?.enabled) proxyUrl = 'http://127.0.0.1:7890';
+    } catch {}
+
+    const provider = cfg.phonePool.provider || 'local';
+    const MAX_ATTEMPTS = 3;
+    let lastReason = null;
+
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      const acq = await this._acquirePhoneForProtocol(provider, cfg, account.email, proxyUrl);
+      const { phone, smsConfig, releaseFn } = acq;
+      if (!phone) {
+        return lastReason ? { phoneVerifyFail: lastReason } : { phonePoolEmpty: true };
+      }
+      // v2.39.4 hotfix 等价：拿号后立即落盘
+      try { save(); } catch {}
+
+      console.log(`[protocol] add-phone (attempt ${attempt}/${MAX_ATTEMPTS}): ${phone} (provider=${provider})`);
+      const result = await runProtocolPhoneVerify(sessionState, phone, smsConfig, proxyUrl, this);
+
+      if (result.status === 'ok') {
+        console.log(`[protocol] add-phone OK, tokens obtained`);
+        return { tokens: result.tokens };
+      }
+      if (result.status === 'phone-rejected') {
+        console.log(`[protocol] OpenAI rejected ${phone}: ${(result.detail || '').slice(0, 80)}, retry`);
+        if (releaseFn) try { await releaseFn(); } catch {}
+        try { save(); } catch {}
+        lastReason = 'phone-rejected-by-openai';
+        continue;
+      }
+      if (result.status === 'sms-timeout' || result.status === 'validate-error') {
+        // OpenAI 那边号没真用 → release
+        console.log(`[protocol] add-phone ${result.status}: ${(result.detail || '').slice(0, 80)}`);
+        if (releaseFn) try { await releaseFn(); } catch {}
+        try { save(); } catch {}
+        return { phoneVerifyFail: result.status };
+      }
+      // post-validate-error: OpenAI 已接受号 + 验证码，binding 保留
+      console.log(`[protocol] add-phone post-validate failure: ${(result.detail || '').slice(0, 80)}, binding kept`);
+      return { phoneVerifyFail: 'post-validate-error' };
+    }
+
+    return { phoneVerifyFail: 'all-phones-rejected' };
+  }
+
   // Run PKCE and emit final status. Used by both already-Plus and post-payment branches.
   async _finalizePkce(account, loginResult, progress) {
     this.emitStatus({ email: account.email, status: 'running', phase: 'pkce', progress });
