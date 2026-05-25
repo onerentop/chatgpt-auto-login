@@ -139,85 +139,16 @@ def _generate_password(length=14):
     random.shuffle(pwd)
     return "".join(pwd)
 
+# v2.29: OTP helpers moved to chatgpt_register/otp.py for reuse with liveness_login.
+# Original bodies preserved verbatim; aliased here so all in-file callers work unchanged.
+from chatgpt_register.otp import (
+    fetch_imap_otp as _fetch_imap_otp_impl,
+    get_imap_baseline as _get_imap_baseline,
+)
+
 def _fetch_imap_otp(email_addr, client_id, refresh_token, baseline_uid, timeout=90):
-    """Poll Outlook IMAP for OTP code after baseline_uid."""
-    token_body = urlencode({"client_id": client_id, "grant_type": "refresh_token",
-        "refresh_token": refresh_token, "scope": "https://outlook.office.com/IMAP.AccessAsUser.All"})
-    from curl_cffi import requests as curl_requests
-    r = curl_requests.post("https://login.microsoftonline.com/consumers/oauth2/v2.0/token",
-        headers={"Content-Type": "application/x-www-form-urlencoded"}, data=token_body, timeout=15)
-    imap_token = r.json().get("access_token")
-    if not imap_token:
-        return None
-
-    start = time.time()
-    for attempt in range(30):
-        if time.time() - start > timeout:
-            break
-        imap = None
-        try:
-            imap = imaplib.IMAP4_SSL("outlook.office365.com", 993, timeout=15)
-            auth_str = f"user={email_addr}\x01auth=Bearer {imap_token}\x01\x01"
-            imap.authenticate("XOAUTH2", lambda x: auth_str.encode())
-            imap.select("INBOX")
-            _, msgs = imap.search(None, f"UID {baseline_uid + 1}:*")
-            new_uids = [u for u in msgs[0].split() if int(u) > baseline_uid]
-            for uid in reversed(new_uids):
-                _, data = imap.fetch(uid, "(BODY[])")
-                raw = data[0][1]
-                msg = email_lib.message_from_bytes(raw)
-                subject = str(msg.get("Subject", ""))
-                from_addr = str(msg.get("From", ""))
-                if "openai" in from_addr.lower() or "chatgpt" in subject.lower() or "code" in subject.lower():
-                    m = re.search(r"\b(\d{6})\b", subject)
-                    if m:
-                        return m.group(1)
-                    body = ""
-                    if msg.is_multipart():
-                        for part in msg.walk():
-                            if part.get_content_type() == "text/html":
-                                body = part.get_payload(decode=True).decode("utf-8", errors="ignore")
-                                break
-                    else:
-                        body = msg.get_payload(decode=True).decode("utf-8", errors="ignore")
-                    body_clean = re.sub(r"<[^>]+>", " ", body)
-                    m = re.search(r"\b(\d{6})\b", body_clean)
-                    if m:
-                        return m.group(1)
-        except Exception as e:
-            if attempt == 0:
-                _log(f"IMAP poll error: {str(e)[:50]}")
-        finally:
-            if imap:
-                try:
-                    imap.logout()
-                except Exception:
-                    pass
-        time.sleep(3)
-    return None
-
-def _get_imap_baseline(email_addr, client_id, refresh_token):
-    """Get current max UID from Outlook IMAP."""
-    try:
-        token_body = urlencode({"client_id": client_id, "grant_type": "refresh_token",
-            "refresh_token": refresh_token, "scope": "https://outlook.office.com/IMAP.AccessAsUser.All"})
-        from curl_cffi import requests as curl_requests
-        r = curl_requests.post("https://login.microsoftonline.com/consumers/oauth2/v2.0/token",
-            headers={"Content-Type": "application/x-www-form-urlencoded"}, data=token_body, timeout=15)
-        imap_token = r.json().get("access_token")
-        if not imap_token:
-            return 0
-        imap = imaplib.IMAP4_SSL("outlook.office365.com", 993, timeout=15)
-        auth_str = f"user={email_addr}\x01auth=Bearer {imap_token}\x01\x01"
-        imap.authenticate("XOAUTH2", lambda x: auth_str.encode())
-        imap.select("INBOX")
-        _, msgs = imap.search(None, "ALL")
-        uids = msgs[0].split()
-        baseline = int(uids[-1]) if uids else 0
-        imap.logout()
-        return baseline
-    except Exception:
-        return 0
+    """Back-compat wrapper that injects this module's _log callback."""
+    return _fetch_imap_otp_impl(email_addr, client_id, refresh_token, baseline_uid, timeout, log=_log)
 
 def _do_pkce_flow(session, email, password, ms_client_id, ms_refresh_token):
     """PKCE OAuth flow using existing session cookies. Returns {access_token, refresh_token, id_token}."""
