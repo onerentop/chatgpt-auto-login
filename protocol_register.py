@@ -51,8 +51,9 @@ except Exception:
 finally:
     sys.stdout = _orig_stdout
 
-# _post_with_h1_fallback / follow_continue_for_auth_code: shared with protocol_phone_verify.py (lives in _pkce_common.py).
-from _pkce_common import _post_with_h1_fallback, follow_continue_for_auth_code
+# _post_with_h1_fallback / follow_continue_for_auth_code / _serialize_cookies:
+# shared with protocol_phone_verify.py (lives in _pkce_common.py).
+from _pkce_common import _post_with_h1_fallback, follow_continue_for_auth_code, _serialize_cookies
 
 # Chrome fingerprint profiles (local, no external dependency)
 _CHROME_PROFILES = [
@@ -132,6 +133,32 @@ def _do_pkce_flow(session, email, password, ms_client_id, ms_refresh_token):
     redirect_uri = "http://localhost:1455/auth/callback"
     AUTH = "https://auth.openai.com"
     device_id = session.cookies.get("oai-did") or str(uuid.uuid4())
+
+    def _build_session_state(current_resp=None):
+        """v2.40.0: 协议模式 add_phone — 把当前 PKCE session 序列化以便 Node 端
+        spawn protocol_phone_verify.py 时恢复（cookies + device_id + UA + code_verifier 等）。"""
+        cu = ""
+        if current_resp is not None:
+            try: cu = str(current_resp.url)
+            except Exception: pass
+        acu = ""
+        if current_resp is not None:
+            try:
+                if current_resp.ok and current_resp.headers.get("content-type", "").startswith("application/json"):
+                    acu = current_resp.json().get("continue_url", "") or ""
+            except Exception:
+                pass
+        return {
+            "cookies": _serialize_cookies(session),
+            "device_id": device_id,
+            "user_agent": session.headers.get("User-Agent", ""),
+            "code_verifier": code_verifier,
+            "code_challenge": code_challenge,
+            "redirect_uri": redirect_uri,
+            "client_id": pkce_client_id,
+            "current_url": cu,
+            "authorize_continue_url": acu,
+        }
 
     auth_url = (
         f"{AUTH}/oauth/authorize?"
@@ -244,8 +271,8 @@ def _do_pkce_flow(session, email, password, ms_client_id, ms_refresh_token):
                             otp_page_type = (otp_resp.get("page") or {}).get("type", "")
                             _log(f"PKCE: OTP validate response: {r.status_code} continue={otp_continue[:60]}")
                             if "add_phone" in otp_page_type or "add-phone" in otp_continue or "phone-required" in otp_continue:
-                                _log("PKCE: Phone verification required")
-                                return {"needsPhone": True}
+                                _log("PKCE: Phone verification required (choose-account branch)")
+                                return {"needsPhone": True, "session_state": _build_session_state(r)}
                             elif otp_continue:
                                 auth_code = follow_continue_for_auth_code(session, otp_continue)
 
@@ -291,14 +318,16 @@ def _do_pkce_flow(session, email, password, ms_client_id, ms_refresh_token):
                 _log(f"PKCE: OTP response: page={otp_page} continue={continue_url[:60]}")
 
                 if "add_phone" in otp_page or "add-phone" in str(continue_url):
-                    return {"needsPhone": True}
+                    _log("PKCE: Phone verification required (login branch)")
+                    return {"needsPhone": True, "session_state": _build_session_state(r)}
 
                 # Follow continue URL to get the auth code
                 if continue_url:
                     auth_code = follow_continue_for_auth_code(session, continue_url)
 
         elif "add-phone" in final_path or "phone-required" in final_path:
-            return {"needsPhone": True}
+            _log("PKCE: Phone verification required (landing branch)")
+            return {"needsPhone": True, "session_state": _build_session_state(r)}
 
     if not auth_code:
         # Last resort: check response history for localhost redirect
