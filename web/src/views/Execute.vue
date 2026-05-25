@@ -1,65 +1,69 @@
 <template>
-  <div>
-    <!-- Toolbar (sticky) -->
-    <el-row style="margin-bottom: 12px; position: sticky; top: 0; z-index: 10; background: #fff; padding: 8px 0; border-bottom: 1px solid #eee;" :gutter="12" align="middle">
-      <el-col :span="24">
-        <el-button type="success" :disabled="running" @click="execSelected">执行选中 ({{ selectedEmails.length }})</el-button>
-        <el-button type="primary" :disabled="running" @click="execAll">执行全部</el-button>
-        <el-button type="warning" :disabled="running || failedEmails.length === 0" @click="retryFailed">重试失败 ({{ failedEmails.length }})</el-button>
-        <el-button type="danger" :disabled="!running" @click="handleStop">停止</el-button>
-        <el-divider direction="vertical" />
-        <el-dropdown :disabled="selectedEmails.length === 0" @command="downloadSelectedAs" split-button size="default">
-          下载选中 ({{ selectedEmails.length }})
-          <template #dropdown>
-            <el-dropdown-menu>
-              <el-dropdown-item command="cpa">CPA 格式</el-dropdown-item>
-              <el-dropdown-item command="sub2api">Sub2API 格式</el-dropdown-item>
-            </el-dropdown-menu>
-          </template>
-        </el-dropdown>
-        <el-dropdown @command="downloadAllAs" split-button size="default" style="margin-left:8px">
-          下载全部 (ZIP)
-          <template #dropdown>
-            <el-dropdown-menu>
-              <el-dropdown-item command="cpa">CPA 格式</el-dropdown-item>
-              <el-dropdown-item command="sub2api">Sub2API 格式</el-dropdown-item>
-            </el-dropdown-menu>
-          </template>
-        </el-dropdown>
-        <el-button :disabled="selectedEmails.length === 0" style="margin-left:8px" @click="clearAllSelection">取消选中</el-button>
-        <el-divider direction="vertical" />
-        <el-tag :type="running ? 'warning' : 'info'">{{ running ? '运行中' : '空闲' }}</el-tag>
-        <el-tag v-if="socketState.connected" type="success" style="margin-left: 8px">WS</el-tag>
-        <el-divider direction="vertical" />
+  <div class="app-stack--lg">
+    <PageHeader title="执行控制" :subtitle="execSubtitle">
+      <template #actions>
         <el-tag :type="engineMode.protocolMode ? 'success' : 'warning'" size="default">
           {{ engineMode.protocolMode ? '协议模式' : '浏览器模式' }}
         </el-tag>
-        <el-tag type="info" size="default" style="margin-left:6px">
-          link: {{ engineMode.paymentLinkSource === 'api' ? 'API' : 'Discord' }}
-        </el-tag>
-      </el-col>
-    </el-row>
-    <el-row style="margin-bottom: 12px">
-      <el-col :span="24">
-        <el-input v-model="search" placeholder="搜索邮箱… 按 / 聚焦" clearable style="width:220px" data-hotkey="search" />
-        <el-select v-model="statusFilter" placeholder="状态" clearable style="width:130px;margin-left:8px">
-          <el-option v-for="opt in EXECUTE_STATUS_FILTER_OPTIONS" :key="opt.value" :label="opt.label" :value="opt.value" />
-        </el-select>
-        <el-select v-model="planFilter" placeholder="Plan" clearable style="width:110px;margin-left:8px">
-          <el-option label="Plus" value="plus" />
-          <el-option label="Free" value="free" />
-          <el-option label="未知" value="unknown" />
-        </el-select>
-        <el-select v-model="authFilter" placeholder="Auth" clearable style="width:110px;margin-left:8px">
-          <el-option label="已生成" value="yes" />
-          <el-option label="未生成" value="no" />
-        </el-select>
-        <el-tag style="margin-left: 12px">{{ filteredRows.length }} / {{ accounts.length }}</el-tag>
-      </el-col>
-    </el-row>
+        <el-tag type="info">link: {{ engineMode.paymentLinkSource === 'api' ? 'API' : 'Discord' }}</el-tag>
+      </template>
+    </PageHeader>
+
+    <!-- Toolbar — 操作 + 筛选 -->
+    <SectionCard flush>
+      <div class="ex-toolbar">
+        <div class="ex-toolbar__row">
+          <el-button type="success" :disabled="running" @click="execSelected">
+            执行选中 ({{ selectedEmails.length }})
+          </el-button>
+          <el-button type="primary" :disabled="running" @click="execAll">执行全部</el-button>
+          <el-button type="warning" :disabled="running || failedEmails.length === 0" @click="retryFailed">
+            重试失败 ({{ failedEmails.length }})
+          </el-button>
+          <el-button type="danger" :disabled="!running" @click="handleStop">停止</el-button>
+          <el-divider direction="vertical" />
+          <el-dropdown :disabled="selectedEmails.length === 0" @command="downloadSelectedAs" split-button size="default">
+            下载选中 ({{ selectedEmails.length }})
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="cpa">CPA 格式</el-dropdown-item>
+                <el-dropdown-item command="sub2api">Sub2API 格式</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+          <el-dropdown @command="downloadAllAs" split-button size="default">
+            下载全部 (ZIP)
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="cpa">CPA 格式</el-dropdown-item>
+                <el-dropdown-item command="sub2api">Sub2API 格式</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+          <el-button :disabled="selectedEmails.length === 0" @click="clearAllSelection">取消选中</el-button>
+        </div>
+        <div class="ex-toolbar__row">
+          <el-input v-model="search" placeholder="搜索邮箱… 按 / 聚焦" clearable style="width:240px" data-hotkey="search" />
+          <el-select v-model="statusFilter" placeholder="状态" clearable style="width:140px">
+            <el-option v-for="opt in EXECUTE_STATUS_FILTER_OPTIONS" :key="opt.value" :label="opt.label" :value="opt.value" />
+          </el-select>
+          <el-select v-model="planFilter" placeholder="Plan" clearable style="width:110px">
+            <el-option label="Plus" value="plus" />
+            <el-option label="Free" value="free" />
+            <el-option label="未知" value="unknown" />
+          </el-select>
+          <el-select v-model="authFilter" placeholder="Auth" clearable style="width:110px">
+            <el-option label="已生成" value="yes" />
+            <el-option label="未生成" value="no" />
+          </el-select>
+          <span class="app-spacer" />
+          <el-tag round>{{ filteredRows.length }} / {{ accounts.length }}</el-tag>
+        </div>
+      </div>
+    </SectionCard>
 
     <!-- Status-grouped tables with expandable logs -->
-    <el-collapse v-model="expandedKeys" style="margin-top:8px">
+    <el-collapse v-model="expandedKeys">
       <el-collapse-item
         v-for="g in visibleGroups"
         :key="g.status"
@@ -97,6 +101,8 @@ import { socketState } from '../socket'
 import { statusType, statusLabel, PLUS_STATUSES, ERROR_STATUSES, DEFAULT_EXPANDED_STATUSES, groupAccountsByStatus, isFailedToRetry, EXECUTE_STATUS_FILTER_OPTIONS } from '../status'
 import { getSelectionSet, clearSelection } from '../selection'
 import AccountTableRows from '../components/AccountTableRows.vue'
+import PageHeader from '../components/ui/PageHeader.vue'
+import SectionCard from '../components/ui/SectionCard.vue'
 
 const running = ref(false)
 const accounts = ref([])
@@ -147,6 +153,22 @@ const authFilter = ref('')
 const lockedEmails = shallowRef(null)
 const selectedEmails = computed(() => Array.from(globalSelectedSet))
 const failedEmails = computed(() => accounts.value.filter(a => isFailedToRetry(a._status)).map(a => a.email))
+
+// PageHeader subtitle — shows current running account + phase when running,
+// otherwise a static "等待开始" hint. Reactively reads socketState.accountStatuses.
+const execSubtitle = computed(() => {
+  if (!running.value) {
+    const total = accounts.value.length
+    return total ? `共 ${total} 个账号 · 等待开始` : '请先到账号管理页添加账号'
+  }
+  // Find the account that's currently 'running' in socketState.
+  const runningEntry = Object.values(socketState.accountStatuses || {})
+    .find((s) => s && s.status === 'running')
+  if (runningEntry) {
+    return `当前 ${runningEntry.email} · ${runningEntry.phase || 'running'}`
+  }
+  return '运行中…'
+})
 const filteredRows = computed(() => {
   if (lockedEmails.value) {
     // Frozen view — show only the snapshot, ignore filters
@@ -385,3 +407,18 @@ async function downloadSelectedAs(format) {
   }
 }
 </script>
+
+<style scoped>
+.ex-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
+}
+.ex-toolbar__row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+}
+</style>
