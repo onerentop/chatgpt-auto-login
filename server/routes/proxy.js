@@ -38,8 +38,18 @@ router.post('/switch', async (req, res) => {
 });
 
 router.post('/detect-exit', async (req, res) => {
-  try { const ip = await proxy.detectExit(); res.json({ ok: true, exitIp: ip }); }
-  catch (e) { res.status(500).json({ error: e.message }); }
+  let ip;
+  try { ip = await proxy.detectExit(); }
+  catch (e) { return res.status(500).json({ error: e.message }); }
+  // v2.34.1: detectExit 网络失败时返回 "error: ..." 字符串（不抛错）。
+  // 检测到 → 自动 rotate + 重试 1 次。给 UI 即时反馈而不是让用户再点。
+  if (typeof ip === 'string' && ip.startsWith('error:')) {
+    console.log(`[Proxy] detect-exit failed (${ip.slice(0, 50)}) → rotate + retry`);
+    try { await proxy.rotate(); } catch {}
+    try { ip = await proxy.detectExit(); }
+    catch (e) { return res.status(500).json({ error: e.message }); }
+  }
+  res.json({ ok: true, exitIp: ip });
 });
 
 router.post('/mark-bad', (req, res) => {
@@ -55,8 +65,17 @@ router.post('/jp/rotate', async (req, res) => {
 });
 
 router.post('/jp/detect-exit', async (req, res) => {
-  try { const ip = await proxy.detectJpExit(); res.json({ ok: true, exitIp: ip }); }
-  catch (e) { res.status(500).json({ error: e.message }); }
+  let ip;
+  try { ip = await proxy.detectJpExit(); }
+  catch (e) { return res.status(500).json({ error: e.message }); }
+  // v2.34.1: 同 main 路径，jp 通道失败也自动 rotateJp + retry 1 次
+  if (typeof ip === 'string' && ip.startsWith('error:')) {
+    console.log(`[Proxy:JP] detect-exit failed (${ip.slice(0, 50)}) → rotateJp + retry`);
+    try { await proxy.rotateJp(); } catch {}
+    try { ip = await proxy.detectJpExit(); }
+    catch (e) { return res.status(500).json({ error: e.message }); }
+  }
+  res.json({ ok: true, exitIp: ip });
 });
 
 router.post('/jp/mark-bad', (req, res) => {
