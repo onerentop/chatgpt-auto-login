@@ -140,6 +140,51 @@ def follow_continue_for_auth_code(session, continue_url, device_id=None):
                         payload_url = ((d.get("page") or {}).get("payload") or {}).get("url", "")
                         if "localhost:1455" in payload_url and "code=" in payload_url:
                             auth_code = parse_qs(urlparse(payload_url).query).get("code", [None])[0]
+                    # v2.40.7: workspace/select response.continue_url 不是 localhost callback 时
+                    # （形如 /api/oauth/oauth2/auth?login_verifier=...），GET 跟 redirect 跳到 callback
+                    # v2.40.8: 加完整浏览器 headers + H1 fallback 防 OpenAI 关连接
+                    if not auth_code and cu and cu.startswith('http') and 'localhost:1455' not in cu:
+                        _log(f"consent: continue_url is intermediate ({cu[:80]}), following redirect")
+                        # 浏览器完整 navigation headers（模拟用户点继续按钮跳转）
+                        nav_headers = {
+                            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+                            "Upgrade-Insecure-Requests": "1",
+                            "Sec-Fetch-Site": "same-origin",
+                            "Sec-Fetch-Mode": "navigate",
+                            "Sec-Fetch-Dest": "document",
+                            "Sec-Fetch-User": "?1",
+                            "Referer": continue_url,  # consent 页 URL
+                        }
+                        # 试 2 次（默认 H2 + 失败 H1 fallback）
+                        for try_idx in range(2):
+                            kwargs = {"headers": nav_headers, "allow_redirects": True, "timeout": 30}
+                            if try_idx == 1 and HTTP11 is not None:
+                                kwargs["http_version"] = HTTP11
+                                _log(f"consent: retrying redirect with HTTP/1.1")
+                            try:
+                                r2 = session.get(cu, **kwargs)
+                                _log(f"consent: follow redirect status={r2.status_code} final_url={str(r2.url)[:120]}")
+                                redir = str(r2.url)
+                                if "localhost:1455" in redir and "code=" in redir:
+                                    auth_code = parse_qs(urlparse(redir).query).get("code", [None])[0]
+                                if not auth_code and hasattr(r2, 'history') and r2.history:
+                                    for hr in r2.history:
+                                        loc = hr.headers.get("location", "") if hasattr(hr, 'headers') else ""
+                                        if "localhost:1455" in loc and "code=" in loc:
+                                            auth_code = parse_qs(urlparse(loc).query).get("code", [None])[0]
+                                            break
+                                if auth_code:
+                                    break
+                            except Exception as e:
+                                import traceback as _tb
+                                err_str = str(e) + _tb.format_exc()
+                                _log(f"consent: redirect try {try_idx} err: {str(e)[:120]}")
+                                m = re.search(r'code=([^&\s\'"]+)', err_str)
+                                if m:
+                                    auth_code = m.group(1)
+                                    _log(f"consent: got code from redirect ConnectionError")
+                                    break
             else:
                 _log("consent fallback: no workspace_id parsed from HTML")
         except Exception as e:
