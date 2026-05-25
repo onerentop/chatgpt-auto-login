@@ -1,5 +1,41 @@
 # Changelog
 
+## v2.33.0 — 2026-05-25
+
+### 账号行运行时整行高亮
+
+Execute 流水线运行时，账户列表的每一行整行换浅色底色，扫一眼就
+能识别每个账号当前状态。Accounts.vue 顺带补上之前漏的
+`account-status` socket 订阅 —— Execute 在跑时 Accounts 页也实时
+反映 status / phase 变化。
+
+**颜色映射（基于 `statusType()`）**
+
+| 类型 | 包含 status | row 背景色 |
+|---|---|---|
+| `success` | plus | `#f0f9eb` 浅绿 |
+| `warning` | running（特殊）/ plus_no_rt / no_link / no_jp_proxy / token_expired / canceled / paypal_captcha | `#fdf6ec` 浅黄 |
+| `danger` | error / deactivated / verify_error / login_fail | `#fef0f0` 浅红 |
+| `info` | no_promo / aborted | `#f4f4f5` 浅灰 |
+| —（idle / 空） | — | 默认背景（不上色） |
+
+**实现要点**
+
+- 新增 `web/src/status.js:rowClassFor(status)` 工具函数，沿用
+  `statusType()` 单一来源；唯一例外：`running` 在 TYPE_MAP 是 `''`
+  → 回退 info（浅灰）会让"运行中"不醒目，所以强制返回 warning
+- `AccountTableRows.vue`（Execute 子组件）和 `Accounts.vue` 的
+  `<el-table>` 都加 `:row-class-name="rowClass"`，CSS 4 个类
+  使用 `:deep()` + `!important` 覆盖 el-table 默认 zebra
+- Accounts.vue 新增 `watch(socketState.accountStatuses, ...)`
+  接通实时数据流（Execute.vue 已有，零改动）
+- 后端零改动；Dashboard.vue / Results.vue YAGNI 不动
+
+**测试**：182 tests pass — `__tests__/status-row-class.test.js` +8（idle / running 例外 / 4 个 type / 未知 fallback / 大小写）。
+
+**Spec / Plan**：`docs/superpowers/specs/2026-05-25-row-highlight-during-execution-design.md`
++ `docs/superpowers/plans/2026-05-25-row-highlight-during-execution.md`。
+
 ## v2.30.0 — 2026-05-25
 
 ### v2.29 deferred 项二轮收敛 — 8 项一次性 ship
