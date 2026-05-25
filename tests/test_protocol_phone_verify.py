@@ -73,6 +73,37 @@ class TestProtocolPhoneVerify(unittest.TestCase):
         # 验证调用了 2 次 session.post（phone-start + phone-validate）
         self.assertEqual(fake_session.post.call_count, 2)
 
+    def test_zhusms_full_success(self):
+        """zhusms provider: 与 local 同样的 add_phone 主流程，SMS 走 zhusms /api/order/status。"""
+        import protocol_phone_verify as pv
+
+        fake_session = MagicMock()
+        ps_resp = MagicMock(ok=True, status_code=200)
+        ps_resp.json.return_value = {"page": {"type": "phone_sms_code"}}
+        val_resp = MagicMock(ok=True, status_code=200)
+        val_resp.json.return_value = {"continue_url": "https://auth.openai.com/cont"}
+        fake_session.post.side_effect = [ps_resp, val_resp]
+        fake_session.headers = {}
+        fake_session.cookies = MagicMock()
+
+        zhusms_input = self._build_input(sms={
+            "provider": "zhusms",
+            "order_no": "ord-123",
+            "base_url": "https://zhusms.com",
+            "card_key": "ZS-X",
+            "cookie": "session=abc",
+        })
+
+        with patch.object(pv, "rebuild_session", return_value=fake_session), \
+             patch.object(pv, "get_sentinel_token", return_value=""), \
+             patch.object(pv, "follow_continue_for_auth_code", return_value="code-x"), \
+             patch.object(pv, "exchange_code", return_value={"access_token": "AT", "refresh_token": "RT", "id_token": "ID"}), \
+             patch.object(pv, "poll_sms", return_value="654321"):
+            result = self._run_with_input(zhusms_input)
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["tokens"]["refresh_token"], "RT")
+
 
 if __name__ == "__main__":
     unittest.main()
