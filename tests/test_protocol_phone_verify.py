@@ -124,6 +124,26 @@ class TestProtocolPhoneVerify(unittest.TestCase):
         # phone-validate 不应被调用
         self.assertEqual(fake_session.post.call_count, 1)
 
+    def test_sms_timeout(self):
+        """phone-start 通过但 poll_sms 30 次都没拿到码 → status=sms-timeout。"""
+        import protocol_phone_verify as pv
+
+        fake_session = MagicMock()
+        ps_resp = MagicMock(ok=True, status_code=200)
+        ps_resp.json.return_value = {"page": {"type": "phone_sms_code"}}
+        fake_session.post.return_value = ps_resp
+        fake_session.headers = {}
+        fake_session.cookies = MagicMock()
+
+        with patch.object(pv, "rebuild_session", return_value=fake_session), \
+             patch.object(pv, "get_sentinel_token", return_value=""), \
+             patch.object(pv, "poll_sms", return_value=None):
+            result = self._run_with_input(self._build_input())
+
+        self.assertEqual(result["status"], "sms-timeout")
+        # validate 不应被调用
+        self.assertEqual(fake_session.post.call_count, 1)
+
 
 if __name__ == "__main__":
     unittest.main()
