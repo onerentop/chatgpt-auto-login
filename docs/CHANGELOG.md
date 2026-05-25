@@ -1,5 +1,45 @@
 # Changelog
 
+## v2.37.0 — 2026-05-25
+
+### 手机号号池基础设施 (Phase 1/2)
+
+OAuth PKCE 流程在某些账户上会被 ChatGPT 要求绑定手机号（`needsPhone:
+true` 检测点见 `protocol_register.py:273`），**当前流水线在该点卡死**。
+本次先建号池基础设施，Phase 2（独立 spec）再接通 PKCE 消费。
+
+**Phase 1 交付**：
+
+- **DB**：新增 `phone_pool` (phone PK / sms_api_url / bindings_used /
+  created_at) + `phone_bindings` (phone + email 复合 PK) 两张表。
+  `getRawDb()` helper 暴露给 service 用。
+- **后端 service** `server/phone-pool.js`：list / import / export /
+  delete / acquirePhone / fetchSmsCode 六个函数。
+  - `acquirePhone(db, email, max)` 原子取号 + 写 binding + 自增计数器；
+    排序 bindings_used ASC + created_at ASC（轮转使用避免某号被打）；
+    WHERE 排除已与该 email 绑过的号 + 满号；null = 用尽
+  - `fetchSmsCode` regex `/\b(\d{6})\b/` 与 `payment.js:586` PayPal
+    路径一致，Phase 2 复用
+- **路由** `/api/phone-pool` 4 个 endpoints（GET / + POST /import +
+  GET /export + DELETE /:phone）
+- **Config 字段** `phonePool.{enabled, maxBindingsPerPhone,
+  smsPollIntervalMs, smsMaxAttempts}` 默认 disabled
+- **前端** PhonePool.vue 新页面（PageHeader + SectionCard 沿用 v2.34
+  设计），sidebar 加「号池」入口，Config.vue 加 4 个 input
+
+**绑定语义**（per 用户明确）：首次使用建立 + 永久绑定 ——
+账户被删除不释放 `bindings_used` 计数。满 max 后 phone 不再可用。
+
+**Phase 2 预览**（独立 spec）：协议模式 + 浏览器模式两套 PKCE
+add_phone 流程实现，消费 acquirePhone() + fetchSmsCode helper。
+
+**测试**：`server/__tests__/phone-pool.test.js` +6（import 基本 /
+import 跳非法 / list boundEmails / acquire 跳满号 / acquire 同 email
+不重绑 / delete cascade）。
+
+**Spec / Plan**：`docs/superpowers/specs/2026-05-25-phone-pool-infrastructure-design.md`
++ `docs/superpowers/plans/2026-05-25-phone-pool-infrastructure.md`。
+
 ## v2.34.1 — 2026-05-25
 
 ### Hotfix: Proxy 死节点 currentNode 双保险防御
