@@ -45,8 +45,7 @@ try:
         get_imap_baseline as _get_imap_baseline,
     )
 except Exception:
-    def get_sentinel_token(session, device_id, flow="authorize_continue", user_agent=""):
-        return ""
+    from _pkce_common import get_sentinel_token
     def _fetch_imap_otp_impl(*a, **kw): return None
     def _get_imap_baseline(*a, **kw): return 0
 finally:

@@ -12,3 +12,7 @@ BASE = "https://chatgpt.com"
 def _log(msg):
     print(json.dumps({"log": msg}))
     sys.stdout.flush()
+
+
+def get_sentinel_token(session, device_id, flow="authorize_continue", user_agent=""):
+    return ""
