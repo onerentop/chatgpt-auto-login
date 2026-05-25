@@ -1,8 +1,10 @@
 <template>
   <div class="empty">
-    <el-icon class="empty__icon">
-      <slot name="icon"><DataLine /></slot>
-    </el-icon>
+    <div class="empty__icon-wrap">
+      <el-icon class="empty__icon">
+        <slot name="icon"><DataLine /></slot>
+      </el-icon>
+    </div>
     <p class="empty__title">{{ title }}</p>
     <p v-if="hint || $slots.hint" class="empty__hint">
       <slot name="hint">{{ hint }}</slot>
@@ -32,25 +34,37 @@ defineProps({
   color: var(--app-text-mute);
   text-align: center;
   gap: var(--sp-2);
+  animation: app-fade-in var(--tr-base) both;
+}
+.empty__icon-wrap {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--app-surface-2);
+  border: 1px solid var(--app-border-soft);
+  box-shadow: var(--sh-1);
+  margin-bottom: var(--sp-2);
 }
 .empty__icon {
-  font-size: 36px;
-  color: var(--app-text-mute);
-  opacity: 0.6;
-  margin-bottom: var(--sp-1);
+  font-size: 28px;
+  color: var(--app-text-3);
 }
 .empty__title {
   margin: 0;
-  font-size: var(--fs-lg);
-  color: var(--app-text-3);
-  font-weight: 500;
+  font-size: var(--fs-xl);
+  color: var(--app-text);
+  font-weight: 600;
+  letter-spacing: -0.01em;
 }
 .empty__hint {
   margin: 0;
   font-size: var(--fs-md);
-  color: var(--app-text-mute);
-  max-width: 360px;
-  line-height: 1.5;
+  color: var(--app-text-3);
+  max-width: 380px;
+  line-height: 1.6;
 }
 .empty__action { margin-top: var(--sp-3); }
 </style>

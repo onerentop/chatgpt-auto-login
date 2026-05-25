@@ -1,5 +1,90 @@
 # Changelog
 
+## v2.35.0 — 2026-05-25
+
+### 任务流驱动的前端重设计 — Command Palette / Pipeline HUD / 工作台
+
+v2.34 完成了 design token + 包壳；v2.35 按"运营每天做什么"重新组
+织前端，加入键盘党生产力工具。spec 见
+`docs/superpowers/specs/2026-05-25-v2.35-task-flow-redesign-design.md`。
+
+**B1 现代视觉系统升级（新增 `web/src/styles/v235-polish.css`，叠加
+在 v2.34 tokens 之上不改原文件）：**
+
+- 主色 `#5b67f0` indigo 替换 Element Plus 默认 `#409eff`；9 step
+  lightness scale 自动让所有 el-* 组件 rebrand。
+- 多层柔和阴影（Linear / Vercel 风格）：每档 1px hairline 内描边 +
+  两层 diffused shadow。圆角 sm/md/lg 6/10/14。
+- 按钮 hover 微 0.5px 上升；focus-visible 全局描边；滚动条变细；
+  ElMessage 圆角 + 玻璃感 backdrop-filter。
+- 全局动效曲线 cubic-bezier(0.4,0,0.2,1)；`.app-fade-in` opt-in 动画。
+
+**B2 Dashboard 改工作台 hub：**
+
+- 4 hero metric 卡：账号总数 / 今日激活 / 待重试 / 运行中。每张
+  含 icon（着色 badge） + 数值 + 副标 delta；可点击跳带筛选的对应
+  视图；键盘可达。
+- 快捷操作（6 张任务卡）：导入 / 跑一批 / 重试失败 / 测活 / 下载
+  凭证 / 调代理。按当前状态自动 disable；点击直接跳带 `?action=
+  import/add` 的对应视图。
+- 系统健康 6 行：引擎 / 主代理 / JP 通道 / WebSocket / 运行时长 /
+  版本。10s 轮询 `/api/health`，颜色 dot 绿 / 灰 / 红。
+- 近期执行 SectionCard + "查看全部 →" 跳 Results。
+
+**B3 Command Palette（Ctrl/Cmd+K）：**
+
+- 新增 `web/src/stores/commands.js` 反应式 commands registry +
+  `web/src/components/ui/CommandPalette.vue`（Teleport modal）。
+- 全局键盘监听 Ctrl/Cmd+K 打开 palette；输入即模糊匹配；分组显示
+  （导航 / 账号 / 执行 / 代理 / 配置 / 主题）；↑↓ 选 / ↵ 执行 /
+  Esc 关闭。
+- AppLayout 注册 11 条核心命令（5 导航 + 主题切换 + 通知 + 账号
+  导入/添加/导出 + 下载凭证 ZIP）；视图未来可 registerCommand 扩展。
+- 顶栏左上加 `[⌘K / Ctrl K]` 命令按钮（mac/non-mac 自动适配）。
+
+**B4 Pipeline HUD（v2.29 FX-4 deferred 项落地）：**
+
+- 新增 `web/src/stores/pipelineStore.js`：running / total / done /
+  currentEmail / currentPhase / recentDurations (last 5)。
+- 新增 `web/src/components/ui/PipelineHUD.vue`：v-if 全局可见进度
+  带；spinner + X/Y + 当前邮箱 + phase + 渐变进度条 + 已用 + ETA
+  + 查看 / 停止。1s tick 刷新；slide-down 入场。
+- socket.js 在 `account-status` 事件转发 `recordAccountStatus`；
+  `execution-complete` 调 `endPipeline`。
+- Execute.vue startExec 成功后调 `beginPipeline(total)`。
+- ETA = 最近 5 个账号平均耗时 × 剩余数；< 2 样本时显示 "—"。
+- 运营在 Config / Accounts 等页也能看到流水线进度。
+
+**B5 Accounts toolbar 收纳 + ContextActionBar：**
+
+- Toolbar Row 1：搜索 + 状态多选 + "更多筛选 ▾" popover（折叠
+  Plan / Auth / 活性 / 仅看未测试 / 7 天未测 / 重置）。popover
+  按钮含 brand 圆点 badge 显示已激活高级筛选数。
+- Toolbar Row 2：测活全局控制（与选中无关）+ 下载全部 ZIP。
+- 新增 `web/src/components/ui/ContextActionBar.vue`：底部居中
+  sticky pill 操作栏；slide-up + fade 入场；选中数 > 0 时显示
+  导出 / 下载 / 测活 / 删除 / 取消按钮，选中 = 0 时彻底不渲染。
+- Accounts.vue onMounted 解析 `?action=import` / `?action=add`
+  自动打开对应弹窗（来自 Dashboard 任务卡 / Command Palette）；
+  解析后 router.replace 清掉 query。
+
+**B6 EmptyState 升级：**
+
+- 64×64 圆形 icon wrap（surface-2 背景 + hairline border + sh-1
+  阴影），title 升 xl 加重，hint 加宽行距；整体加 app-fade-in
+  入场动画。
+
+**工程：**
+
+- 182/182 测试全绿（前端无新测试基础设施；后端零改动）。
+- 6 个 batch 共 6 commits；每 batch 验证 npm run build 成功。
+- 新增依赖：0。新增 npm 包：0。
+- 不动文件：`web/src/styles/tokens.css`（v2.34 原状）/ 4 个 composable /
+  status.js / selection.js / socket 协议 / 后端任何代码。
+- 保留所有 v2.29~v2.34 已有不变式：dirty 守卫、URL 筛选、行运行时
+  高亮、通知中心、batch-delete、Execute 分组锁定、列锁定 +
+  reserve-selection 等。
+
 ## v2.34.0 — 2026-05-25
 
 ### Execute 分组锁定 + 视图切换
