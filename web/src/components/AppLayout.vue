@@ -7,6 +7,11 @@
         <span class="app-topbar__page">{{ pageTitle }}</span>
       </div>
       <div class="app-topbar__right">
+        <button class="app-topbar__cmd" title="命令面板（Ctrl+K）" @click="openPalette">
+          <el-icon><Search /></el-icon>
+          <span class="app-topbar__cmd-label">命令</span>
+          <kbd class="app-topbar__cmd-kbd">{{ isMac ? '⌘K' : 'Ctrl K' }}</kbd>
+        </button>
         <span class="app-topbar__socket" :class="socketState.connected ? 'is-on' : 'is-off'"
               :title="socketState.connected ? 'WebSocket 已连接' : 'WebSocket 已断开'">
           <span class="app-topbar__socket-dot" /> {{ socketState.connected ? '实时' : '离线' }}
@@ -99,23 +104,66 @@
         </div>
       </div>
     </el-drawer>
+
+    <!-- v2.35 Command Palette — globally mounted, opened by Ctrl/Cmd+K -->
+    <CommandPalette />
   </div>
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
-import { useRoute } from 'vue-router'
-import { Monitor, User, Setting, VideoPlay, Document, Moon, Sunny, Bell } from '@element-plus/icons-vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { Monitor, User, Setting, VideoPlay, Document, Moon, Sunny, Bell, Search } from '@element-plus/icons-vue'
 import { socketState, reconnectSocket } from '../socket'
+import CommandPalette from './ui/CommandPalette.vue'
+import { paletteState, openPalette, registerCommand } from '../stores/commands'
 import { useHotkeys } from '../composables/useHotkeys'
 import { useDarkMode } from '../composables/useDarkMode'
 import { notificationState, markAllRead, clearAll as clearAllNotifications } from '../notifications'
 
 const route = useRoute()
+const router = useRouter()
 useHotkeys()
 const { dark, toggle } = useDarkMode()
 
 const pageTitle = computed(() => route.meta?.title || '')
+const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform)
+
+// === Command palette ===
+// Global Ctrl/Cmd+K listener — opens palette regardless of focus, but
+// suppresses inside editable elements? No — Ctrl+K is conventional override
+// so we let it work even from inputs. We DO check for paletteState.open to
+// avoid recursing if already open.
+function onKeyDown(e) {
+  const isCmdK = (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && (e.key === 'k' || e.key === 'K')
+  if (isCmdK) {
+    e.preventDefault()
+    if (!paletteState.open) openPalette()
+  }
+}
+
+// Register the permanent core commands (navigation, theme).
+const _unregs = []
+onMounted(() => {
+  window.addEventListener('keydown', onKeyDown)
+  _unregs.push(
+    registerCommand({ id: 'nav.dashboard', group: '导航', label: '前往：仪表盘', keywords: 'dashboard home', action: () => router.push('/') }),
+    registerCommand({ id: 'nav.accounts',  group: '导航', label: '前往：账号管理', keywords: 'accounts', action: () => router.push('/accounts') }),
+    registerCommand({ id: 'nav.execute',   group: '导航', label: '前往：执行控制', keywords: 'execute run', action: () => router.push('/execute') }),
+    registerCommand({ id: 'nav.results',   group: '导航', label: '前往：执行结果', keywords: 'results history', action: () => router.push('/results') }),
+    registerCommand({ id: 'nav.config',    group: '导航', label: '前往：配置设置', keywords: 'config settings', action: () => router.push('/config') }),
+    registerCommand({ id: 'theme.toggle',  group: '主题', label: '切换暗色 / 亮色模式', keywords: 'dark light theme toggle', action: toggle }),
+    registerCommand({ id: 'app.notifications', group: '导航', label: '打开通知中心', keywords: 'notifications bell', action: openNotifications }),
+    registerCommand({ id: 'accounts.import',   group: '账号', label: '批量导入账号', keywords: 'import upload', action: () => router.push('/accounts?action=import') }),
+    registerCommand({ id: 'accounts.add',      group: '账号', label: '添加单个账号', keywords: 'add new account', action: () => router.push('/accounts?action=add') }),
+    registerCommand({ id: 'accounts.export',   group: '账号', label: '导出全部账号', keywords: 'export download', action: () => window.open('/api/accounts/export') }),
+    registerCommand({ id: 'results.download-all', group: '账号', label: '下载所有凭证 ZIP', keywords: 'download zip cpa sub2api', action: () => window.open('/api/results/download-all') }),
+  )
+})
+onUnmounted(() => {
+  window.removeEventListener('keydown', onKeyDown)
+  _unregs.forEach((off) => off())
+})
 
 const notificationDrawerOpen = ref(false)
 function openNotifications() {
@@ -179,6 +227,36 @@ function formatTime(ts) {
   display: flex;
   align-items: center;
   gap: var(--sp-3);
+}
+.app-topbar__cmd {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 4px var(--sp-2) 4px var(--sp-3);
+  background: var(--app-surface-2);
+  border: 1px solid var(--app-border-soft);
+  border-radius: var(--rad-sm);
+  font: inherit;
+  font-size: var(--fs-sm);
+  color: var(--app-text-3);
+  cursor: pointer;
+  transition: background var(--tr-fast), border-color var(--tr-fast), color var(--tr-fast);
+}
+.app-topbar__cmd:hover {
+  background: var(--app-surface);
+  border-color: var(--app-border);
+  color: var(--app-text);
+}
+.app-topbar__cmd-label { font-weight: 500; }
+.app-topbar__cmd-kbd {
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--app-surface);
+  border: 1px solid var(--app-border-soft);
+  font-family: var(--ff-mono);
+  font-size: 11px;
+  color: var(--app-text-3);
+  line-height: 1;
 }
 .app-topbar__socket {
   display: inline-flex;
