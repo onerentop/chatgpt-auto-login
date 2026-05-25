@@ -142,6 +142,22 @@ async function _fetchPkceOtp(page, account) {
   console.log('  [PKCE] OTP not received after 20 attempts'); return null;
 }
 
+/**
+ * v2.38.0: 判定当前 Playwright page 是否在 add_phone / phone-required 验证页。
+ * 双重判定（任一命中即视为 add_phone 页）：
+ * - URL 含 /add-phone / /add_phone / /phone-required / /phone_required（大小写不敏感）
+ * - DOM 含 input[type="tel"] 或 input[autocomplete="tel"]
+ * @param {Object} page Playwright Page (or duck-typed for tests)
+ */
+async function isAddPhonePage(page) {
+  try {
+    const url = page.url()
+    if (/\/add[-_]phone|\/phone[-_]required/i.test(url)) return true
+    const el = await page.waitForSelector('input[type="tel"], input[autocomplete="tel"]', { timeout: 1500 })
+    return !!el
+  } catch { return false }
+}
+
 async function fetchTokensViaPKCE(browser, account, lastOtp) {
   const crypto = require('crypto');
   const context = browser.contexts()[0];
@@ -324,9 +340,59 @@ async function fetchTokensViaPKCE(browser, account, lastOtp) {
       }
 
       // STATE: add-phone (OpenAI requires phone verification for Codex)
-      if (url.includes('add-phone') || url.includes('phone-required')) {
-        console.log('  [PKCE] State: add-phone — phone verification required, skipping PKCE');
-        return { needsPhone: true };
+      // v2.38.0: 号池启用时自动填手机 + 接 SMS + 填验证码 + 提交；
+      // 号池 disabled 时回退原 needsPhone 行为（向后兼容）。
+      if (await isAddPhonePage(page)) {
+        const fs = require('fs');
+        const pathMod = require('path');
+        const cfgPath = pathMod.join(__dirname, 'config.json');
+        let cfg = {};
+        try { cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf-8')); } catch {}
+        if (!cfg?.phonePool?.enabled) {
+          console.log('  [PKCE] State: add-phone — phone pool disabled, skipping PKCE');
+          return { needsPhone: true };
+        }
+
+        const phonePool = require('./server/phone-pool');
+        const { getRawDb } = require('./server/db');
+        const max = cfg.phonePool.maxBindingsPerPhone || 5;
+
+        const allotted = phonePool.acquirePhone(getRawDb(), account.email, max);
+        if (!allotted) {
+          console.log('  [PKCE] phone pool exhausted for this account');
+          return { phonePoolEmpty: true };
+        }
+
+        // 代理：enabled 时 fetchSmsCode 走主代理（Chrome 已自动走）；disabled 时直连。
+        let proxyUrl = null;
+        try {
+          const state = require('./server/proxy').getState?.();
+          if (state?.enabled) proxyUrl = 'http://127.0.0.1:7890';
+        } catch {}
+
+        try {
+          console.log(`  [PKCE] add-phone: filling ${allotted.phone}`);
+          await page.fill('input[type="tel"], input[autocomplete="tel"]', allotted.phone);
+          await page.click('button[type="submit"]');
+          // 等待 SMS 输入框
+          await page.waitForSelector('input[autocomplete="one-time-code"], input[name*="code" i]', { timeout: 15000 });
+          console.log('  [PKCE] add-phone: polling SMS code...');
+          const code = await phonePool.fetchSmsCode(allotted.smsApiUrl, {
+            pollIntervalMs: cfg.phonePool.smsPollIntervalMs || 3000,
+            maxAttempts: cfg.phonePool.smsMaxAttempts || 30,
+            proxyUrl,
+          });
+          console.log(`  [PKCE] add-phone: got SMS code, filling and submitting`);
+          await page.fill('input[autocomplete="one-time-code"], input[name*="code" i]', code);
+          await page.click('button[type="submit"]');
+          await page.waitForURL(u => /\/oauth\/callback|code=/.test(u), { timeout: 30000 });
+          console.log('  [PKCE] add-phone: verification done, continuing PKCE');
+          continue;  // 跌回 PKCE 主循环，下一轮拿到 OAuth callback URL → token exchange
+        } catch (e) {
+          const reason = e?.message?.includes('sms-poll-timeout') ? 'sms-timeout' : 'submit-error';
+          console.log(`  [PKCE] add-phone failed: ${reason} (${e?.message?.slice(0, 60)})`);
+          return { phoneVerifyFail: reason };
+        }
       }
 
       // STATE 4: about-you (first-time registration)
@@ -441,4 +507,4 @@ function saveCPAAuthFile(email, accessToken, session) {
   return cpaPath;
 }
 
-module.exports = { loadAccounts, generateTOTP, randomDelay, abortableSleep, screenshotPath, saveCPAAuthFile, fetchTokensViaPKCE };
+module.exports = { loadAccounts, generateTOTP, randomDelay, abortableSleep, screenshotPath, saveCPAAuthFile, fetchTokensViaPKCE, isAddPhonePage };
