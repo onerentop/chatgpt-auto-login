@@ -182,27 +182,28 @@ def rebuild_session(session_state, proxy_url=None):
     ua = session_state.get("user_agent", "")
     m = re.search(r"Chrome/(\d+)", ua)
     chrome_major = int(m.group(1)) if m else 0
-    # 优先用 UA 提的 major，失败按 curl_cffi 已知支持的 profile 降级 try
+    # 注意：curl_cffi `Session(impersonate=X)` 构造时不验证，第一次 request
+    # 才抛 ImpersonateError。所以不能用 try/except + Session() 来探测 — 必须
+    # 提前用白名单确保只塞已知好的 profile。
+    # 白名单与 protocol_register.py:_CHROME_PROFILES 对齐（注意 chrome133a 带 'a' 后缀）。
+    KNOWN_GOOD = ["chrome146", "chrome142", "chrome136", "chrome133a", "chrome131", "chrome124", "chrome120", "chrome"]
     candidates = []
     if chrome_major:
-        candidates.append(f"chrome{chrome_major}")
-    # 已知 curl_cffi 支持的 profile（与 protocol_register.py _CHROME_PROFILES 对齐）
-    candidates += ["chrome146", "chrome142", "chrome136", "chrome131", "chrome124", "chrome120", "chrome"]
+        # UA Chrome/<N> → 优先 chrome{N} 和 chrome{N}a 两个变体（有些版本带 'a'）
+        for variant in [f"chrome{chrome_major}", f"chrome{chrome_major}a"]:
+            if variant in KNOWN_GOOD and variant not in candidates:
+                candidates.append(variant)
+    # 兜底：UA 提的 major 不在白名单时用白名单全集
+    for k in KNOWN_GOOD:
+        if k not in candidates:
+            candidates.append(k)
     proxies = None
     if proxy_url:
         if proxy_url.startswith("http://"):
             proxy_url = "socks5h://" + proxy_url[len("http://"):]
         proxies = {"http": proxy_url, "https": proxy_url}
-    s = None
-    last_err = None
-    for imp in candidates:
-        try:
-            s = curl_requests.Session(impersonate=imp)
-            break
-        except Exception as e:
-            last_err = e
-    if s is None:
-        raise RuntimeError(f"rebuild_session: no curl_cffi impersonate profile worked, last={last_err}")
+    # 第一个白名单内的 profile 一定能用（不构造 invalid Session）
+    s = curl_requests.Session(impersonate=candidates[0])
     if proxies:
         s.proxies.update(proxies)
     if ua:
