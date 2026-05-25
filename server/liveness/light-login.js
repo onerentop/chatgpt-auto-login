@@ -1,9 +1,23 @@
 // server/liveness/light-login.js
-// Browser-mode 轻登录：密码 + OTP → /api/auth/session 拿 access_token.
+// 轻登录：密码 + OTP → /api/auth/session 拿 access_token.
 // 不走 PKCE / codex 客户端 deeplink；只产 web session 用的 access_token.
-// 协议模式（config.protocolMode=true）的实现留作 Phase B：本期直接抛
-// LivenessLoginNotImplementedError，runner 把它捕获为 alive_status='login_fail'.
+//
+// 双模式实现：
+//   - 浏览器模式 (default)：Playwright 操作 auth.openai.com 表单
+//   - 协议模式 (config.protocolMode=true, v2.29 Phase B)：spawn
+//     chatgpt_register/liveness_login.py 用 curl_cffi 走 Auth0 HTTP API
+//
+// 共同返回 shape { accessToken, accountId, expiresAtIso }，runner.js 不
+// 关心走的哪条路径。错误字符串契约对齐 runner.js:99-117 的 9 种 keyword。
 
+const path = require('path');
+
+const PROTOCOL_SCRIPT = path.join(__dirname, '..', '..', 'chatgpt_register', 'liveness_login.py');
+const PROTOCOL_TIMEOUT_MS = 120_000;
+
+// 保留导出 — runner.js 用 e.name 检测；新协议路径不再主动抛此错，但
+// pyotp 缺失 / py 二进制找不到等场景仍走这条兜底（runner 把它统一映射到
+// alive_status='login_fail', reason='liveness not yet supported in protocol mode'）。
 class LivenessLoginNotImplementedError extends Error {
   constructor(msg) {
     super(msg || 'liveness login not implemented in protocol mode');
@@ -19,9 +33,12 @@ function toCstIso(input) {
 }
 
 async function lightLogin(account, opts = {}) {
-  const { protocolMode, playwrightConnect, getOtp, signal } = opts;
+  const { protocolMode, playwrightConnect, getOtp, signal, proxyUrl } = opts;
 
-  if (protocolMode) throw new LivenessLoginNotImplementedError();
+  if (protocolMode) {
+    return await protocolLightLogin(account, { signal, proxyUrl });
+  }
+
   if (!account?.password) throw new Error('no password');
   if (account.login_type === 'outlook' && (!account.client_id || !account.refresh_token)) {
     throw new Error('outlook oauth missing');
@@ -99,4 +116,119 @@ async function lightLogin(account, opts = {}) {
   }
 }
 
-module.exports = { lightLogin, LivenessLoginNotImplementedError, toCstIso };
+async function protocolLightLogin(account, { signal, proxyUrl } = {}) {
+  // Pre-flight contract checks — match the browser path's early validation
+  // so callers see the same error keywords regardless of mode.
+  if (!account?.password) throw new Error('no password');
+  if (account.login_type === 'outlook' && (!account.client_id || !account.refresh_token)) {
+    throw new Error('outlook oauth missing');
+  }
+
+  const input = JSON.stringify({
+    email: account.email,
+    password: account.password,
+    login_type: account.login_type || '',
+    client_id: account.client_id || '',
+    refresh_token: account.refresh_token || '',
+    totp_secret: account.totp_secret || '',
+    proxy: proxyUrl || '',
+  });
+
+  return new Promise((resolve, reject) => {
+    // 使用延迟 require，让测试通过 Module.prototype.require 拦截 spawn。
+    // 不要在模块顶层解构 spawn，否则 mock 注入时引用已固化。
+    let py;
+    try {
+      py = require('child_process').spawn('py', ['-3', PROTOCOL_SCRIPT], { stdio: ['pipe', 'pipe', 'pipe'] });
+    } catch (e) {
+      return reject(new LivenessLoginNotImplementedError(`spawn failed: ${e.message?.slice(0, 80)}`));
+    }
+
+    let settled = false;
+    let stdout = '';
+    let stderr = '';
+    let timeoutHandle = null;
+    let abortHandler = null;
+
+    const cleanup = () => {
+      if (timeoutHandle) { clearTimeout(timeoutHandle); timeoutHandle = null; }
+      if (abortHandler && signal) { signal.removeEventListener('abort', abortHandler); abortHandler = null; }
+    };
+
+    const finish = (err, result) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      try { py.kill(); } catch {}
+      if (err) reject(err); else resolve(result);
+    };
+
+    // 1. Timeout
+    timeoutHandle = setTimeout(() => {
+      finish(new Error('unexpected: liveness_login timeout (120s)'));
+    }, PROTOCOL_TIMEOUT_MS);
+
+    // 2. Abort signal (runner stop)
+    if (signal) {
+      if (signal.aborted) {
+        return finish(new Error('unexpected: aborted before spawn'));
+      }
+      abortHandler = () => finish(new Error('unexpected: aborted'));
+      signal.addEventListener('abort', abortHandler, { once: true });
+    }
+
+    // 3. spawn error (binary missing, permission, ENOMEM) — distinct from script error
+    py.on('error', (e) => {
+      finish(new LivenessLoginNotImplementedError(`spawn failed: ${e.message?.slice(0, 80)}`));
+    });
+
+    py.stdout.on('data', (data) => {
+      for (const line of data.toString().split('\n')) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        try {
+          const parsed = JSON.parse(trimmed);
+          if (parsed.log) {
+            // Stream log line — discard for now. Could pipe to runner's onLog in future.
+            continue;
+          }
+          // Final terminal object
+          stdout = trimmed;
+        } catch {
+          // Non-JSON line — keep last one as fallback for error reporting
+          stdout = trimmed;
+        }
+      }
+    });
+
+    py.stderr.on('data', (data) => {
+      stderr += data.toString();
+    });
+
+    py.on('close', (code) => {
+      if (settled) return;
+      let parsed = null;
+      try { parsed = JSON.parse(stdout); } catch {}
+
+      if (!parsed) {
+        return finish(new Error(`unexpected: no terminal (exit ${code}) ${stderr.slice(-80)}`));
+      }
+      if (parsed.status === 'ok') {
+        return finish(null, {
+          accessToken: parsed.accessToken || '',
+          accountId: parsed.accountId || '',
+          expiresAtIso: parsed.expiresAtIso || '',
+        });
+      }
+      if (parsed.status === 'error') {
+        return finish(new Error(parsed.reason || `unexpected: empty reason`));
+      }
+      finish(new Error(`unexpected: bad status ${parsed.status}`));
+    });
+
+    py.stdin.write(input);
+    py.stdin.end();
+  });
+}
+
+module.exports = { lightLogin, LivenessLoginNotImplementedError, toCstIso, protocolLightLogin };
