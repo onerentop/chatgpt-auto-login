@@ -1,0 +1,156 @@
+/* v2.35 visual polish — layered ON TOP of tokens.css (v2.34). Only
+ * overrides what v2.35 changes (brand palette + shadows + radius +
+ * Element Plus global polish + motion + scrollbars). Keeps v2.34
+ * --app-* token names intact. */
+
+:root {
+  /* === v2.35 indigo brand — replaces Element Plus default #409eff ===
+   * 9-step lightness scale matching Element Plus's own structure so
+   * every component (tag / button / link / focus) auto-rebrands. */
+  --el-color-primary:          #5b67f0;
+  --el-color-primary-light-3:  #818bf5;
+  --el-color-primary-light-5:  #a8b1f9;
+  --el-color-primary-light-7:  #d0d5fc;
+  --el-color-primary-light-8:  #e3e6fd;
+  --el-color-primary-light-9:  #f1f3fe;
+  --el-color-primary-dark-2:   #4754d1;
+
+  /* Cooler bg / softer borders / fade-up scale at 3xl */
+  --app-bg:          #f8f9fc;
+  --app-surface-2:   #f8f9fc;
+  --app-border:      #e2e6ee;
+  --app-border-soft: #eef0f5;
+  --fs-3xl:          28px;
+
+  /* Sidebar active state uses new brand-9 (very light indigo) */
+  --app-sidebar-item-active-bg: var(--el-color-primary-light-9);
+
+  /* Row highlight for `running` rows — matches new brand */
+  --app-row-running: rgba(91, 103, 240, 0.08);
+
+  /* Radii — slightly bigger for friendlier feel */
+  --rad-sm: 6px;
+  --rad-md: 10px;
+  --rad-lg: 14px;
+
+  /* Multi-layer shadows — Linear / Vercel style. Each level pairs a
+   * 1px inset hairline with two diffused drop shadows. */
+  --sh-1: 0 1px 2px rgba(15, 23, 42, 0.04),
+          0 0 0 1px rgba(15, 23, 42, 0.04);
+  --sh-2: 0 4px 8px -2px rgba(15, 23, 42, 0.06),
+          0 2px 4px -2px rgba(15, 23, 42, 0.04),
+          0 0 0 1px rgba(15, 23, 42, 0.04);
+  --sh-3: 0 12px 24px -8px rgba(15, 23, 42, 0.12),
+          0 6px 12px -4px rgba(15, 23, 42, 0.06),
+          0 0 0 1px rgba(15, 23, 42, 0.04);
+
+  /* Standardized motion curves */
+  --tr-fast: 120ms cubic-bezier(0.4, 0, 0.2, 1);
+  --tr-base: 200ms cubic-bezier(0.4, 0, 0.2, 1);
+  --tr-slow: 320ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+html.dark {
+  --el-color-primary:          #7c87f5;
+  --el-color-primary-light-3:  #6770ed;
+  --el-color-primary-light-5:  #4f57c8;
+  --el-color-primary-light-7:  #363c92;
+  --el-color-primary-light-8:  #292d6e;
+  --el-color-primary-light-9:  #1e2154;
+  --el-color-primary-dark-2:   #9aa3f8;
+
+  --app-bg:          #0c1118;
+  --app-surface:     #161c25;
+  --app-surface-2:   #11161e;
+  --app-border:      #262e3a;
+  --app-border-soft: #1e2530;
+
+  --app-sidebar-bg:             #11161e;
+  --app-sidebar-item-active-bg: rgba(124, 135, 245, 0.16);
+  --app-header-bg:              #11161e;
+
+  --app-row-running: rgba(124, 135, 245, 0.14);
+
+  --sh-1: 0 1px 2px rgba(0, 0, 0, 0.5),
+          0 0 0 1px rgba(255, 255, 255, 0.04);
+  --sh-2: 0 4px 8px -2px rgba(0, 0, 0, 0.5),
+          0 2px 4px -2px rgba(0, 0, 0, 0.4),
+          0 0 0 1px rgba(255, 255, 255, 0.04);
+  --sh-3: 0 12px 24px -8px rgba(0, 0, 0, 0.7),
+          0 6px 12px -4px rgba(0, 0, 0, 0.5),
+          0 0 0 1px rgba(255, 255, 255, 0.04);
+}
+
+/* Body polish — slightly tighter letter spacing reads cleaner */
+body { letter-spacing: -0.005em; }
+
+/* === Element Plus global polish ===
+ * Soft, consistent rounding + subtle hover lift across the library so any
+ * el-button / el-input / el-tag picks up the new aesthetic for free. */
+.el-button {
+  border-radius: var(--rad-sm);
+  font-weight: 500;
+  transition: background var(--tr-fast), border-color var(--tr-fast),
+              color var(--tr-fast), box-shadow var(--tr-fast),
+              transform var(--tr-fast);
+}
+.el-button:not(.is-disabled):not(.is-text):not(.is-link):hover {
+  transform: translateY(-0.5px);
+}
+.el-input__wrapper,
+.el-textarea__inner,
+.el-select__wrapper {
+  border-radius: var(--rad-sm) !important;
+  transition: box-shadow var(--tr-fast), background-color var(--tr-fast);
+}
+.el-card {
+  border-radius: var(--rad-md);
+  border: 1px solid var(--app-border-soft) !important;
+  box-shadow: var(--sh-1) !important;
+}
+.el-tag {
+  border-radius: var(--rad-sm);
+  font-weight: 500;
+}
+.el-dialog,
+.el-drawer {
+  border-radius: var(--rad-md);
+}
+.el-table th.el-table__cell {
+  background: var(--app-surface-2) !important;
+  color: var(--app-text-3) !important;
+  font-weight: 500 !important;
+}
+.el-message {
+  border-radius: var(--rad-md);
+  box-shadow: var(--sh-3);
+  backdrop-filter: blur(8px);
+  background: rgba(255, 255, 255, 0.96);
+}
+html.dark .el-message {
+  background: rgba(22, 28, 37, 0.96);
+}
+
+/* Focus ring — visible only on keyboard navigation */
+:focus-visible {
+  outline: 2px solid var(--app-brand);
+  outline-offset: 2px;
+  border-radius: var(--rad-sm);
+}
+
+/* Thinner scrollbars */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--app-border);
+  border-radius: 999px;
+  transition: background var(--tr-fast);
+}
+::-webkit-scrollbar-thumb:hover { background: var(--app-text-mute); }
+
+/* Fade-in animation — opt-in via .app-fade-in (used by SectionCard B6) */
+@keyframes app-fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.app-fade-in { animation: app-fade-in var(--tr-base) both; }
