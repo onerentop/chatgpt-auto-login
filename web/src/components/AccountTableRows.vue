@@ -21,7 +21,7 @@
       <template #default="{ row }">
         <el-tag v-if="row._plan === 'plus'" type="success" size="small">Plus</el-tag>
         <el-tag v-else-if="row._plan === 'free'" size="small">Free</el-tag>
-        <span v-else style="color:#c0c4cc">-</span>
+        <span v-else style="color:var(--app-text-mute)">-</span>
       </template>
     </el-table-column>
     <el-table-column label="状态" width="110">
@@ -31,7 +31,7 @@
     </el-table-column>
     <el-table-column label="阶段" width="100">
       <template #default="{ row }">
-        <span style="color:#909399">{{ row._phase || '-' }}</span>
+        <span style="color:var(--app-text-3)">{{ row._phase || '-' }}</span>
       </template>
     </el-table-column>
     <el-table-column label="Auth" width="120">
@@ -40,15 +40,15 @@
           <el-button size="small" text type="success" @click="emit('auth-download', { email: row.email, format: 'cpa' })">CPA</el-button>
           <el-button size="small" text type="primary" @click="emit('auth-download', { email: row.email, format: 'sub2api' })">Sub</el-button>
         </template>
-        <span v-else style="color:#c0c4cc">-</span>
+        <span v-else style="color:var(--app-text-mute)">-</span>
       </template>
     </el-table-column>
     <el-table-column label="原因" min-width="120" show-overflow-tooltip>
       <template #default="{ row }">
-        <span v-if="row._reason" :style="row._status === 'deactivated' ? 'color:#f56c6c' : 'color:#909399'">
+        <span v-if="row._reason" :style="row._status === 'deactivated' ? 'color:var(--app-danger)' : 'color:var(--app-text-3)'">
           {{ row._reason }}
         </span>
-        <span v-else style="color:#c0c4cc">-</span>
+        <span v-else style="color:var(--app-text-mute)">-</span>
       </template>
     </el-table-column>
     <el-table-column label="操作" width="80">
@@ -64,10 +64,11 @@
     <el-table-column type="expand">
       <template #default="{ row }">
         <!-- v2.28 #3: 顶部 banner — 本次执行的代理上下文 -->
-        <div v-if="row._proxyNode || row._exitIp" style="display:flex;gap:16px;padding:8px 12px;background:#f5f7fa;border-radius:4px;margin-bottom:8px;font-size:12px;color:#606266">
+        <div v-if="row._proxyNode || row._exitIp"
+             style="display:flex;gap:var(--sp-4);padding:var(--sp-2) var(--sp-3);background:var(--app-surface-2);border:1px solid var(--app-border-soft);border-radius:var(--rad-sm);margin-bottom:var(--sp-2);font-size:var(--fs-sm);color:var(--app-text-2)">
           <span v-if="row._proxyNode"><strong>代理节点:</strong> {{ row._proxyNode }}</span>
           <span v-if="row._exitIp"><strong>出口 IP:</strong> {{ row._exitIp }}</span>
-          <span v-if="row._updatedAt" style="margin-left:auto;color:#909399">{{ formatTs(row._updatedAt) }}</span>
+          <span v-if="row._updatedAt" style="margin-left:auto;color:var(--app-text-3)">{{ formatTs(row._updatedAt) }}</span>
         </div>
         <div style="font-family:'Consolas','Courier New',monospace;font-size:13px;max-height:calc(100vh - 350px);overflow-y:auto;padding:12px;background:#1e1e1e;color:#d4d4d4;border-radius:4px;line-height:1.6">
           <div v-if="getHistoryLogs(row.email).length > 0">
@@ -170,13 +171,13 @@ defineExpose({
   cursor: pointer;
 }
 
-/* v2.33.0: 运行时整行高亮，对应 rowClassFor 返回 */
-:deep(.row-status-success td) { background-color: #f0f9eb !important; }
-:deep(.row-status-warning td) { background-color: #fdf6ec !important; }
-:deep(.row-status-danger  td) { background-color: #fef0f0 !important; }
-:deep(.row-status-info    td) { background-color: #f4f4f5 !important; }
+/* v2.33 行高亮 — v2.34 颜色源切到 token，自动跟随暗色模式 */
+:deep(.row-status-success td) { background-color: var(--app-row-success) !important; }
+:deep(.row-status-warning td) { background-color: var(--app-row-warning) !important; }
+:deep(.row-status-danger  td) { background-color: var(--app-row-danger)  !important; }
+:deep(.row-status-info    td) { background-color: var(--app-row-info)    !important; }
 
-/* v2.33.1: running 专属浅蓝 + 左边框，避免与多状态共用的 warning 撞色 */
-:deep(.row-status-running td) { background-color: #ecf5ff !important; }
-:deep(.row-status-running td:first-child) { border-left: 4px solid #409eff !important; }
+/* running 专属浅蓝 + 左边框，避免与多状态共用的 warning 撞色 */
+:deep(.row-status-running td) { background-color: rgba(64, 158, 255, 0.10) !important; }
+:deep(.row-status-running td:first-child) { border-left: 4px solid var(--app-brand) !important; }
 </style>
