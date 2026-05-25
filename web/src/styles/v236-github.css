@@ -130,20 +130,40 @@ body { letter-spacing: 0; }
 .el-button:not(.is-disabled):not(.is-text):not(.is-link):hover {
   transform: none;
 }
+/* Filled colored buttons — explicit white text. v2.36 hotfix: without this
+ * the buttons inherited the page text color and became invisible on the
+ * solid GitHub backgrounds. */
+.el-button.el-button--primary,
+.el-button.el-button--success,
+.el-button.el-button--danger,
+.el-button.el-button--warning {
+  color: #ffffff !important;
+  border-color: rgba(31, 35, 40, 0.15);
+}
 .el-button.el-button--primary {
   background: var(--el-color-primary);
-  border-color: rgba(31, 35, 40, 0.15);
 }
 .el-button.el-button--primary:not(.is-disabled):hover {
   background: var(--el-color-primary-dark-2);
-  border-color: rgba(31, 35, 40, 0.15);
+  color: #ffffff !important;
 }
-.el-button.el-button--success { background: var(--el-color-success); border-color: rgba(31, 35, 40, 0.15); }
-.el-button.el-button--success:not(.is-disabled):hover { background: #1a7f37; }
-.el-button.el-button--danger  { background: var(--el-color-danger);  border-color: rgba(31, 35, 40, 0.15); }
-.el-button.el-button--danger:not(.is-disabled):hover { background: #a40e26; }
-.el-button.el-button--warning { background: var(--el-color-warning); border-color: rgba(31, 35, 40, 0.15); color: #fff; }
-.el-button.el-button--warning:not(.is-disabled):hover { background: #7d5300; }
+.el-button.el-button--success { background: var(--el-color-success); }
+.el-button.el-button--success:not(.is-disabled):hover { background: #1a7f37; color: #ffffff !important; }
+.el-button.el-button--danger  { background: var(--el-color-danger); }
+.el-button.el-button--danger:not(.is-disabled):hover { background: #a40e26; color: #ffffff !important; }
+.el-button.el-button--warning { background: var(--el-color-warning); }
+.el-button.el-button--warning:not(.is-disabled):hover { background: #7d5300; color: #ffffff !important; }
+
+/* Plain (non-filled) text/link variants of the colored buttons keep their
+ * brand-color text — Element Plus already handles this; we don't override. */
+.el-button.is-text.el-button--primary,
+.el-button.is-link.el-button--primary { color: var(--el-color-primary) !important; background: transparent; }
+.el-button.is-text.el-button--success,
+.el-button.is-link.el-button--success { color: var(--el-color-success) !important; background: transparent; }
+.el-button.is-text.el-button--danger,
+.el-button.is-link.el-button--danger  { color: var(--el-color-danger)  !important; background: transparent; }
+.el-button.is-text.el-button--warning,
+.el-button.is-link.el-button--warning { color: var(--el-color-warning) !important; background: transparent; }
 
 /* Default (non-typed) button — GitHub's light gray button */
 .el-button:not(.el-button--primary):not(.el-button--success):not(.el-button--danger):not(.el-button--warning):not(.is-text):not(.is-link) {
