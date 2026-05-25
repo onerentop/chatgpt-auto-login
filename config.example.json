@@ -11,5 +11,11 @@
   "discordChannelId": "channel_id",
   "discordMessageId": "message_id",
   "discordGuildId": "guild_id",
-  "discordAppId": "app_id"
+  "discordAppId": "app_id",
+  "phonePool": {
+    "enabled": false,
+    "maxBindingsPerPhone": 5,
+    "smsPollIntervalMs": 3000,
+    "smsMaxAttempts": 30
+  }
 }
