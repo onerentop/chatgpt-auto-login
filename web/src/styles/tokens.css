@@ -1,46 +1,56 @@
-/* v2.34 design tokens — namespaced --app-*. Layered ON TOP of Element
- * Plus's --el-* variables; we deliberately avoid overriding --el-* so
- * Element Plus components keep their defaults. Views and our own ui/
- * components consume these tokens for color / spacing / typography. */
+/* v2.34 + v2.35 design tokens — namespaced --app-*. Layered ON TOP of Element
+ * Plus's --el-* variables. v2.35 also overrides --el-color-primary palette
+ * to bring in a more modern indigo brand. */
 
 :root {
+  /* === Brand — v2.35 indigo (between blue and violet)
+   * Replaces Element Plus default #409eff so the whole app picks up the
+   * new tone with zero per-component changes. Light/dark variants
+   * generated to match Element Plus's standard 9-step lightness scale. */
+  --el-color-primary:          #5b67f0;
+  --el-color-primary-light-3:  #818bf5;
+  --el-color-primary-light-5:  #a8b1f9;
+  --el-color-primary-light-7:  #d0d5fc;
+  --el-color-primary-light-8:  #e3e6fd;
+  --el-color-primary-light-9:  #f1f3fe;
+  --el-color-primary-dark-2:   #4754d1;
+
   /* === Color — semantic surface + text === */
-  --app-bg:          #f7f8fa;
+  --app-bg:          #f8f9fc;        /* slightly cooler than v2.34 */
   --app-surface:     #ffffff;
-  --app-surface-2:   #fafbfc;
-  --app-border:      #e4e7eb;
-  --app-border-soft: #eef0f3;
+  --app-surface-2:   #f8f9fc;
+  --app-border:      #e2e6ee;
+  --app-border-soft: #eef0f5;
   --app-text:        #1f2937;
   --app-text-2:      #4b5563;
   --app-text-3:      #6b7280;
   --app-text-mute:   #9ca3af;
 
-  /* Brand colors — re-exported with semantic names so consumers don't
-   * tie themselves to Element Plus's --el-color-primary directly. */
+  /* Brand color aliases — re-exported with semantic names */
   --app-brand:   var(--el-color-primary);
   --app-success: var(--el-color-success);
   --app-warning: var(--el-color-warning);
   --app-danger:  var(--el-color-danger);
   --app-info:    var(--el-color-info);
 
-  /* Row highlights (v2.33 sourced) — re-keyed as tokens so they follow
-   * theme. AccountTableRows.vue :deep(.row-status-*) consumes these. */
+  /* Row highlights */
   --app-row-success: #f0f9eb;
   --app-row-warning: #fdf6ec;
   --app-row-danger:  #fef0f0;
   --app-row-info:    #f4f4f5;
+  --app-row-running: rgba(91, 103, 240, 0.08);  /* matches new brand */
 
-  /* Sidebar — surface-toned, not navy. Active item uses faint brand bg. */
+  /* Sidebar */
   --app-sidebar-bg:             #ffffff;
-  --app-sidebar-border:         var(--app-border);
+  --app-sidebar-border:         var(--app-border-soft);
   --app-sidebar-text:           var(--app-text-2);
   --app-sidebar-text-active:    var(--app-brand);
-  --app-sidebar-item-active-bg: #eef4ff;
+  --app-sidebar-item-active-bg: var(--el-color-primary-light-9);
   --app-sidebar-width:          220px;
 
   /* Topbar */
   --app-header-bg:     #ffffff;
-  --app-header-border: var(--app-border);
+  --app-header-border: var(--app-border-soft);
   --app-header-height: 56px;
 
   /* Spacing — 4-px scale */
@@ -49,75 +59,167 @@
 
   /* Type scale */
   --fs-xs: 11px; --fs-sm: 12px; --fs-md: 13px;
-  --fs-lg: 14px; --fs-xl: 16px; --fs-2xl: 20px; --fs-3xl: 24px;
+  --fs-lg: 14px; --fs-xl: 16px; --fs-2xl: 20px; --fs-3xl: 28px;
 
   /* Type families */
-  --ff-base: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
-             "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue",
-             Helvetica, Arial, sans-serif;
+  --ff-base: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI",
+             "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+             "Helvetica Neue", Helvetica, Arial, sans-serif;
   --ff-mono: ui-monospace, SFMono-Regular, "JetBrains Mono", "Consolas",
              "Liberation Mono", Menlo, monospace;
 
-  /* Radius */
-  --rad-sm: 4px; --rad-md: 8px; --rad-lg: 12px;
+  /* Radius — v2.35 slightly larger for friendlier feel */
+  --rad-sm: 6px;
+  --rad-md: 10px;
+  --rad-lg: 14px;
 
-  /* Shadow — three barely-perceptible levels */
-  --sh-1: 0 1px 2px rgba(15, 23, 42, 0.04);
-  --sh-2: 0 2px 8px rgba(15, 23, 42, 0.06);
-  --sh-3: 0 6px 24px rgba(15, 23, 42, 0.08);
+  /* Shadow — v2.35 multi-layer Linear/Vercel style. Each level pairs an
+   * inset hairline border with two diffused shadows for depth without
+   * heaviness. */
+  --sh-1: 0 1px 2px rgba(15, 23, 42, 0.04),
+          0 0 0 1px rgba(15, 23, 42, 0.04);
+  --sh-2: 0 4px 8px -2px rgba(15, 23, 42, 0.06),
+          0 2px 4px -2px rgba(15, 23, 42, 0.04),
+          0 0 0 1px rgba(15, 23, 42, 0.04);
+  --sh-3: 0 12px 24px -8px rgba(15, 23, 42, 0.12),
+          0 6px 12px -4px rgba(15, 23, 42, 0.06),
+          0 0 0 1px rgba(15, 23, 42, 0.04);
 
   /* Motion */
-  --tr-fast: 120ms ease;
-  --tr-base: 200ms ease;
+  --tr-fast: 120ms cubic-bezier(0.4, 0, 0.2, 1);
+  --tr-base: 200ms cubic-bezier(0.4, 0, 0.2, 1);
+  --tr-slow: 320ms cubic-bezier(0.2, 0, 0, 1);
 }
 
 html.dark {
-  --app-bg:          #0f1419;
-  --app-surface:     #1a2028;
-  --app-surface-2:   #141a22;
-  --app-border:      #2a3340;
-  --app-border-soft: #232a35;
-  --app-text:        #e5e7eb;
-  --app-text-2:      #cbd1d9;
-  --app-text-3:      #9ca3af;
+  --el-color-primary:          #7c87f5;
+  --el-color-primary-light-3:  #6770ed;
+  --el-color-primary-light-5:  #4f57c8;
+  --el-color-primary-light-7:  #363c92;
+  --el-color-primary-light-8:  #292d6e;
+  --el-color-primary-light-9:  #1e2154;
+  --el-color-primary-dark-2:   #9aa3f8;
+
+  --app-bg:          #0c1118;
+  --app-surface:     #161c25;
+  --app-surface-2:   #11161e;
+  --app-border:      #262e3a;
+  --app-border-soft: #1e2530;
+  --app-text:        #e8eaed;
+  --app-text-2:      #c4c8cf;
+  --app-text-3:      #9aa0a8;
   --app-text-mute:   #6b7280;
 
   --app-row-success: rgba(103, 194, 58, 0.12);
   --app-row-warning: rgba(230, 162, 60, 0.12);
   --app-row-danger:  rgba(245, 108, 108, 0.12);
   --app-row-info:    rgba(144, 147, 153, 0.10);
+  --app-row-running: rgba(124, 135, 245, 0.14);
 
-  --app-sidebar-bg:             #141a22;
-  --app-sidebar-border:         var(--app-border);
-  --app-sidebar-item-active-bg: rgba(64, 158, 255, 0.16);
+  --app-sidebar-bg:             #11161e;
+  --app-sidebar-border:         var(--app-border-soft);
+  --app-sidebar-item-active-bg: rgba(124, 135, 245, 0.16);
 
-  --app-header-bg:     #141a22;
-  --app-header-border: var(--app-border);
+  --app-header-bg:     #11161e;
+  --app-header-border: var(--app-border-soft);
 
-  --sh-1: 0 1px 2px rgba(0, 0, 0, 0.4);
-  --sh-2: 0 2px 8px rgba(0, 0, 0, 0.5);
-  --sh-3: 0 6px 24px rgba(0, 0, 0, 0.6);
+  --sh-1: 0 1px 2px rgba(0, 0, 0, 0.5),
+          0 0 0 1px rgba(255, 255, 255, 0.04);
+  --sh-2: 0 4px 8px -2px rgba(0, 0, 0, 0.5),
+          0 2px 4px -2px rgba(0, 0, 0, 0.4),
+          0 0 0 1px rgba(255, 255, 255, 0.04);
+  --sh-3: 0 12px 24px -8px rgba(0, 0, 0, 0.7),
+          0 6px 12px -4px rgba(0, 0, 0, 0.5),
+          0 0 0 1px rgba(255, 255, 255, 0.04);
 }
 
-/* Global baseline. body bg follows token so dark mode auto-applies. */
-html, body {
-  margin: 0;
-  padding: 0;
-}
+/* Global baseline */
+html, body { margin: 0; padding: 0; }
 body {
   font-family: var(--ff-base);
   font-size: var(--fs-lg);
   color: var(--app-text-2);
   background: var(--app-bg);
+  letter-spacing: -0.005em;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
-code, pre, .mono {
-  font-family: var(--ff-mono);
+code, pre, .mono { font-family: var(--ff-mono); }
+
+/* === Element Plus global polish (v2.35) ===
+ * Soft, consistent rounding + subtle hover lift across the whole library
+ * so views that drop el-button / el-input / el-tag don't need any per-site
+ * tweak to match the new aesthetic. */
+.el-button {
+  border-radius: var(--rad-sm);
+  font-weight: 500;
+  transition: background var(--tr-fast), border-color var(--tr-fast),
+              color var(--tr-fast), box-shadow var(--tr-fast),
+              transform var(--tr-fast);
+}
+.el-button:not(.is-disabled):not(.is-text):not(.is-link):hover {
+  transform: translateY(-0.5px);
+}
+.el-input__wrapper,
+.el-textarea__inner,
+.el-select__wrapper {
+  border-radius: var(--rad-sm) !important;
+  transition: box-shadow var(--tr-fast), background-color var(--tr-fast);
+}
+.el-card {
+  border-radius: var(--rad-md);
+  border: 1px solid var(--app-border-soft) !important;
+  box-shadow: var(--sh-1) !important;
+}
+.el-message {
+  border-radius: var(--rad-md);
+  box-shadow: var(--sh-3);
+  backdrop-filter: blur(8px);
+  background: rgba(255, 255, 255, 0.96);
+}
+html.dark .el-message {
+  background: rgba(22, 28, 37, 0.96);
+}
+.el-tag {
+  border-radius: var(--rad-sm);
+  font-weight: 500;
+}
+.el-dialog,
+.el-drawer {
+  border-radius: var(--rad-md);
+}
+.el-table th.el-table__cell {
+  background: var(--app-surface-2) !important;
+  color: var(--app-text-3) !important;
+  font-weight: 500 !important;
 }
 
-/* Common utility classes used by views — keep them small + obvious so a
- * grep on the classname tells you what it is. */
+/* Focus ring — visible only on keyboard navigation */
+:focus-visible {
+  outline: 2px solid var(--app-brand);
+  outline-offset: 2px;
+  border-radius: var(--rad-sm);
+}
+
+/* Thinner scrollbars (WebKit / Edge) */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--app-border);
+  border-radius: 999px;
+  transition: background var(--tr-fast);
+}
+::-webkit-scrollbar-thumb:hover { background: var(--app-text-mute); }
+
+/* SectionCard / page-level fade-in (B6 precursor — declared here so B6
+ * can opt views into it without touching components) */
+@keyframes app-fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.app-fade-in { animation: app-fade-in var(--tr-base) both; }
+
+/* Utility classes (carried from v2.34) */
 .app-page {
   max-width: 1440px;
   margin: 0 auto;
