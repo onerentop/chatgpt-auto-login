@@ -51,8 +51,8 @@ except Exception:
 finally:
     sys.stdout = _orig_stdout
 
-# _post_with_h1_fallback: shared with protocol_phone_verify.py (lives in _pkce_common.py).
-from _pkce_common import _post_with_h1_fallback
+# _post_with_h1_fallback / follow_continue_for_auth_code: shared with protocol_phone_verify.py (lives in _pkce_common.py).
+from _pkce_common import _post_with_h1_fallback, follow_continue_for_auth_code
 
 # Chrome fingerprint profiles (local, no external dependency)
 _CHROME_PROFILES = [
@@ -247,29 +247,11 @@ def _do_pkce_flow(session, email, password, ms_client_id, ms_refresh_token):
                                 _log("PKCE: Phone verification required")
                                 return {"needsPhone": True}
                             elif otp_continue:
-                                try:
-                                    r = session.get(otp_continue, headers={"Accept": "text/html", "Upgrade-Insecure-Requests": "1"}, allow_redirects=True, timeout=30)
-                                    redir_url = str(r.url)
-                                    if "localhost:1455" in redir_url and "code=" in redir_url:
-                                        auth_code = parse_qs(urlparse(redir_url).query).get("code", [None])[0]
-                                except Exception as e:
-                                    code_match = re.search(r'code=([^&\s]+)', str(e))
-                                    if code_match:
-                                        auth_code = code_match.group(1)
-                                        _log("PKCE: Got code from connection error")
+                                auth_code = follow_continue_for_auth_code(session, otp_continue)
 
                     elif continue_url:
                         _log(f"PKCE: Following continue URL: {continue_url[:60]}")
-                        try:
-                            r = session.get(continue_url, headers={"Accept": "text/html", "Upgrade-Insecure-Requests": "1"}, allow_redirects=True, timeout=30)
-                            redir_url = str(r.url)
-                            if "localhost:1455" in redir_url and "code=" in redir_url:
-                                auth_code = parse_qs(urlparse(redir_url).query).get("code", [None])[0]
-                        except Exception as e:
-                            code_match = re.search(r'code=([^&\s]+)', str(e))
-                            if code_match:
-                                auth_code = code_match.group(1)
-                                _log("PKCE: Got code from connection error")
+                        auth_code = follow_continue_for_auth_code(session, continue_url)
                 except Exception:
                     _log(f"PKCE: Choose-account response: {r.status_code} {str(r.url)[:60]}")
 
@@ -313,21 +295,7 @@ def _do_pkce_flow(session, email, password, ms_client_id, ms_refresh_token):
 
                 # Follow continue URL to get the auth code
                 if continue_url:
-                    try:
-                        r = session.get(continue_url, headers={"Accept": "text/html", "Upgrade-Insecure-Requests": "1"}, allow_redirects=True, timeout=30)
-                        final_redir = str(r.url)
-                        if "localhost:1455" in final_redir and "code=" in final_redir:
-                            auth_code = parse_qs(urlparse(final_redir).query).get("code", [None])[0]
-                    except Exception as e:
-                        err_str = str(e)
-                        if "localhost" in err_str or "1455" in err_str:
-                            # Extract code from the error/redirect URL
-                            import traceback
-                            tb = traceback.format_exc()
-                            code_match = re.search(r'code=([^&\s]+)', tb + err_str)
-                            if code_match:
-                                auth_code = code_match.group(1)
-                                _log(f"PKCE: Got code from connection error")
+                    auth_code = follow_continue_for_auth_code(session, continue_url)
 
         elif "add-phone" in final_path or "phone-required" in final_path:
             return {"needsPhone": True}
