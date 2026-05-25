@@ -39,9 +39,16 @@ try:
     # silent-dropped by OpenAI on OTP dispatch, which is exactly why our prior
     # protocol-mode registration was hitting registration_disallowed.
     from chatgpt_register.sentinel import get_sentinel_token
+    # v2.29: OTP helpers shared with liveness_login.py (Task 1).
+    from chatgpt_register.otp import (
+        fetch_imap_otp as _fetch_imap_otp_impl,
+        get_imap_baseline as _get_imap_baseline,
+    )
 except Exception:
     def get_sentinel_token(session, device_id, flow="authorize_continue", user_agent=""):
         return ""
+    def _fetch_imap_otp_impl(*a, **kw): return None
+    def _get_imap_baseline(*a, **kw): return 0
 finally:
     sys.stdout = _orig_stdout
 
@@ -138,13 +145,6 @@ def _generate_password(length=14):
     pwd += [random.choice(all_chars) for _ in range(length - 4)]
     random.shuffle(pwd)
     return "".join(pwd)
-
-# v2.29: OTP helpers moved to chatgpt_register/otp.py for reuse with liveness_login.
-# Original bodies preserved verbatim; aliased here so all in-file callers work unchanged.
-from chatgpt_register.otp import (
-    fetch_imap_otp as _fetch_imap_otp_impl,
-    get_imap_baseline as _get_imap_baseline,
-)
 
 def _fetch_imap_otp(email_addr, client_id, refresh_token, baseline_uid, timeout=90):
     """Back-compat wrapper that injects this module's _log callback."""

@@ -23,6 +23,7 @@ fake_sb_inner.get_sentinel_token_browser = lambda *a, **kw: ''
 fake_otp_inner = types.ModuleType('chatgpt_register.otp')
 fake_otp_inner.fetch_imap_otp = lambda *a, **kw: None
 fake_otp_inner.get_imap_baseline = lambda *a, **kw: 0
+fake_otp_inner.gen_totp = lambda secret: '000000'
 sys.modules.setdefault('chatgpt_register', fake_chatgpt_register)
 sys.modules.setdefault('chatgpt_register.chatgpt_register', fake_cr_inner)
 sys.modules.setdefault('chatgpt_register.sentinel_browser', fake_sb_inner)
