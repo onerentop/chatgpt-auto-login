@@ -1,5 +1,33 @@
 # Changelog
 
+## v2.41.1 — 2026-05-26
+
+### Execute.vue 选中操作迁移到 ContextActionBar（与 Accounts 体验统一）
+
+`web/src/views/Accounts.vue` v2.35 起用 `ContextActionBar` 实现"选中 > 0 时底部悬浮操作 bar"模式，`Execute.vue` 仍把选中相关操作（执行选中 / 下载选中 / 取消选中）放顶部工具栏，样式不一致。
+
+**改动**：
+
+- **顶部工具栏 row 1**：8 element → 5 element（执行全部 / 重试失败 / 停止 / 下载全部 / 分组开关）
+- **新增 `<ContextActionBar>`**（参考 Accounts.vue:85）放在平铺 AccountTableRows 之后、外层 div 收尾之前，选中 > 0 时滑入：
+  - `[N 个账号]` 计数
+  - `执行选中` button（不再带 (N) 计数 — 避免与左侧重复）
+  - `下载选中 ▼ CPA/Sub2API` split-button dropdown
+  - 内置 `取消选中` clear button（@clear → clearAllSelection）
+- `import ContextActionBar from '../components/ui/ContextActionBar.vue'`
+
+**不变**：
+
+- script setup 函数体（`execSelected` / `downloadSelectedAs` / `clearAllSelection` / `selectedEmails` 等）零改动
+- row 2 筛选区零改动
+- AccountTableRows / 分组逻辑零改动
+- ContextActionBar 组件本体零改动
+- 后端零改动
+
+**测试**：218 Node pass（无后端改动 baseline 不变）、web build 成功（Execute chunk 17.23 kB，复用既有 ContextActionBar chunk 1.13 kB）。
+
+**Spec**：`docs/superpowers/specs/2026-05-26-execute-context-action-bar-design.md`
+
 ## v2.41.0 — 2026-05-26
 
 ### 删除"执行结果"页面（功能跟 Accounts 重叠）
