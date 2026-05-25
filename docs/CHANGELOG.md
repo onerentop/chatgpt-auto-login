@@ -1,5 +1,75 @@
 # Changelog
 
+## v2.40.0 — 2026-05-26
+
+### 协议模式 PKCE add_phone 自动化（与浏览器模式 v2.39.4 等价）
+
+v2.39.4 完成浏览器模式（PipelineEngine + Playwright）add_phone 自动化后，协议模式（ProtocolEngine + Python curl_cffi）一直只检测 add_phone 就 fallback 到 `plus_no_rt`。本次补齐协议侧**纯 HTTP**实现，两个模式功能对齐。
+
+**架构**：Node 端 `_finalizePhoneVerify` retry loop 拿号 → spawn `protocol_phone_verify.py` 单次 attempt HTTP 流程 → 按 5 个 status 分流：
+
+- `ok` → tokens 入袋 → `status=plus`
+- `phone-rejected` (HTTP 4xx + invalid_request_error，已观测 `voip_phone_disallowed`) → releaseBinding + 换号重试（最多 3 次）
+- `sms-timeout` → release + break
+- `validate-error` (phone-otp/validate 拒) → release + break
+- `post-validate-error` (validate 通过后续步骤失败) → **保留 binding** + break
+
+**新增**
+
+- **`_pkce_common.py`** PKCE 公共函数（抽自 `protocol_register.py`）：`get_sentinel_token` / `_post_with_h1_fallback` / `follow_continue_for_auth_code` / `exchange_code` / `rebuild_session` / `_serialize_cookies`
+- **`protocol_phone_verify.py`** 协议模式 add_phone 单次 attempt 脚本（与 v2.39.4 浏览器侧功能等价）
+- **`protocol-engine.js`** `_finalizePhoneVerify` retry loop + `_acquirePhoneForProtocol` (local + zhusms 并列) + `runProtocolPhoneVerify` spawn helper
+- **`docs/superpowers/research/2026-05-26-openai-add-phone-http.md`** Phase 0 抓包报告（含浏览器侧 capture 推证）
+
+**修改**
+
+- **`protocol_register.py`** 3 处 `return {needsPhone: True}` 改为附带 `session_state`（含 cookies / device_id / UA / code_verifier 等），4 处重复 `follow continue` 逻辑改用 `_pkce_common` 公共函数
+- **`protocol-engine.js:_finalizePkce`** `needsPhone` 分支不再 fallback `plus_no_rt`，改调 `_finalizePhoneVerify` 走 add_phone 流程；status 映射与浏览器侧对齐
+
+**OpenAI HTTP 端点**（Phase 0 confirmed）
+
+- `POST /api/accounts/add-phone/send` body=`{phone_number}` — 拒号 4xx + `invalid_request_error` / 接受 200 + `continue_url=/phone-verification`
+- `POST /api/accounts/phone-otp/validate` body=`{code}` — 验证码错 4xx / 通过 200 + `continue_url`（已 consented 账号直跳 callback；新账号跳 `/sign-in-with-chatgpt/codex/consent`）
+
+**Consent fallback（新发现）**
+
+新账号第一次 OAuth + 经过 add_phone 后 OpenAI 强制 consent UI。浏览器侧主循环点 "继续" 按钮（v2.39.4 路径），协议侧 `_pkce_common.follow_continue_for_auth_code` 内置 fallback：
+
+1. GET `/sign-in-with-chatgpt/codex/consent` (Remix Turbo Stream HTML ~50KB)
+2. regex 在 `workspaces` 关键字附近 1200 字符内抓 workspace UUID
+3. POST `/api/accounts/workspace/select` body=`{workspace_id}` → 200 + callback URL
+4. parse_qs 提 auth_code → token exchange
+
+已 consented 账号 OpenAI 直接给 `continue_url=localhost:1455/...?code=...`，第一段 GET 提到 code，consent fallback 不触发。
+
+**测试**
+
+- Python 8 个新单测：`tests/test_protocol_phone_verify.py`
+- Node 10 个新单测：`server/__tests__/protocol-phone-verify.test.js`
+- 总数 231 pass（15 Python + 216 Node = baseline 206 + 18 新 + 7 既有 Python）
+
+**Smoke 验证**
+
+- `fbpi1478530@outlook.com`（未绑账号 + 新 OAuth + 需 consent）协议模式 → `status=plus` + RT/AT/id_token 入袋 ✓
+- `cmdxps7772@outlook.com`（已绑 + 已 consented）协议模式 → 直接 callback 拿 RT ✓
+- 全 3 attempt VoIP 号拒 → `all-phones-rejected` + `phone_verify_fail` status ✓
+
+**附带发现 (v2.40.1+ 改进项)**
+
+- OpenAI 允许同号给多个账号绑（`+12282351427` 同绑 cmdxps7772 + fbpi1478530），v2.37.0 "永久 binding" 语义可放宽
+- v2.39.4 浏览器侧 red-text 检测漏 `voip_phone_disallowed` 实际渲染文案 "Invalid phone number"
+- `acquirePhone` retry 时反复取同号（release 后 bindings_used 回 0 又最低优先）— ORDER BY 应加 "刚 release 不再优先" 逻辑
+
+**不变式**
+
+- 浏览器模式 PipelineEngine + `utils.js` v2.39.4 行为零改动
+- 协议模式既有 PKCE 主流程（login OTP / choose-account / oauth/token）行为不变 — 仅 add_phone 检测点附加 sessionState
+- phone-pool DB schema 零改动
+- `zhusms-provider.js` 零改动
+- 配置 schema 零改动
+
+**Spec / Plan**：`docs/superpowers/specs/2026-05-26-protocol-add-phone-design.md` + `docs/superpowers/plans/2026-05-26-protocol-add-phone.md`
+
 ## v2.39.4 — 2026-05-25
 
 ### add_phone OpenAI 拒号 → rollback + retry (最多 3 次)
