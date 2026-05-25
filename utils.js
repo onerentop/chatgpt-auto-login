@@ -405,21 +405,24 @@ async function fetchTokensViaPKCE(browser, account, lastOtp) {
             }
           } else {
             const phonePool = require('./server/phone-pool');
-            const { getRawDb } = require('./server/db');
+            const { getRawDb, save } = require('./server/db');
             const max = cfg.phonePool.maxBindingsPerPhone || 5;
             const allotted = phonePool.acquirePhone(getRawDb(), account.email, max);
             if (!allotted) {
               console.log(`  [PKCE] phone pool exhausted (attempt ${attempt})`);
               return lastReason ? { phoneVerifyFail: lastReason } : { phonePoolEmpty: true };
             }
+            // v2.39.4 hotfix: acquirePhone 写 binding 后立即异步落盘，
+            // 防止进程意外退出丢失"已绑"状态、也避免服务正常退出时 export 反向覆盖最新 DB
+            save();
             phone = allotted.phone;
             smsCodeFn = () => phonePool.fetchSmsCode(allotted.smsApiUrl, {
               pollIntervalMs: cfg.phonePool.smsPollIntervalMs || 3000,
               maxAttempts: cfg.phonePool.smsMaxAttempts || 30,
               proxyUrl,
             });
-            // v2.39.4: local 模式现在支持回滚 binding（OpenAI 拒号场景）
-            releaseFn = () => phonePool.releaseBinding(getRawDb(), allotted.phone, account.email);
+            // v2.39.4: local 模式现在支持回滚 binding（OpenAI 拒号场景），同步落盘
+            releaseFn = () => { phonePool.releaseBinding(getRawDb(), allotted.phone, account.email); save(); };
           }
 
           try {
