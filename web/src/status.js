@@ -132,14 +132,19 @@ export const DEFAULT_EXPANDED_STATUSES = ['plus', 'plus_no_rt']
 
 /**
  * 按状态分桶 + 按 GROUP_ORDER 排序 + 隐藏空组
- * @param {Array} rows — 账户行（需含 _status 字段，缺失视为 'idle'）
+ * @param {Array} rows — 账户行（优先读 _groupStatus，未设回退 _status，缺失视为 'idle'）
  * @returns {Array<{ status, label, type, rows, count }>}
  */
 export function groupAccountsByStatus(rows) {
   if (!Array.isArray(rows)) return []
   const buckets = new Map()
   for (const row of rows) {
-    const s = row._status || 'idle'
+    // v2.34.0: 分组优先看 _groupStatus（执行时快照，sticky grouping）；
+    // 未设回退 _status。Execute.vue 调 startExec 时给 batch rows 设
+    // _groupStatus = _status，之后 socket 更新只动 _status（驱动行
+    // 颜色），row 不跨组。Accounts.vue 没 _groupStatus 概念，自动
+    // fallback 到 _status 行为不变。
+    const s = row._groupStatus || row._status || 'idle'
     if (!buckets.has(s)) buckets.set(s, [])
     buckets.get(s).push(row)
   }

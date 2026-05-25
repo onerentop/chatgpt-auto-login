@@ -112,3 +112,35 @@ test('G12 isFailedToRetry 排除终态 plus / plus_no_rt / deactivated / idle / 
     assert.strictEqual(isFailedToRetry(s), false, `${JSON.stringify(s)} 不应可重试`)
   }
 })
+
+// === v2.34.0 Task 1: sticky grouping via _groupStatus ===
+
+test('G13 v2.34.0 _groupStatus 优先于 _status 分组', () => {
+  const rows = [
+    { email: 'a', _status: 'plus', _groupStatus: 'idle' },
+    { email: 'b', _status: 'running', _groupStatus: 'idle' },
+    { email: 'c', _status: 'error' },  // 无 _groupStatus → 走 _status
+  ]
+  const groups = groupAccountsByStatus(rows)
+  const idleGroup = groups.find(g => g.status === 'idle')
+  const errorGroup = groups.find(g => g.status === 'error')
+  assert.ok(idleGroup, 'idle 组存在')
+  assert.strictEqual(idleGroup.rows.length, 2, 'a + b 锁在 idle 组')
+  assert.deepStrictEqual(idleGroup.rows.map(r => r.email), ['a', 'b'])
+  assert.ok(errorGroup, 'error 组存在')
+  assert.strictEqual(errorGroup.rows.length, 1)
+  assert.strictEqual(errorGroup.rows[0].email, 'c')
+  assert.ok(!groups.find(g => g.status === 'plus'), 'plus 组应为空被隐藏')
+})
+
+test('G14 v2.34.0 _groupStatus 为空串/null 时退回 _status', () => {
+  const rows = [
+    { email: 'a', _status: 'plus', _groupStatus: '' },
+    { email: 'b', _status: 'error', _groupStatus: null },
+    { email: 'c', _status: 'idle', _groupStatus: undefined },
+  ]
+  const groups = groupAccountsByStatus(rows)
+  assert.ok(groups.find(g => g.status === 'plus'), 'a 落到 plus 组')
+  assert.ok(groups.find(g => g.status === 'error'), 'b 落到 error 组')
+  assert.ok(groups.find(g => g.status === 'idle'), 'c 落到 idle 组')
+})
