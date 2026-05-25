@@ -1,5 +1,35 @@
 # Changelog
 
+## v2.34.1 — 2026-05-25
+
+### Hotfix: Proxy 死节点 currentNode 双保险防御
+
+诊断：`refresh()` 在 `server/proxy/index.js:417` 同步设
+`currentNode = 第一个白名单节点`（通常 `pro-美国01`），`runHealthProbe`
+fire-and-forget 8s+ 后才跑。如果首节点死了，从启动到 probe 完成
+窗口内所有用 currentNode 的请求都 ECONNRESET。`detectExit()` 失败
+时返回 `"error: ..."` 字符串而非抛错，endpoint try/catch 不触发，
+UI 把字符串当报错弹给用户。
+
+**双保险**（跟 v2.31.1 设计风格一致）：
+
+- **A**: `runHealthProbe()` 末尾验证 `currentNode` 是否在 alive 集合；
+  不在 → fire-and-forget rotate。新增 `_autoRotateIfCurrentDead(tag,
+  probeResults, rotateFn)` 纯函数 + 导出 `__autoRotateIfCurrentDeadForTest`
+  测试钩子。Main / JP 通道对称处理。
+- **B**: `/api/proxy/detect-exit` 和 `/api/proxy/jp/detect-exit` 收到
+  `"error: ..."` 字符串时自动 `rotate()` / `rotateJp()` + 重 call
+  endpoint 1 次。
+
+跟 v2.31.1 `recordBadAttempt`（高频路径 3 次累积才拉黑）互补 ——
+A/B 给低频但用户可见的路径加专属防御，单次失败立切。
+
+**测试**：`server/proxy/__tests__/dead-currentnode.test.js` +4（dead
+触发 / alive 不触发 / 未探过不触发 / 空 tag 跳过）。
+
+**Spec / Plan**：`docs/superpowers/specs/2026-05-25-proxy-dead-currentnode-defense-design.md`
++ `docs/superpowers/plans/2026-05-25-proxy-dead-currentnode-defense.md`。
+
 ## v2.36.0 — 2026-05-25
 
 ### 主题换皮 — GitHub 工具风替代 v2.35 indigo SaaS 风
