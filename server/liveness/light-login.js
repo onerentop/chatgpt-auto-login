@@ -197,8 +197,10 @@ async function protocolLightLogin(account, { signal, proxyUrl } = {}) {
           // Final terminal object
           stdout = trimmed;
         } catch {
-          // Non-JSON line — keep last one as fallback for error reporting
-          stdout = trimmed;
+          // Non-JSON line — keep as fallback ONLY if no valid terminal yet.
+          // Otherwise (e.g., Python prints a deprecation warning after terminal),
+          // do NOT clobber a valid terminal object.
+          if (!stdout) stdout = trimmed;
         }
       }
     });

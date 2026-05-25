@@ -36,6 +36,13 @@ _CHROME = [
     ("chrome133a", 133), ("chrome131", 131), ("chrome124", 124),
 ]
 
+# OpenAI Codex client_id — also referenced in protocol_register.py and
+# server/liveness/light-login.js (browser path). If OpenAI rotates this, all
+# three must update together.
+_CODEX_CLIENT_ID = "pdlLIX2Y72MIl2rhLhTE9VV9bN9MD869"
+_AUTH = "https://auth.openai.com"
+_BASE = "https://chatgpt.com"
+
 
 def _log(msg):
     print(json.dumps({"log": f"  [LivenessLogin] {msg}"}), flush=True)
@@ -115,10 +122,6 @@ def _parse_state_from_authorize_page(response):
 def login(email, password, login_type, client_id, refresh_token, totp_secret, proxy_url):
     """Returns {accessToken, accountId, expiresAtIso} or raises Exception
     whose str() contains a runner.js-matchable keyword."""
-    AUTH = "https://auth.openai.com"
-    BASE = "https://chatgpt.com"
-    CODEX_CLIENT_ID = "pdlLIX2Y72MIl2rhLhTE9VV9bN9MD869"
-
     if not password:
         raise Exception("no password")
     if login_type == "outlook" and (not client_id or not refresh_token):
@@ -141,7 +144,7 @@ def login(email, password, login_type, client_id, refresh_token, totp_secret, pr
 
     # Step 1: GET authorize page → parse state
     auth_url = (
-        f"{AUTH}/authorize?client_id={CODEX_CLIENT_ID}"
+        f"{_AUTH}/authorize?client_id={_CODEX_CLIENT_ID}"
         "&scope=openid%20email%20profile%20offline_access%20model.request"
         "%20model.read%20organization.read%20organization.write"
         "&response_type=code"
@@ -166,7 +169,7 @@ def login(email, password, login_type, client_id, refresh_token, totp_secret, pr
     sentinel = get_sentinel_token(session, device_id, flow="authorize_continue",
                                   user_agent=session.headers.get("User-Agent", "")) or ""
     try:
-        r = session.post(f"{AUTH}/u/login/identifier?state={state}",
+        r = session.post(f"{_AUTH}/u/login/identifier?state={state}",
                         data={"state": state, "username": email,
                               "js-available": "true", "webauthn-available": "true",
                               "is-brave": "false", "webauthn-platform-available": "false",
@@ -183,7 +186,7 @@ def login(email, password, login_type, client_id, refresh_token, totp_secret, pr
     sentinel = get_sentinel_token(session, device_id, flow="authorize_continue",
                                   user_agent=session.headers.get("User-Agent", "")) or ""
     try:
-        r = session.post(f"{AUTH}/u/login/password?state={state}",
+        r = session.post(f"{_AUTH}/u/login/password?state={state}",
                         data={"state": state, "username": email, "password": password,
                               "action": "default"},
                         headers={"openai-sentinel-token": sentinel,
@@ -228,7 +231,7 @@ def login(email, password, login_type, client_id, refresh_token, totp_secret, pr
         sentinel = get_sentinel_token(session, device_id, flow="email_otp_validate",
                                       user_agent=session.headers.get("User-Agent", "")) or ""
         try:
-            r = session.post(f"{AUTH}/u/email-otp/challenge?state={state}",
+            r = session.post(f"{_AUTH}/u/email-otp/challenge?state={state}",
                             data={"state": state, "code": code, "action": "default"},
                             headers={"openai-sentinel-token": sentinel,
                                      "Content-Type": "application/x-www-form-urlencoded"},
@@ -251,7 +254,7 @@ def login(email, password, login_type, client_id, refresh_token, totp_secret, pr
     # Step 7: fetch /api/auth/session for accessToken
     _log("Step 7: fetch /api/auth/session")
     try:
-        r = session.get(f"{BASE}/api/auth/session",
+        r = session.get(f"{_BASE}/api/auth/session",
                        headers={"Accept": "application/json"}, timeout=15)
         session_data = r.json() if r.status_code == 200 else {}
     except Exception:

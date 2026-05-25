@@ -232,3 +232,10 @@ test('outlook account missing IMAP creds rejects with outlook oauth missing', as
     /outlook oauth missing/
   );
 });
+
+// Belt-and-suspenders restore: process.on('exit') above is the safety net for
+// abrupt termination; this test() runs at the end of THIS file's test
+// queue, restoring require before any subsequent test file loads.
+test('cleanup: restore Module.prototype.require', () => {
+  Module.prototype.require = origRequire;
+});
