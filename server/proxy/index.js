@@ -510,6 +510,28 @@ async function refresh() {
   return filtered.length;
 }
 
+/**
+ * v2.34.1: 验证 currentNode 是否在 probe 结果里 alive；不活就 fire-and-forget rotate。
+ * 纯函数 + 注入 rotate，便于单测。
+ * - currentTag 为空串 / falsy → 跳过
+ * - probeResults 未含此 tag（未探过）→ 跳过（保守，避免假阳性）
+ * - 含此 tag 且 alive === false → 调度 rotate
+ * - 含此 tag 且 alive === true → 跳过
+ *
+ * @param {string} currentTag
+ * @param {Map<string, {alive: boolean}>} probeResults
+ * @param {() => Promise<any> | any} rotateFn
+ */
+function _autoRotateIfCurrentDead(currentTag, probeResults, rotateFn) {
+  if (!currentTag) return
+  const r = probeResults?.get(currentTag)
+  if (r && r.alive === false) {
+    Promise.resolve().then(() => rotateFn()).catch((e) => {
+      console.log(`[Proxy] auto-rotate after dead probe failed: ${e?.message?.slice(0, 60)}`)
+    })
+  }
+}
+
 async function runHealthProbe() {
   const { probeAllNodes } = require('./health-probe');
   // Main channel
@@ -528,6 +550,12 @@ async function runHealthProbe() {
     _state.jp.probeSummary = { ...summary, lastRunAt: Date.now() };
     console.log(`[Proxy:JP] health probe: ${summary.alive}/${summary.total} alive`);
   }
+
+  // v2.34.1: 探针完成后自我修复。若 currentNode 被探出 alive=false，fire-and-forget
+  // rotate 切到下一个活节点。覆盖启动场景（refresh() 同步选定第一个白名单节点，
+  // probe 跑完发现死）和运行时定时探针后场景。jp 通道对称处理。
+  _autoRotateIfCurrentDead(_state.currentNode, _state.probeResults, rotate);
+  _autoRotateIfCurrentDead(_state.jp.currentNode, _state.jp.probeResults, rotateJp);
 }
 
 async function stop() {
@@ -831,6 +859,7 @@ module.exports = {
   // PX-7 health probe
   runHealthProbe,
   __setAutoRotateForTest,
+  __autoRotateIfCurrentDeadForTest: _autoRotateIfCurrentDead,
   blacklistManually,
   removeFromBlacklist,
   clearBlacklist,
