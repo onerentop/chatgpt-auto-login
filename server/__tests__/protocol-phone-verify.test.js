@@ -33,7 +33,6 @@ async function mkEngine(opts) {
   const { ProtocolEngine, __setRunProtocolPhoneVerify } = require('../../protocol-engine');
   __setRunProtocolPhoneVerify(opts.runResult);
   const engine = new ProtocolEngine();
-  // mock phone-pool acquirePhone / releaseBinding
   if (opts.localQueue) {
     let i = 0;
     engine._acquirePhoneForProtocol = async (provider, cfg, email) => {
@@ -44,6 +43,19 @@ async function mkEngine(opts) {
         phone: item.phone,
         smsConfig: { provider: 'local', url: 'http://test' },
         releaseFn: opts.releaseFn || (async () => {}),
+      };
+    };
+  }
+  if (opts.zhusmsQueue) {
+    let i = 0;
+    engine._acquirePhoneForProtocol = async (provider) => {
+      if (provider !== 'zhusms') throw new Error('expected zhusms');
+      const item = opts.zhusmsQueue[i++];
+      if (!item) return {};
+      return {
+        phone: item.phone,
+        smsConfig: { provider: 'zhusms', order_no: item.order, base_url: 'https://zhusms.com', card_key: 'k', cookie: 'c' },
+        releaseFn: opts.cancelOrderFn || (async () => {}),
       };
     };
   }
@@ -167,5 +179,43 @@ test('post-validate-error 单次 break → 不 release (binding 保留)', async 
     assert.deepEqual(r, { phoneVerifyFail: 'post-validate-error' });
     assert.equal(spawnCount, 1);
     assert.equal(releaseCount, 0, '*** 关键: post-validate-error 不 release，binding 保留 ***');
+  } finally { env.cleanup(); }
+});
+
+test('zhusms 1 attempt 成功', async () => {
+  const env = setupTestEnv({ phonePool: { enabled: true, provider: 'zhusms', maxBindingsPerPhone: 3, zhusms: { cardKey: 'ZS-X' } } });
+  try {
+    let spawnCount = 0;
+    let cancelCount = 0;
+    const engine = await mkEngine({
+      runResult: async () => { spawnCount++; return { status: 'ok', tokens: { access_token: 'AT', refresh_token: 'RT', id_token: 'ID' } }; },
+      zhusmsQueue: [{ phone: '+9', order: 'o1' }],
+      cancelOrderFn: async () => { cancelCount++; },
+    });
+    const r = await engine._finalizePhoneVerify({}, { email: 'a@b.c' });
+    assert.ok(r.tokens);
+    assert.equal(spawnCount, 1);
+    assert.equal(cancelCount, 0);
+  } finally { env.cleanup(); }
+});
+
+test('zhusms 1 拒 + 2 成功 → cancelOrder ×1', async () => {
+  const env = setupTestEnv({ phonePool: { enabled: true, provider: 'zhusms', maxBindingsPerPhone: 3, zhusms: { cardKey: 'ZS-X' } } });
+  try {
+    let spawnCount = 0;
+    let cancelCount = 0;
+    const responses = [
+      { status: 'phone-rejected', detail: 'HTTP 400' },
+      { status: 'ok', tokens: { access_token: 'AT', refresh_token: 'RT', id_token: 'ID' } },
+    ];
+    const engine = await mkEngine({
+      runResult: async () => responses[spawnCount++],
+      zhusmsQueue: [{ phone: '+1', order: 'o1' }, { phone: '+2', order: 'o2' }],
+      cancelOrderFn: async () => { cancelCount++; },
+    });
+    const r = await engine._finalizePhoneVerify({}, { email: 'a@b.c' });
+    assert.ok(r.tokens);
+    assert.equal(spawnCount, 2);
+    assert.equal(cancelCount, 1);
   } finally { env.cleanup(); }
 });
