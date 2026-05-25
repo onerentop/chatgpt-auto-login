@@ -19,6 +19,7 @@ const { killTree } = require('./server/process-utils');
 
 const ROOT = __dirname;
 const PYTHON_SCRIPT = path.join(ROOT, 'protocol_register.py');
+const PYTHON_PHONE_VERIFY_SCRIPT = path.join(ROOT, 'protocol_phone_verify.py');
 
 // ========== Python subprocess ==========
 function runProtocolRegister(account, engine) {
@@ -81,6 +82,50 @@ function runProtocolPKCE(account, engine) {
         if (result.status === 'success') resolve(result);
         else reject(new Error(result.error || 'PKCE failed'));
       } catch { reject(new Error(stderr.slice(-200) || `Python exit ${code}`)); }
+    });
+    py.stdin.write(input);
+    py.stdin.end();
+  });
+}
+
+// v2.40.0: 协议模式 add_phone 单次 attempt（spawn protocol_phone_verify.py）
+function runProtocolPhoneVerify(sessionState, phone, smsConfig, proxyUrl, engine) {
+  return new Promise((resolve) => {
+    const py = spawn('py', ['-3', PYTHON_PHONE_VERIFY_SCRIPT], { cwd: ROOT, stdio: ['pipe', 'pipe', 'pipe'] });
+    if (engine) engine._pyProc = py;
+    let settled = false;
+    const timeout = setTimeout(() => {
+      if (!settled) { settled = true; try { py.kill('SIGKILL'); } catch {} resolve({ status: 'submit-error', detail: 'timeout 180s' }); }
+    }, 180_000);
+    const input = JSON.stringify({
+      session_state: sessionState,
+      phone, sms: smsConfig, proxy_url: proxyUrl,
+    });
+    let stdout = '', stderr = '';
+    py.stdout.on('data', (data) => {
+      for (const line of data.toString().split('\n').filter(l => l.trim())) {
+        try {
+          const parsed = JSON.parse(line);
+          if (parsed.log) { console.log(parsed.log); } else { stdout = line; }
+        } catch { stdout = line; }
+      }
+    });
+    py.stderr.on('data', (data) => { stderr += data.toString(); });
+    py.on('close', (code) => {
+      clearTimeout(timeout);
+      if (settled) return;
+      settled = true;
+      try {
+        resolve(JSON.parse(stdout));
+      } catch {
+        resolve({ status: 'submit-error', detail: stderr.slice(-200) || `python exit ${code}` });
+      }
+    });
+    py.on('error', (e) => {
+      clearTimeout(timeout);
+      if (settled) return;
+      settled = true;
+      resolve({ status: 'submit-error', detail: `spawn failed: ${e.message}` });
     });
     py.stdin.write(input);
     py.stdin.end();
