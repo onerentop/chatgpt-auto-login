@@ -104,6 +104,26 @@ class TestProtocolPhoneVerify(unittest.TestCase):
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["tokens"]["refresh_token"], "RT")
 
+    def test_phone_start_rejected(self):
+        """phone-start 返回 4xx → status=phone-rejected。"""
+        import protocol_phone_verify as pv
+
+        fake_session = MagicMock()
+        reject_resp = MagicMock(ok=False, status_code=400, text='{"error":"phone_send_failed"}')
+        reject_resp.json.return_value = {"error": "phone_send_failed"}
+        fake_session.post.return_value = reject_resp
+        fake_session.headers = {}
+        fake_session.cookies = MagicMock()
+
+        with patch.object(pv, "rebuild_session", return_value=fake_session), \
+             patch.object(pv, "get_sentinel_token", return_value=""):
+            result = self._run_with_input(self._build_input())
+
+        self.assertEqual(result["status"], "phone-rejected")
+        self.assertIn("400", result["detail"])
+        # phone-validate 不应被调用
+        self.assertEqual(fake_session.post.call_count, 1)
+
 
 if __name__ == "__main__":
     unittest.main()
