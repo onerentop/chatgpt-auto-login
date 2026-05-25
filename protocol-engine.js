@@ -92,7 +92,7 @@ function runProtocolPKCE(account, engine) {
 }
 
 // v2.40.0: 协议模式 add_phone 单次 attempt（spawn protocol_phone_verify.py）
-function runProtocolPhoneVerify(sessionState, phone, smsConfig, proxyUrl, engine) {
+let runProtocolPhoneVerify = function (sessionState, phone, smsConfig, proxyUrl, engine) {
   return new Promise((resolve) => {
     const py = spawn('py', ['-3', PYTHON_PHONE_VERIFY_SCRIPT], { cwd: ROOT, stdio: ['pipe', 'pipe', 'pipe'] });
     if (engine) engine._pyProc = py;
@@ -133,7 +133,7 @@ function runProtocolPhoneVerify(sessionState, phone, smsConfig, proxyUrl, engine
     py.stdin.write(input);
     py.stdin.end();
   });
-}
+};
 
 // ========== Protocol Engine ==========
 class ProtocolEngine extends EventEmitter {
@@ -805,4 +805,9 @@ class ProtocolEngine extends EventEmitter {
   }
 }
 
-module.exports = { ProtocolEngine };
+module.exports = {
+  ProtocolEngine,
+  // v2.40.0: 暴露给测试做 mock 注入
+  __runProtocolPhoneVerify: runProtocolPhoneVerify,
+  __setRunProtocolPhoneVerify: (fn) => { runProtocolPhoneVerify = fn; },
+};
