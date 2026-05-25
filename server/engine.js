@@ -347,11 +347,22 @@ class PipelineEngine extends EventEmitter {
               console.log(`${p} Running PKCE for already-Plus account...`);
               this.emitStatus({ email: account.email, status: 'running', phase: 'pkce', progress });
               const pkceTokens = await fetchTokensViaPKCE(browser, account, loginResult.lastOtp).catch((e) => { console.log(`  [PKCE] Failed: ${e.message}`); return null; });
-              if (pkceTokens && !pkceTokens.needsPhone && pkceTokens.refresh_token) {
+              if (pkceTokens?.refresh_token) {
                 saveCPAAuthFile(account.email, pkceTokens.access_token, pkceTokens);
                 finalResult.status = 'plus';
+              } else if (pkceTokens?.phonePoolEmpty) {
+                console.log(`${p} PKCE: phone pool exhausted for this account`);
+                this.emitStatus({ email: account.email, status: 'phone_pool_empty', phase: 'pkce', progress, reason: '号池已用尽或全部满' });
+                saveCPAAuthFile(account.email, loginResult.accessToken, loginResult.session);
+                finalResult.status = 'phone_pool_empty';
+              } else if (pkceTokens?.phoneVerifyFail) {
+                console.log(`${p} PKCE: phone verify failed (${pkceTokens.phoneVerifyFail})`);
+                this.emitStatus({ email: account.email, status: 'phone_verify_fail', phase: 'pkce', progress, reason: pkceTokens.phoneVerifyFail });
+                saveCPAAuthFile(account.email, loginResult.accessToken, loginResult.session);
+                finalResult.status = 'phone_verify_fail';
               } else {
-                if (pkceTokens?.needsPhone) console.log(`${p} PKCE requires phone verification`);
+                // needsPhone (pool disabled) 或其它非成功路径 → plus_no_rt 兜底（保持既有行为）
+                if (pkceTokens?.needsPhone) console.log(`${p} PKCE requires phone verification (pool disabled)`);
                 else if (pkceTokens && !pkceTokens.refresh_token) console.log(`${p} PKCE returned no refresh_token`);
                 saveCPAAuthFile(account.email, pkceTokens?.access_token || loginResult.accessToken, pkceTokens || loginResult.session);
               }
@@ -575,12 +586,21 @@ class PipelineEngine extends EventEmitter {
                     console.log(`${p} Phase 4: PKCE OAuth...`);
                     this.emitStatus({ email: account.email, status: 'running', phase: 'pkce', progress });
                     const pkceTokens = await fetchTokensViaPKCE(browser, account, loginResult.lastOtp).catch((e) => { console.log(`  [PKCE] Failed: ${e.message}`); return null; });
-                    if (pkceTokens && !pkceTokens.needsPhone && pkceTokens.refresh_token) {
+                    if (pkceTokens?.refresh_token) {
                       console.log(`${p} PKCE success, saving with refresh_token`);
                       saveCPAAuthFile(account.email, pkceTokens.access_token, pkceTokens);
                       finalResult.status = 'plus';
+                    } else if (pkceTokens?.phonePoolEmpty) {
+                      console.log(`${p} PKCE: phone pool exhausted for this account`);
+                      this.emitStatus({ email: account.email, status: 'phone_pool_empty', phase: 'pkce', progress, reason: '号池已用尽或全部满' });
+                      finalResult.status = 'phone_pool_empty';
+                    } else if (pkceTokens?.phoneVerifyFail) {
+                      console.log(`${p} PKCE: phone verify failed (${pkceTokens.phoneVerifyFail})`);
+                      this.emitStatus({ email: account.email, status: 'phone_verify_fail', phase: 'pkce', progress, reason: pkceTokens.phoneVerifyFail });
+                      finalResult.status = 'phone_verify_fail';
                     } else {
-                      if (pkceTokens?.needsPhone) console.log(`${p} PKCE requires phone verification`);
+                      // needsPhone (pool disabled) 或其它非成功路径 → plus_no_rt 兜底（保持既有行为）
+                      if (pkceTokens?.needsPhone) console.log(`${p} PKCE requires phone verification (pool disabled)`);
                       else if (pkceTokens && !pkceTokens.refresh_token) console.log(`${p} PKCE returned no refresh_token`);
                       else console.log(`${p} PKCE failed, saving without refresh_token`);
                       saveCPAAuthFile(account.email, pkceTokens?.access_token || loginResult.accessToken, pkceTokens || loginResult.session);
