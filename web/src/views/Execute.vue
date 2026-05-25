@@ -41,6 +41,14 @@
             </template>
           </el-dropdown>
           <el-button :disabled="selectedEmails.length === 0" @click="clearAllSelection">取消选中</el-button>
+          <el-divider direction="vertical" />
+          <el-switch
+            v-model="groupingEnabled"
+            active-text="分组"
+            inactive-text="平铺"
+            inline-prompt
+            style="margin-left:4px"
+          />
         </div>
         <div class="ex-toolbar__row">
           <el-input v-model="search" placeholder="搜索邮箱… 按 / 聚焦" clearable style="width:240px" data-hotkey="search" />
@@ -62,8 +70,8 @@
       </div>
     </SectionCard>
 
-    <!-- Status-grouped tables with expandable logs -->
-    <el-collapse v-model="expandedKeys">
+    <!-- v2.34.0: 视图切换 —— 分组 collapse 面板 / 平铺单 table -->
+    <el-collapse v-if="groupingEnabled" v-model="expandedKeys" style="margin-top:8px">
       <el-collapse-item
         v-for="g in visibleGroups"
         :key="g.status"
@@ -90,6 +98,22 @@
         />
       </el-collapse-item>
     </el-collapse>
+
+    <!-- v2.34.0: 平铺视图 —— 单 AccountTableRows 渲染全部 filteredRows (按 GROUP_ORDER 排序) -->
+    <AccountTableRows
+      v-else
+      :rows="flatSortedRows"
+      :running="running"
+      :global-selected-set="globalSelectedSet"
+      :get-history-logs="getHistoryLogs"
+      :get-realtime-logs="getRealtimeLogs"
+      @group-selection-change="onGroupSelectionChange('__flat__', $event)"
+      @expand-change="onExpand"
+      @row-action="onRowAction"
+      @auth-download="onAuthDownload"
+      @row-click="onRowClick"
+      style="margin-top:8px"
+    />
   </div>
 </template>
 
@@ -98,7 +122,7 @@ import { ref, computed, watch, onMounted, onBeforeUnmount, shallowRef, nextTick 
 import { ElMessage } from 'element-plus'
 import api from '../api'
 import { socketState } from '../socket'
-import { statusType, statusLabel, PLUS_STATUSES, ERROR_STATUSES, DEFAULT_EXPANDED_STATUSES, groupAccountsByStatus, isFailedToRetry, EXECUTE_STATUS_FILTER_OPTIONS } from '../status'
+import { statusType, statusLabel, PLUS_STATUSES, ERROR_STATUSES, DEFAULT_EXPANDED_STATUSES, groupAccountsByStatus, isFailedToRetry, EXECUTE_STATUS_FILTER_OPTIONS, GROUP_ORDER } from '../status'
 import { getSelectionSet, clearSelection } from '../selection'
 import AccountTableRows from '../components/AccountTableRows.vue'
 import PageHeader from '../components/ui/PageHeader.vue'
@@ -108,6 +132,8 @@ const running = ref(false)
 const accounts = ref([])
 const autoExpandedEmail = ref('')
 const expandedKeys = ref([...DEFAULT_EXPANDED_STATUSES])
+// v2.34.0: 分组视图开关，默认 true（沿用分组语义）
+const groupingEnabled = ref(true)
 const groupRefs = ref({})
 const globalSelectedSet = getSelectionSet('execute')
 const engineMode = ref({ protocolMode: false, paymentLinkSource: 'api' })
@@ -189,6 +215,17 @@ const filteredRows = computed(() => {
 })
 
 const visibleGroups = computed(() => groupAccountsByStatus(filteredRows.value))
+
+// v2.34.0: 平铺视图的排序计算 —— 按 GROUP_ORDER 业务优先序，
+// 同 status 内保持稳定排序（filteredRows 的插入顺序）
+const flatSortedRows = computed(() => {
+  const orderIndex = new Map(GROUP_ORDER.map((s, i) => [s, i]))
+  return [...filteredRows.value].sort((a, b) => {
+    const ia = orderIndex.has(a._status) ? orderIndex.get(a._status) : 999
+    const ib = orderIndex.has(b._status) ? orderIndex.get(b._status) : 999
+    return ia - ib
+  })
+})
 
 // statusFilter 选中状态时自动展开该组（only-add 语义）
 watch(statusFilter, (newVal) => {
@@ -308,6 +345,12 @@ async function checkStatus() {
 onMounted(() => { loadAccounts(); checkStatus(); loadEngineMode(); startPolling() })
 
 function onGroupSelectionChange(status, rows) {
+  if (status === '__flat__') {
+    // 平铺视图：单表管理全部行，全局选择即所选 rows
+    clearSelection('execute')
+    for (const r of rows) globalSelectedSet.add(r.email)
+    return
+  }
   // 把本组的选中变化合并到全局 Set：先移除本组 emails，再加入本次选中
   const group = visibleGroups.value.find(g => g.status === status)
   const groupEmails = new Set((group?.rows || []).map(r => r.email))
@@ -347,6 +390,16 @@ async function startExec(emails) {
   try {
     // Snapshot current filtered list → freeze view until user changes a filter
     lockedEmails.value = new Set(filteredRows.value.map(r => r.email))
+
+    // v2.34.0: sticky grouping —— 快照当前真实 _status 到 _groupStatus，
+    // 之后 socket 更新只动 _status（驱动行颜色），row 不跨组。
+    // 必须在下面的 _status = 'running' 预设之前，否则快照会捕获 'running'
+    // 而不是真实旧状态。每次 startExec 都覆盖快照（"第二次执行"基于
+    // "第二次开始时"的真实状态）。
+    for (const row of filteredRows.value) {
+      row._groupStatus = row._status
+    }
+
     socketState.logs.splice(0)
     socketState.accountStatuses = {}
     // Preset selected accounts to 'running'/'queued' for immediate visual feedback.
