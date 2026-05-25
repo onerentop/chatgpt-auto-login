@@ -17,15 +17,25 @@ function _getAgent(proxyUrl) {
   return new HttpsProxyAgent(proxyUrl)
 }
 
-async function _postForm(url, fields, { cookie, proxyUrl } = {}) {
+// v2.39.1: zhusms 服务端检查 Origin (拒 origin_forbidden 403)，所有请求必须带。
+// 从 baseUrl 提取 origin (scheme + host[:port])；Referer 加 trailing slash。
+function _originHeaders(baseUrl) {
+  try {
+    const u = new URL(baseUrl)
+    const origin = `${u.protocol}//${u.host}`
+    return { Origin: origin, Referer: origin + '/' }
+  } catch { return {} }
+}
+
+async function _postForm(url, fields, { cookie, proxyUrl, baseUrl } = {}) {
   const body = new URLSearchParams(fields)
-  const headers = { 'Content-Type': 'application/x-www-form-urlencoded' }
+  const headers = { 'Content-Type': 'application/x-www-form-urlencoded', ..._originHeaders(baseUrl || url) }
   if (cookie) headers['Cookie'] = cookie
   return await fetch(url, { method: 'POST', headers, body, agent: _getAgent(proxyUrl) })
 }
 
 async function _activate(cardKey, baseUrl, proxyUrl) {
-  const resp = await _postForm(`${baseUrl}/api/guest/activate`, { code: cardKey }, { proxyUrl })
+  const resp = await _postForm(`${baseUrl}/api/guest/activate`, { code: cardKey }, { proxyUrl, baseUrl })
   if (!resp.ok) throw new Error(`zhusms activate failed: HTTP ${resp.status}`)
   const setCookie = resp.headers.get('set-cookie')
   if (!setCookie) throw new Error('zhusms activate: no Set-Cookie in response')
@@ -46,12 +56,12 @@ async function ensureSession(cardKey, baseUrl, proxyUrl) {
 
 async function takeOrder(cardKey, baseUrl, service, proxyUrl) {
   let cookie = await ensureSession(cardKey, baseUrl, proxyUrl)
-  let resp = await _postForm(`${baseUrl}/api/order/take`, { service }, { cookie, proxyUrl })
+  let resp = await _postForm(`${baseUrl}/api/order/take`, { service }, { cookie, proxyUrl, baseUrl })
   if (resp.status === 401 || resp.status === 403) {
     // session 过期 → 清缓存重试一次
     sessions.delete(baseUrl)
     cookie = await ensureSession(cardKey, baseUrl, proxyUrl)
-    resp = await _postForm(`${baseUrl}/api/order/take`, { service }, { cookie, proxyUrl })
+    resp = await _postForm(`${baseUrl}/api/order/take`, { service }, { cookie, proxyUrl, baseUrl })
   }
   if (!resp.ok) return null  // 余额耗尽 / 服务异常
   const data = await resp.json()
@@ -66,6 +76,7 @@ async function pollOrderSms(orderNo, baseUrl, { pollIntervalMs = 3000, maxAttemp
     }
     try {
       const resp = await fetch(`${baseUrl}/api/order/status?order_no=${encodeURIComponent(orderNo)}`, {
+        headers: { ..._originHeaders(baseUrl) },
         agent: _getAgent(proxyUrl), signal,
       })
       if (resp.ok) {
@@ -86,7 +97,7 @@ async function pollOrderSms(orderNo, baseUrl, { pollIntervalMs = 3000, maxAttemp
 async function cancelOrder(orderNo, baseUrl, cardKey, proxyUrl) {
   try {
     const cookie = await ensureSession(cardKey, baseUrl, proxyUrl)
-    await _postForm(`${baseUrl}/api/order/cancel`, { order_no: orderNo }, { cookie, proxyUrl })
+    await _postForm(`${baseUrl}/api/order/cancel`, { order_no: orderNo }, { cookie, proxyUrl, baseUrl })
   } catch {
     // 释放失败不影响主流程（错误路径下尽力释放）
   }
@@ -95,7 +106,7 @@ async function cancelOrder(orderNo, baseUrl, cardKey, proxyUrl) {
 async function getBalance(cardKey, baseUrl, proxyUrl) {
   const cookie = await ensureSession(cardKey, baseUrl, proxyUrl)
   const resp = await fetch(`${baseUrl}/api/guest/me`, {
-    headers: { Cookie: cookie },
+    headers: { Cookie: cookie, ..._originHeaders(baseUrl) },
     agent: _getAgent(proxyUrl),
   })
   if (!resp.ok) throw new Error(`zhusms getBalance failed: HTTP ${resp.status}`)
