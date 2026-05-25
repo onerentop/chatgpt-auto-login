@@ -1,5 +1,32 @@
 # Changelog
 
+## v2.41.2 — 2026-05-26
+
+### Accounts.vue 加分组视图（plan / alive_status / loginType 三维度切换）
+
+参照 Execute v2.34.0 分组模式给账号管理加分组查看。Execute 视角关心 pipeline 执行状态，Accounts 视角关心账号属性（计划/活性/登录类型），所以分组维度不同 + 顶部加 select 切换。
+
+**改动**：
+
+- **抽组件 `web/src/components/AccountsTable.vue`**（176 行）：把 Accounts.vue 原 `<el-table>` + 8 列 + 凭证 popover + 密码眼睛切换 + 操作按钮 (编辑/删除/CPA/Sub) + row-class 行高亮全部抽出。Props: `rows` / `globalSelectedSet`，Emits: `selection-change` / `row-click` / `copy` 等。
+- **`web/src/views/Accounts.vue`** (+227 / -136, 760 → 811 行)：
+  - 顶部工具栏加 `<el-switch>` 分组开关（默认平铺）+ 仅分组时显示的 `<el-select>` 分组维度（按 Plan / 按 活性 / 按 登录类型）
+  - 分组视图：`<el-collapse>` + `v-for visibleGroups`，每组独立 `<AccountsTable>`
+  - 平铺视图（默认）：单 `<AccountsTable :rows="filteredAccounts">`
+  - `visibleGroups` computed 按 `groupBy` 切换三维度分组逻辑，按 count 倒序
+  - **selection 跨组共享**：新加 `globalSelectedSet = getSelectionSet('accounts')`（参照 Execute）。既有 `selected` ref 通过 `syncSelectedFromGlobal` 单向投影，最小化对 `exportSelected` / `delSelected` / `startLiveness` 等既有函数的改动
+  - `expandedKeys` 在 `visibleGroups` 变化时 immediate 全展开
+
+**alive_status 标签**：复用 `status.js` 的 `aliveStatusLabel`（"Plus / 已取消 / Token过期 / 未测试 / ..." 细分），比"活/死/未检测"三分类更准。
+
+**不变**：
+- ContextActionBar 行为零改动
+- row 2 测活控制零改动
+- 后端零改动
+- selection store 零改动
+
+**测试**：218 Node pass（无后端改动 baseline 不变）、web build 成功（Accounts chunk 28.51 kB，AccountsTable static-imported 合并到 Accounts chunk）。
+
 ## v2.41.1 — 2026-05-26
 
 ### Execute.vue 选中操作迁移到 ContextActionBar（与 Accounts 体验统一）
