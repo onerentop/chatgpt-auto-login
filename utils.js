@@ -214,13 +214,20 @@ async function fetchTokensViaPKCE(browser, account, lastOtp) {
       }
 
       // STATE 1: choose-an-account
+      // v2.39.2: 防御 — OpenAI 有时 URL 仍是 /choose-an-account 但 DOM 已渲染
+      // 手机号输入表单。若已含 input[type=tel] 则跳过本分支，让下方 add-phone
+      // 状态机处理；否则狂点不存在的"账号"按钮会 60s timeout。
       if (url.includes('choose-an-account')) {
-        console.log('  [PKCE] State: choose-an-account');
-        const acct = page.locator('button, a, div[role="button"]').filter({ hasText: new RegExp(account.email.split('@')[0], 'i') }).first();
-        if (await acct.isVisible({ timeout: 2000 }).catch(() => false)) { await acct.click(); console.log('  [PKCE] Selected account'); }
-        else { const f = page.locator('button, div[role="button"]').first(); await f.click().catch(() => {}); console.log('  [PKCE] Clicked first account'); }
-        await new Promise(r => setTimeout(r, 3000));
-        continue;
+        const hasTelInput = await page.$('input[type="tel"], input[autocomplete="tel"]').then(el => !!el).catch(() => false);
+        if (!hasTelInput) {
+          console.log('  [PKCE] State: choose-an-account');
+          const acct = page.locator('button, a, div[role="button"]').filter({ hasText: new RegExp(account.email.split('@')[0], 'i') }).first();
+          if (await acct.isVisible({ timeout: 2000 }).catch(() => false)) { await acct.click(); console.log('  [PKCE] Selected account'); }
+          else { const f = page.locator('button, div[role="button"]').first(); await f.click().catch(() => {}); console.log('  [PKCE] Clicked first account'); }
+          await new Promise(r => setTimeout(r, 3000));
+          continue;
+        }
+        console.log('  [PKCE] choose-an-account URL 但 DOM 已是 add-phone，落到 add-phone 分支');
       }
 
       // STATE 2: log-in (enter email → OTP)
