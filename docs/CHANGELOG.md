@@ -1,5 +1,49 @@
 # Changelog
 
+## v2.29.0 — 2026-05-25
+
+### Liveness Protocol-Mode lightLogin（v2.26 Phase B 收尾）
+
+关闭 v2.26 Phase B 待办：协议模式下，无 `cpa-auth/codex-{email}.json`
+缓存的账号测活时 `!tok` 触发 `lightLogin` → 当时抛 stub →
+runner 标 `alive_status='login_fail', reason='liveness not yet
+supported in protocol mode'`，看起来像账号死了实际是机制缺失。
+
+**核心改动：**
+
+- **`chatgpt_register/liveness_login.py`** —— 新建协议模式纯登录脚本
+  （~290 行）：username → password → OTP → session 7 步走 curl_cffi +
+  sentinel，与 `protocol_register.py` 解耦但共享底层。
+- **`chatgpt_register/otp.py`** —— 从 `protocol_register.py` 抽出
+  `fetch_imap_otp` / `get_imap_baseline`（函数体逐字复制，加 `log=`
+  callback 解耦）+ 新增 `gen_totp(secret)`（pyotp lazy import）。
+- **`server/liveness/light-login.js`** —— `protocolMode=true` 分支
+  spawn `chatgpt_register/liveness_login.py`，120s timeout + abortSignal
+  双兜底；spawn ENOENT 仍 reject `LivenessLoginNotImplementedError`
+  保留 runner.js:99 兜底兼容。stderr 摘要过 `redact()` 防止 proxy URL
+  含凭证泄露到 alive_reason。
+- **`server/liveness/runner.js`** —— 1 行改动：`lightLogin(...)` 调用
+  加 `proxyUrl: getProxyMgr()?.getProxyUrl()`，让子进程走代理。
+- **错误契约**：Python `reason` 字符串包含 runner.js:99-117 的 9 类
+  keyword 之一（bad password / outlook oauth missing / otp timeout /
+  captcha / proxy reset / no session / unexpected / ...）；runner 错误
+  映射零改动。
+
+**对外契约不变**：`lightLogin(account, opts)` 返回 shape
+`{accessToken, accountId, expiresAtIso}` 双模式一致；`LivenessLoginNotImplementedError`
+类保留为 spawn 失败兜底。
+
+**单测**：`tests/test_liveness_login.py` 新建 3 Y unittest（Y1 no
+password / Y2 bad password / Y3 happy path 三字段）+
+`server/liveness/__tests__/light-login.test.js` 新增 5 P 单测（P1-P5
+Node 端 spawn 胶水），并保留原 v2.26 的 8 个浏览器路径测试。共新增 8 用例。
+
+**新依赖**：`pyotp`（仅 Gmail 协议模式 liveness 需要；Outlook 不影响）。
+CLAUDE.md / start.bat 已更新说明，缺失时 start.bat WARN 不阻塞。
+
+**Spec / Plan**：`docs/superpowers/specs/2026-05-25-liveness-protocol-lightlogin-design.md`
++ `docs/superpowers/plans/2026-05-25-liveness-protocol-lightlogin.md`。
+
 ## v2.35.0 — 2026-05-25
 
 ### 任务流驱动的前端重设计 — Command Palette / Pipeline HUD / 工作台
