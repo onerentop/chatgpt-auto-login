@@ -89,6 +89,23 @@ test('P5 acquirePhone 同 email 不重绑同 phone', () => {
   assert.strictEqual(r3, null, '同 email 全部 phone 用尽 → null')
 })
 
+test('P5b v2.40.1 acquirePhone excludePhones 排除 retry 已尝试的号', () => {
+  const db = freshDb()
+  db.run("INSERT INTO phone_pool (phone, sms_api_url, bindings_used) VALUES ('+14642840651', 'http://A.com', 0)")
+  db.run("INSERT INTO phone_pool (phone, sms_api_url, bindings_used) VALUES ('+15001234567', 'http://B.com', 0)")
+  // 第一次拿 A
+  const r1 = phonePool.acquirePhone(db, 'foo@x.com', 5)
+  assert.strictEqual(r1.phone, '+14642840651')
+  // 模拟 retry：release A（OpenAI 拒），重新 acquire 但排除 A
+  phonePool.releaseBinding(db, '+14642840651', 'foo@x.com')
+  const r2 = phonePool.acquirePhone(db, 'foo@x.com', 5, ['+14642840651'])
+  assert.strictEqual(r2.phone, '+15001234567', 'excludePhones 后取 B 而非又拿 A（A bindings_used=0 排序最高）')
+  // 第三次 retry：排除 A + B
+  phonePool.releaseBinding(db, '+15001234567', 'foo@x.com')
+  const r3 = phonePool.acquirePhone(db, 'foo@x.com', 5, ['+14642840651', '+15001234567'])
+  assert.strictEqual(r3, null, '全部排除后 null')
+})
+
 test('P6 deletePhone cascade bindings', () => {
   const db = freshDb()
   db.run("INSERT INTO phone_pool (phone, sms_api_url) VALUES ('+14642840651', 'http://A.com')")

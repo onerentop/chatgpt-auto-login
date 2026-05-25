@@ -1,5 +1,26 @@
 # Changelog
 
+## v2.40.1 — 2026-05-26
+
+### add_phone retry 反复取同号 + 浏览器 voip 文案漏检 + 默认 maxBinding 3
+
+v2.40.0 上线后实测发现三个 paper cuts（不影响主功能但浪费 spawn / 误归类 / 默认值不符合实际策略）：
+
+1. **`acquirePhone` retry 反复取同号** —— `release` 后 `bindings_used` 回最低，下次 `acquirePhone` 又取它，3 次 retry 全打同一号。修：`acquirePhone(db, email, max, excludePhones=[])` 新增第 4 参数，retry 内 caller 维护已尝试号列表。
+2. **浏览器侧 red-text 漏 `voip_phone_disallowed` 文案** —— OpenAI 实际渲染 "Invalid phone number. Please try again."，v2.39.4 regex 只覆盖中文「无法发送」+ 英文 "Unable to send" / "cannot send" 三种，VoIP 拒号 fall through 到 submit-error。修：regex 加 `Invalid phone number`。
+3. **默认 `maxBindingsPerPhone: 5` → `3`** —— v2.37.0 spec 默认 5 偏宽。实测 OpenAI 允许同号多绑但 SMS 接码方限频，3 是更稳健的默认值。
+
+**修改**
+
+- **`server/phone-pool.js:acquirePhone`** 新增 `excludePhones=[]` 参数，SQL 多加 `AND phone NOT IN (...)` 排除已尝试号。
+- **`utils.js:fetchTokensViaPKCE`** add_phone retry loop 维护 `triedPhones` 列表，每次 `acquirePhone` 传入；red-text 正则加 `Invalid phone number`。
+- **`protocol-engine.js`** `_finalizePhoneVerify` retry loop 同步维护 `triedPhones`，`_acquirePhoneForProtocol(provider, cfg, email, proxyUrl, excludePhones=[])` 加参数。
+- **`config.example.json`** `phonePool.maxBindingsPerPhone` 默认 5 → 3；既有用户 config 不动（fallback `|| 3`）。
+
+**测试**：1 个新单测 `P5b acquirePhone excludePhones` 覆盖 retry 内排除逻辑。217/217 pass。
+
+**不变式**：既有 `acquirePhone(db, email, max)` 3 参调用兼容（第 4 参 default `[]`）；既有用户 config 行为不变（`maxBindingsPerPhone` 已设则 fallback 不触发）。
+
 ## v2.40.0 — 2026-05-26
 
 ### 协议模式 PKCE add_phone 自动化（与浏览器模式 v2.39.4 等价）

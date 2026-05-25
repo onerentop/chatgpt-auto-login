@@ -374,6 +374,7 @@ async function fetchTokensViaPKCE(browser, account, lastOtp) {
         const MAX_PHONE_ATTEMPTS = 3;
         let success = false;
         let lastReason = null;
+        const triedPhones = [];  // v2.40.1: 已 attempt 过的号，acquirePhone 排除
 
         for (let attempt = 1; attempt <= MAX_PHONE_ATTEMPTS; attempt++) {
           let phone, smsCodeFn, releaseFn;
@@ -406,12 +407,13 @@ async function fetchTokensViaPKCE(browser, account, lastOtp) {
           } else {
             const phonePool = require('./server/phone-pool');
             const { getRawDb, save } = require('./server/db');
-            const max = cfg.phonePool.maxBindingsPerPhone || 5;
-            const allotted = phonePool.acquirePhone(getRawDb(), account.email, max);
+            const max = cfg.phonePool.maxBindingsPerPhone || 3;
+            const allotted = phonePool.acquirePhone(getRawDb(), account.email, max, triedPhones);
             if (!allotted) {
               console.log(`  [PKCE] phone pool exhausted (attempt ${attempt})`);
               return lastReason ? { phoneVerifyFail: lastReason } : { phonePoolEmpty: true };
             }
+            triedPhones.push(allotted.phone);
             // v2.39.4 hotfix: acquirePhone 写 binding 后立即异步落盘，
             // 防止进程意外退出丢失"已绑"状态、也避免服务正常退出时 export 反向覆盖最新 DB
             save();
@@ -437,8 +439,8 @@ async function fetchTokensViaPKCE(browser, account, lastOtp) {
             } catch {}
 
             if (!smsBoxAppeared) {
-              // 检查 OpenAI 红字（中文「无法向此电话号码发送验证码」/ 英文 "Unable to send"）
-              const rejectedNode = await page.locator(':text-matches("无法向此电话号码发送验证码|Unable to send verification|cannot send a verification", "i")').first().isVisible({ timeout: 1500 }).catch(() => false);
+              // v2.40.1: red-text 检测扩展 — 加 "Invalid phone number" 覆盖 OpenAI voip_phone_disallowed 实际渲染文案
+              const rejectedNode = await page.locator(':text-matches("无法向此电话号码发送验证码|Unable to send verification|cannot send a verification|Invalid phone number", "i")').first().isVisible({ timeout: 1500 }).catch(() => false);
               if (rejectedNode) {
                 console.log(`  [PKCE] OpenAI 拒绝 ${phone} (attempt ${attempt}/${MAX_PHONE_ATTEMPTS}) — 换号重试`);
                 if (releaseFn) try { await releaseFn(); } catch {}

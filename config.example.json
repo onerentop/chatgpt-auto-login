@@ -15,7 +15,7 @@
   "phonePool": {
     "enabled": false,
     "provider": "local",
-    "maxBindingsPerPhone": 5,
+    "maxBindingsPerPhone": 3,
     "smsPollIntervalMs": 3000,
     "smsMaxAttempts": 30,
     "zhusms": {

@@ -168,7 +168,8 @@ class ProtocolEngine extends EventEmitter {
   }
 
   // v2.40.0: 协议模式 add_phone — 统一 local / zhusms provider 出参
-  async _acquirePhoneForProtocol(provider, cfg, email, proxyUrl) {
+  // v2.40.1: 加 excludePhones 参数避免 retry 反复取同号
+  async _acquirePhoneForProtocol(provider, cfg, email, proxyUrl, excludePhones = []) {
     if (provider === 'zhusms') {
       const z = cfg.phonePool.zhusms || {};
       if (!z.cardKey) return {};
@@ -202,8 +203,8 @@ class ProtocolEngine extends EventEmitter {
       }
     }
     // local
-    const max = cfg.phonePool.maxBindingsPerPhone || 5;
-    const allotted = phonePool.acquirePhone(getRawDb(), email, max);
+    const max = cfg.phonePool.maxBindingsPerPhone || 3;
+    const allotted = phonePool.acquirePhone(getRawDb(), email, max, excludePhones);
     if (!allotted) return {};
     return {
       phone: allotted.phone,
@@ -230,13 +231,15 @@ class ProtocolEngine extends EventEmitter {
     const provider = cfg.phonePool.provider || 'local';
     const MAX_ATTEMPTS = 3;
     let lastReason = null;
+    const triedPhones = [];  // v2.40.1: retry 内防止反复取同号
 
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-      const acq = await this._acquirePhoneForProtocol(provider, cfg, account.email, proxyUrl);
+      const acq = await this._acquirePhoneForProtocol(provider, cfg, account.email, proxyUrl, triedPhones);
       const { phone, smsConfig, releaseFn } = acq;
       if (!phone) {
         return lastReason ? { phoneVerifyFail: lastReason } : { phonePoolEmpty: true };
       }
+      triedPhones.push(phone);
       // v2.39.4 hotfix 等价：拿号后立即落盘
       try { save(); } catch {}
 

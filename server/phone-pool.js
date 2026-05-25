@@ -78,16 +78,24 @@ function deletePhone(db, phone) {
  * 排序：bindings_used ASC + created_at ASC（轮转使用 + FIFO）。
  * 找到 → 写 binding + 自增 bindings_used → 返回 { phone, smsApiUrl }
  * 没找到 → null
+ *
+ * @param {string[]} excludePhones v2.40.1: 同一次 retry session 已尝试过的号，acquire
+ *   时排除。修复 v2.39.4 的 issue：retry 时 releaseBinding 后 bindings_used 回 0 又
+ *   排序最高 → 反复取同号。caller 维护 list，每次失败 attempt 后 push 进入。
  */
-function acquirePhone(db, email, maxBindingsPerPhone) {
+function acquirePhone(db, email, maxBindingsPerPhone, excludePhones = []) {
+  const exclusionClause = excludePhones.length > 0
+    ? `AND phone NOT IN (${excludePhones.map(() => '?').join(',')})`
+    : ''
   const r = db.exec(`
     SELECT phone, sms_api_url
     FROM phone_pool
     WHERE bindings_used < ?
       AND phone NOT IN (SELECT phone FROM phone_bindings WHERE email = ?)
+      ${exclusionClause}
     ORDER BY bindings_used ASC, created_at ASC
     LIMIT 1
-  `, [maxBindingsPerPhone, email])
+  `, [maxBindingsPerPhone, email, ...excludePhones])
   if (!r.length || !r[0].values.length) return null
   const [phone, smsApiUrl] = r[0].values[0]
   db.run('INSERT INTO phone_bindings (phone, email) VALUES (?, ?)', [phone, email])
