@@ -163,6 +163,28 @@ class TestProtocolPhoneVerify(unittest.TestCase):
 
         self.assertEqual(result["status"], "validate-error")
 
+    def test_post_validate_follow_fail(self):
+        """phone-validate 通过 + follow continue 拿不到 code → status=post-validate-error (binding 保留)。"""
+        import protocol_phone_verify as pv
+
+        fake_session = MagicMock()
+        ps_resp = MagicMock(ok=True, status_code=200)
+        ps_resp.json.return_value = {"page": {"type": "phone_sms_code"}}
+        val_resp = MagicMock(ok=True, status_code=200)
+        val_resp.json.return_value = {"continue_url": "https://auth.openai.com/cont"}
+        fake_session.post.side_effect = [ps_resp, val_resp]
+        fake_session.headers = {}
+        fake_session.cookies = MagicMock()
+
+        with patch.object(pv, "rebuild_session", return_value=fake_session), \
+             patch.object(pv, "get_sentinel_token", return_value=""), \
+             patch.object(pv, "poll_sms", return_value="123456"), \
+             patch.object(pv, "follow_continue_for_auth_code", return_value=None):
+            result = self._run_with_input(self._build_input())
+
+        self.assertEqual(result["status"], "post-validate-error")
+        self.assertIn("auth_code", result["detail"])
+
 
 if __name__ == "__main__":
     unittest.main()
