@@ -1,13 +1,14 @@
 <template>
-  <el-card>
-    <template #header>
-      <div style="display: flex; justify-content: space-between; align-items: center">
-        <span>配置设置</span>
+  <div class="app-stack--lg">
+    <PageHeader title="配置设置" subtitle="7 个分类 · 改动后点右侧保存才会写入 config.json">
+      <template #actions>
+        <el-tag v-if="isDirty" type="warning" size="small">未保存</el-tag>
         <el-button type="primary" :loading="saving" data-hotkey="submit" @click="handleSave">保存配置</el-button>
-      </div>
-    </template>
+      </template>
+    </PageHeader>
 
-    <el-tabs v-model="activeTab" type="border-card">
+    <SectionCard flush>
+    <el-tabs v-model="activeTab" tab-position="left" class="cfg-tabs">
       <el-tab-pane label="支付" name="payment">
         <el-form :model="form" label-width="160px" style="max-width: 600px">
           <el-form-item label="手机号">
@@ -259,7 +260,8 @@
         </div>
       </el-tab-pane>
     </el-tabs>
-  </el-card>
+    </SectionCard>
+  </div>
 </template>
 
 <script setup>
@@ -267,6 +269,8 @@ import { ref, reactive, onMounted, onBeforeUnmount, watch } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '../api'
+import PageHeader from '../components/ui/PageHeader.vue'
+import SectionCard from '../components/ui/SectionCard.vue'
 
 const formRef = ref(null)
 const saving = ref(false)
@@ -569,3 +573,38 @@ onBeforeUnmount(() => {
   window.removeEventListener('beforeunload', onBeforeUnload)
 })
 </script>
+
+<style scoped>
+/* Left-rail tabs — give the tab labels real width on the left so 7 tabs
+ * don't get cramped, while the right panel uses full remaining width. */
+.cfg-tabs {
+  min-height: 520px;
+}
+.cfg-tabs :deep(.el-tabs__header.is-left) {
+  margin-right: 0;
+  border-right: 1px solid var(--app-border-soft);
+  background: var(--app-surface-2);
+}
+.cfg-tabs :deep(.el-tabs__nav.is-left) {
+  padding: var(--sp-2) 0;
+}
+.cfg-tabs :deep(.el-tabs__item.is-left) {
+  height: 40px;
+  line-height: 40px;
+  padding: 0 var(--sp-4);
+  text-align: left;
+  color: var(--app-text-2);
+  transition: color var(--tr-fast), background var(--tr-fast);
+}
+.cfg-tabs :deep(.el-tabs__item.is-left:hover) {
+  background: var(--app-surface);
+  color: var(--app-text);
+}
+.cfg-tabs :deep(.el-tabs__item.is-active) {
+  color: var(--app-brand);
+  background: var(--app-surface);
+}
+.cfg-tabs :deep(.el-tabs__content) {
+  padding: var(--sp-4) var(--sp-5);
+}
+</style>
