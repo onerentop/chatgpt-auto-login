@@ -104,3 +104,23 @@ test('P6 deletePhone cascade bindings', () => {
   assert.strictEqual(bindingsLeft.length, 1)
   assert.strictEqual(bindingsLeft[0][0], '+15001234567')
 })
+
+test('P7 fetchSmsCode 传 proxyUrl 时 fetch 收到 HttpsProxyAgent', async () => {
+  // mock global.fetch 拿到 agent 参数
+  const calls = []
+  const origFetch = globalThis.fetch
+  globalThis.fetch = async (url, opts) => {
+    calls.push({ url, agent: opts?.agent })
+    // 返回含 6 位数字的成功响应，让 fetchSmsCode 1 次拿到 code 退出
+    return { ok: true, text: async () => 'your code: 123456' }
+  }
+  try {
+    const code = await phonePool.fetchSmsCode('http://example.com/sms?k=1', { proxyUrl: 'http://127.0.0.1:7890' })
+    assert.strictEqual(code, '123456')
+    assert.strictEqual(calls.length, 1, 'fetch should be called once')
+    const { HttpsProxyAgent } = require('https-proxy-agent')
+    assert.ok(calls[0].agent instanceof HttpsProxyAgent, 'agent should be HttpsProxyAgent instance')
+  } finally {
+    globalThis.fetch = origFetch
+  }
+})

@@ -98,9 +98,18 @@ function acquirePhone(db, email, maxBindingsPerPhone) {
 /**
  * 轮询 smsApiUrl，regex /\b(\d{6})\b/ 提取 6 位数字。
  * - signal 支持 AbortController
+ * - proxyUrl (v2.38.0) 可选，提供时走 HttpsProxyAgent（跟 server/discord-gateway.js 同模式），
+ *   undefined 时 fetch 直连（向后兼容 Phase 1 调用方）
  * - 跟 payment.js:586 现有 PayPal 路径 regex 一致，Phase 2 复用
  */
-async function fetchSmsCode(smsApiUrl, { pollIntervalMs = 3000, maxAttempts = 30, signal } = {}) {
+async function fetchSmsCode(smsApiUrl, { pollIntervalMs = 3000, maxAttempts = 30, signal, proxyUrl } = {}) {
+  // v2.38.0: proxyUrl 提供时走 HttpsProxyAgent（跟 server/discord-gateway.js 同模式），
+  // undefined 时 fetch 直连（向后兼容 Phase 1 调用方）。
+  let agent
+  if (proxyUrl) {
+    const { HttpsProxyAgent } = require('https-proxy-agent')
+    agent = new HttpsProxyAgent(proxyUrl)
+  }
   for (let i = 0; i < maxAttempts; i++) {
     if (signal?.aborted) {
       // v2.37.0 final-review fix: 抛 AbortError 而非通用 Error，
@@ -110,7 +119,7 @@ async function fetchSmsCode(smsApiUrl, { pollIntervalMs = 3000, maxAttempts = 30
       throw err
     }
     try {
-      const resp = await fetch(smsApiUrl, { signal })
+      const resp = await fetch(smsApiUrl, { signal, agent })
       // v2.37.0 final-review fix: HTTP 4xx/5xx 错误体里恰好含 6 位数字
       // 不应被误识别为验证码（e.g. {"error":"rate limit 123456"}）
       if (!resp.ok) {
