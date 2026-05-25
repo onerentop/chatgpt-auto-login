@@ -455,16 +455,22 @@ async function fetchTokensViaPKCE(browser, account, lastOtp) {
             console.log(`  [PKCE] add-phone: got SMS code, filling and submitting`);
             await page.fill('input[autocomplete="one-time-code"], input[name*="code" i]', code);
             await page.click('button[type="submit"]');
-            await page.waitForURL(u => /\/oauth\/callback|code=/.test(u), { timeout: 30000 });
-            console.log('  [PKCE] add-phone: verification done, continuing PKCE');
+            // v2.39.4 hotfix: 提交 SMS 验证码后只等 URL 离开 add-phone 页（成功标志），
+            // 后续 consent / about-you / callback 让 PKCE 主循环兜底（已有处理）。
+            // 原 waitForURL(/callback|code=/) 会在 OpenAI 跳 consent 页时 30s 超时误判 submit-error。
+            await page.waitForFunction(
+              () => !location.pathname.includes('add-phone'),
+              null,
+              { timeout: 20000 }
+            );
+            console.log(`  [PKCE] add-phone: SMS verified, URL=${page.url()}, handing back to main loop`);
             success = true;
             break;  // 跳出 retry loop
           } catch (e) {
-            // SMS 框出现后的失败（sms-poll-timeout / submit / waitForURL 超时）
+            // SMS 框出现后的失败（sms-poll-timeout / submit / waitForFunction 超时）
             // 不属于"号被拒"场景 → 不重试，直接 fail
             if (releaseFn) try { await releaseFn(); } catch {}
-            const reason = e?.message?.includes('sms-poll-timeout') ? 'sms-timeout'
-              : (e?.message?.includes('submit-error') ? 'submit-error' : 'submit-error');
+            const reason = e?.message?.includes('sms-poll-timeout') ? 'sms-timeout' : 'submit-error';
             console.log(`  [PKCE] add-phone failed: ${reason} (${e?.message?.slice(0, 80)})`);
             return { phoneVerifyFail: reason };
           }
