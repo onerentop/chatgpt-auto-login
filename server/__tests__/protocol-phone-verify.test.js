@@ -219,3 +219,17 @@ test('zhusms 1 拒 + 2 成功 → cancelOrder ×1', async () => {
     assert.equal(cancelCount, 1);
   } finally { env.cleanup(); }
 });
+
+test('pool-disabled → phoneVerifyFail=pool-disabled，不调任何 acquire/spawn', async () => {
+  const env = setupTestEnv({ phonePool: { enabled: false, provider: 'local' } });
+  try {
+    let spawnCount = 0;
+    const engine = await mkEngine({
+      runResult: async () => { spawnCount++; return { status: 'ok' }; },
+      localQueue: [{ phone: '+1' }],
+    });
+    const r = await engine._finalizePhoneVerify({}, { email: 'a@b.c' });
+    assert.deepEqual(r, { phoneVerifyFail: 'pool-disabled' });
+    assert.equal(spawnCount, 0);
+  } finally { env.cleanup(); }
+});
