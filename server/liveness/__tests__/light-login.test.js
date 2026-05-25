@@ -1,3 +1,7 @@
+// 注意：此文件 monkey-patch Module.prototype.require 拦截 child_process.spawn，
+// 必须串行执行（不能加 --concurrency）。当前 npm test 默认串行；若未来加并发，
+// 这里的 mock 会泄漏到其他测试文件的 spawn 调用。
+
 // Tests for protocolLightLogin spawn glue in light-login.js.
 // Mocks child_process.spawn to verify Node-side behavior without launching Python.
 

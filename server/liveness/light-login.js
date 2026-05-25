@@ -11,8 +11,10 @@
 // 关心走的哪条路径。错误字符串契约对齐 runner.js:99-117 的 9 种 keyword。
 
 const path = require('path');
+const { redact } = require('../logger');
 
 const PROTOCOL_SCRIPT = path.join(__dirname, '..', '..', 'chatgpt_register', 'liveness_login.py');
+// IMAP OTP 轮询最多 90s + sentinel + 4 次 POST 开销 ≈ 110s；120s 留余量。
 const PROTOCOL_TIMEOUT_MS = 120_000;
 
 // 保留导出 — runner.js 用 e.name 检测；新协议路径不再主动抛此错，但
@@ -211,7 +213,7 @@ async function protocolLightLogin(account, { signal, proxyUrl } = {}) {
       try { parsed = JSON.parse(stdout); } catch {}
 
       if (!parsed) {
-        return finish(new Error(`unexpected: no terminal (exit ${code}) ${stderr.slice(-80)}`));
+        return finish(new Error(`unexpected: no terminal (exit ${code}) ${redact(stderr.slice(-80))}`));
       }
       if (parsed.status === 'ok') {
         return finish(null, {
