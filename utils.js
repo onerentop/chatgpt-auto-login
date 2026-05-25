@@ -392,6 +392,7 @@ async function fetchTokensViaPKCE(browser, account, lastOtp) {
               pollIntervalMs: cfg.phonePool.smsPollIntervalMs || 3000,
               maxAttempts: cfg.phonePool.smsMaxAttempts || 30,
               proxyUrl,
+              cardKey: z.cardKey,  // v2.39.3: pollOrderSms 现在需要 cardKey 以拿 session cookie
             });
             releaseFn = () => zhusms.cancelOrder(order.order_no, z.baseUrl || 'https://zhusms.com', z.cardKey, proxyUrl);
           } catch (e) {

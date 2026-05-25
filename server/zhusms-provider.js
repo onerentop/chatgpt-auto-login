@@ -37,6 +37,13 @@ async function _postForm(url, fields, { cookie, proxyUrl, baseUrl } = {}) {
 async function _activate(cardKey, baseUrl, proxyUrl) {
   const resp = await _postForm(`${baseUrl}/api/guest/activate`, { code: cardKey }, { proxyUrl, baseUrl })
   if (!resp.ok) throw new Error(`zhusms activate failed: HTTP ${resp.status}`)
+  // v2.39.3 fix: 服务端 HTTP 200 但 body 可能 {"ok":false,"error":"卡密余额已耗尽"}
+  // 也要识别为失败（之前会拿到 cookie 然后下一步 take 才挂）
+  let data = {}
+  try { data = await resp.clone().json() } catch {}
+  if (data && data.ok === false) {
+    throw new Error(`zhusms activate failed: ${data.error || 'unknown'}`)
+  }
   const setCookie = resp.headers.get('set-cookie')
   if (!setCookie) throw new Error('zhusms activate: no Set-Cookie in response')
   // 简单提取 name=value (取第一段，去掉 Path / Expires 等)
@@ -69,14 +76,19 @@ async function takeOrder(cardKey, baseUrl, service, proxyUrl) {
   return { order_no: data.order_no, phone: data.phone }
 }
 
-async function pollOrderSms(orderNo, baseUrl, { pollIntervalMs = 3000, maxAttempts = 30, signal, proxyUrl } = {}) {
+async function pollOrderSms(orderNo, baseUrl, { pollIntervalMs = 3000, maxAttempts = 30, signal, proxyUrl, cardKey } = {}) {
+  // v2.39.3 fix: 必须带 session cookie，否则 zhusms /api/order/status 返 401 "未登录"
+  // → response body 没 6 位数字 → 永远 timeout。cardKey 现在是必传。
+  const cookie = cardKey ? await ensureSession(cardKey, baseUrl, proxyUrl).catch(() => null) : null
   for (let i = 0; i < maxAttempts; i++) {
     if (signal?.aborted) {
       const e = new Error('aborted'); e.name = 'AbortError'; throw e
     }
     try {
+      const headers = { ..._originHeaders(baseUrl) }
+      if (cookie) headers['Cookie'] = cookie
       const resp = await fetch(`${baseUrl}/api/order/status?order_no=${encodeURIComponent(orderNo)}`, {
-        headers: { ..._originHeaders(baseUrl) },
+        headers,
         agent: _getAgent(proxyUrl), signal,
       })
       if (resp.ok) {
