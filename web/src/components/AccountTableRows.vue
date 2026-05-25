@@ -177,7 +177,7 @@ defineExpose({
 :deep(.row-status-danger  td) { background-color: var(--app-row-danger)  !important; }
 :deep(.row-status-info    td) { background-color: var(--app-row-info)    !important; }
 
-/* running 专属浅蓝 + 左边框，避免与多状态共用的 warning 撞色 */
-:deep(.row-status-running td) { background-color: rgba(64, 158, 255, 0.10) !important; }
+/* running 专属浅蓝 + 左边框（v2.36 颜色源 token 化，自动跟随主题） */
+:deep(.row-status-running td) { background-color: var(--app-row-running) !important; }
 :deep(.row-status-running td:first-child) { border-left: 4px solid var(--app-brand) !important; }
 </style>

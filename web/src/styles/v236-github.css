@@ -1,0 +1,236 @@
+/* v2.36 GitHub-style theme — replaces v2.35 SaaS/indigo polish.
+ * Layered AFTER v235-polish.css so this wins. Same overall token names,
+ * different values + Element Plus overrides.
+ *
+ * Design intent: tool, not product. Information density, clear borders,
+ * minimal shadows. Inspired by GitHub's Primer system. Keep v235-polish.css
+ * on disk so `git revert HEAD~1` brings back indigo. */
+
+:root {
+  /* === Brand — GitHub blue === */
+  --el-color-primary:          #0969da;
+  --el-color-primary-light-3:  #218bff;
+  --el-color-primary-light-5:  #54aeff;
+  --el-color-primary-light-7:  #80ccff;
+  --el-color-primary-light-8:  #b6e3ff;
+  --el-color-primary-light-9:  #ddf4ff;
+  --el-color-primary-dark-2:   #0550ae;
+
+  /* Semantic colors — GitHub Primer */
+  --el-color-success:          #1f883d;
+  --el-color-success-light-3:  #2da44e;
+  --el-color-success-light-9:  #dafbe1;
+  --el-color-warning:          #9a6700;
+  --el-color-warning-light-9:  #fff8c5;
+  --el-color-danger:           #cf222e;
+  --el-color-danger-light-9:   #ffebe9;
+  --el-color-info:             #57606a;
+
+  /* === Surface — GitHub neutrals === */
+  --app-bg:          #ffffff;
+  --app-surface:     #ffffff;
+  --app-surface-2:   #f6f8fa;            /* canvas-subtle */
+  --app-border:      #d0d7de;            /* border-default */
+  --app-border-soft: #d8dee4;            /* border-muted */
+  --app-text:        #1f2328;            /* fg-default */
+  --app-text-2:      #424a53;
+  --app-text-3:      #57606a;            /* fg-muted */
+  --app-text-mute:   #6e7781;
+
+  /* Row highlights — diff colors */
+  --app-row-success: #dafbe1;
+  --app-row-warning: #fff8c5;
+  --app-row-danger:  #ffebe9;
+  --app-row-info:    #f6f8fa;
+  --app-row-running: #ddf4ff;
+
+  /* Sidebar — GitHub canvas-subtle */
+  --app-sidebar-bg:             #f6f8fa;
+  --app-sidebar-border:         var(--app-border);
+  --app-sidebar-text:           var(--app-text-2);
+  --app-sidebar-item-active-bg: var(--el-color-primary-light-9);
+  --app-sidebar-text-active:    var(--el-color-primary);
+  --app-sidebar-width:          240px;
+
+  /* Topbar */
+  --app-header-bg:     #ffffff;
+  --app-header-border: var(--app-border);
+  --app-header-height: 56px;
+
+  /* Radii — GitHub favors 6px almost everywhere */
+  --rad-sm: 6px;
+  --rad-md: 6px;
+  --rad-lg: 8px;
+
+  /* Shadows — minimal. Layers separated by borders, not shadows. */
+  --sh-1: 0 0 0 1px rgba(31, 35, 40, 0.04);
+  --sh-2: 0 1px 3px rgba(31, 35, 40, 0.06),
+          0 0 0 1px rgba(31, 35, 40, 0.04);
+  --sh-3: 0 8px 24px rgba(31, 35, 40, 0.10),
+          0 0 0 1px rgba(31, 35, 40, 0.06);
+
+  /* Type — slightly tighter at the top */
+  --fs-3xl: 24px;
+}
+
+html.dark {
+  /* GitHub Dark Default */
+  --el-color-primary:          #4493f8;
+  --el-color-primary-light-3:  #6bafff;
+  --el-color-primary-light-5:  #79c0ff;
+  --el-color-primary-light-7:  #a5d6ff;
+  --el-color-primary-light-9:  rgba(56, 139, 253, 0.15);
+  --el-color-primary-dark-2:   #1f6feb;
+
+  --el-color-success:          #3fb950;
+  --el-color-success-light-9:  rgba(46, 160, 67, 0.15);
+  --el-color-warning:          #d29922;
+  --el-color-warning-light-9:  rgba(187, 128, 9, 0.15);
+  --el-color-danger:           #f85149;
+  --el-color-danger-light-9:   rgba(248, 81, 73, 0.15);
+  --el-color-info:             #8d96a0;
+
+  --app-bg:          #0d1117;
+  --app-surface:     #0d1117;
+  --app-surface-2:   #161b22;
+  --app-border:      #30363d;
+  --app-border-soft: #21262d;
+  --app-text:        #e6edf3;
+  --app-text-2:      #c9d1d9;
+  --app-text-3:      #8d96a0;
+  --app-text-mute:   #6e7681;
+
+  --app-row-success: rgba(46, 160, 67, 0.15);
+  --app-row-warning: rgba(187, 128, 9, 0.15);
+  --app-row-danger:  rgba(248, 81, 73, 0.15);
+  --app-row-info:    rgba(125, 133, 144, 0.10);
+  --app-row-running: rgba(56, 139, 253, 0.15);
+
+  --app-sidebar-bg:             #161b22;
+  --app-sidebar-item-active-bg: rgba(56, 139, 253, 0.15);
+  --app-header-bg:              #0d1117;
+  --app-header-border:          var(--app-border);
+}
+
+/* Body — slight letter-spacing reset (GitHub doesn't tighten) */
+body { letter-spacing: 0; }
+
+/* === Element Plus overrides for GitHub feel ===
+ * 1. No hover lift on buttons (GitHub uses bg color change only)
+ * 2. Primary buttons solid filled (not gradient)
+ * 3. Cards: 1px border, no shadow
+ * 4. Inputs: focus shows brand outline + faint blue glow (Primer)
+ */
+.el-button {
+  border-radius: var(--rad-sm);
+  font-weight: 500;
+  transition: background var(--tr-fast), border-color var(--tr-fast),
+              color var(--tr-fast);
+}
+.el-button:not(.is-disabled):not(.is-text):not(.is-link):hover {
+  transform: none;
+}
+.el-button.el-button--primary {
+  background: var(--el-color-primary);
+  border-color: rgba(31, 35, 40, 0.15);
+}
+.el-button.el-button--primary:not(.is-disabled):hover {
+  background: var(--el-color-primary-dark-2);
+  border-color: rgba(31, 35, 40, 0.15);
+}
+.el-button.el-button--success { background: var(--el-color-success); border-color: rgba(31, 35, 40, 0.15); }
+.el-button.el-button--success:not(.is-disabled):hover { background: #1a7f37; }
+.el-button.el-button--danger  { background: var(--el-color-danger);  border-color: rgba(31, 35, 40, 0.15); }
+.el-button.el-button--danger:not(.is-disabled):hover { background: #a40e26; }
+.el-button.el-button--warning { background: var(--el-color-warning); border-color: rgba(31, 35, 40, 0.15); color: #fff; }
+.el-button.el-button--warning:not(.is-disabled):hover { background: #7d5300; }
+
+/* Default (non-typed) button — GitHub's light gray button */
+.el-button:not(.el-button--primary):not(.el-button--success):not(.el-button--danger):not(.el-button--warning):not(.is-text):not(.is-link) {
+  background: var(--app-surface-2);
+  border-color: var(--app-border);
+  color: var(--app-text);
+}
+.el-button:not(.el-button--primary):not(.el-button--success):not(.el-button--danger):not(.el-button--warning):not(.is-text):not(.is-link):not(.is-disabled):hover {
+  background: #eaeef2;
+  border-color: var(--app-border);
+}
+html.dark .el-button:not(.el-button--primary):not(.el-button--success):not(.el-button--danger):not(.el-button--warning):not(.is-text):not(.is-link):not(.is-disabled):hover {
+  background: #30363d;
+}
+
+/* Cards / SectionCards — borders, not shadows */
+.el-card, .sec-card {
+  border-radius: var(--rad-md);
+  border: 1px solid var(--app-border-soft) !important;
+  box-shadow: var(--sh-1) !important;
+}
+
+/* Tags — GitHub-style rounded rects */
+.el-tag {
+  border-radius: var(--rad-sm);
+  font-weight: 500;
+  border: 1px solid transparent;
+}
+
+/* Dialog / Drawer */
+.el-dialog, .el-drawer {
+  border-radius: var(--rad-md);
+}
+
+/* Table header — GitHub canvas-subtle */
+.el-table th.el-table__cell {
+  background: var(--app-surface-2) !important;
+  color: var(--app-text-3) !important;
+  font-weight: 500 !important;
+}
+
+/* Inputs — Primer focus ring */
+.el-input__wrapper,
+.el-textarea__inner,
+.el-select__wrapper {
+  border-radius: var(--rad-sm) !important;
+  box-shadow: 0 0 0 1px var(--app-border) inset !important;
+  transition: box-shadow var(--tr-fast);
+}
+.el-input__wrapper.is-focus,
+.el-textarea__inner:focus,
+.el-select__wrapper.is-focused {
+  box-shadow: 0 0 0 1px var(--el-color-primary) inset,
+              0 0 0 3px rgba(9, 105, 218, 0.30) !important;
+}
+html.dark .el-input__wrapper.is-focus,
+html.dark .el-textarea__inner:focus,
+html.dark .el-select__wrapper.is-focused {
+  box-shadow: 0 0 0 1px var(--el-color-primary) inset,
+              0 0 0 3px rgba(68, 147, 248, 0.40) !important;
+}
+
+/* Messages */
+.el-message {
+  border-radius: var(--rad-md);
+  box-shadow: var(--sh-2);
+  backdrop-filter: none;
+  background: var(--app-surface);
+  border: 1px solid var(--app-border);
+}
+html.dark .el-message {
+  background: var(--app-surface-2);
+}
+
+/* Focus ring — Primer-style 3px blue glow */
+:focus-visible {
+  outline: 2px solid var(--el-color-primary);
+  outline-offset: 2px;
+  border-radius: var(--rad-sm);
+}
+
+/* Scrollbars — thicker, with bg padding (GitHub feel) */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--app-border);
+  border: 2px solid var(--app-bg);
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--app-text-mute); }
