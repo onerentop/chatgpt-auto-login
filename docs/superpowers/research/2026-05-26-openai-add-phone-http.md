@@ -71,18 +71,15 @@ def is_phone_rejected(resp):
     return False
 ```
 
-**Success response** ⚠️ **未抓到 — 待实测补充**
-
-推测（基于 OpenAI 既有 send/validate 模式）：
+**Success response** ✅ **smoke test 2026-05-26 confirmed**:
 
 ```json
 {
-  "continue_url": "https://auth.openai.com/add-phone-verify",   // 或类似 /add-phone-code
+  "continue_url": "https://auth.openai.com/phone-verification",
   "method": "GET",
   "page": {
-    "type": "sms_phone_verify",   // 或 "add_phone_code" / "phone_verification_code"
-    "backstack_behavior": "default",
-    "payload": { ... }
+    "type": "phone_otp_verification",
+    "backstack_behavior": "default"
   }
 }
 ```
@@ -109,40 +106,68 @@ def has_sms_prompt(resp):
 
 ---
 
-## 2. phone-validate 端点 ⚠️ 待实测确认
+## 2. phone-validate 端点 ✅ confirmed (smoke 2026-05-26)
 
-**推测 URL**: `POST https://auth.openai.com/api/accounts/add-phone/validate`（按 OpenAI `<endpoint>/send` + `<endpoint>/validate` 命名习惯，对照 `email-otp/send` + `email-otp/validate`）
+**URL**: `POST https://auth.openai.com/api/accounts/phone-otp/validate`
 
-也可能是 `/api/accounts/add-phone/verify` 或 `/api/accounts/add-phone/confirm`。
+> **注意**：第一次推测 `/api/accounts/add-phone/validate` 错了 — smoke test HTTP 404 "Invalid URL"。正确 path 是 `phone-otp/validate`，对应 `phone_otp_verification` 的 page.type。OpenAI 的 send/validate 命名空间在 add-phone 流程**不一致**（send 用 `add-phone/`，validate 用 `phone-otp/`）。
 
 **推测 payload**: `{"code": "123456"}`（对照 `email-otp/validate` payload 完全相同的字段名）
 
 **推测 success response**: 同 `email-otp/validate` 成功格式：
 
+**Success response** ✅ confirmed:
+
 ```json
 {
-  "continue_url": "https://auth.openai.com/<某个 OAuth continue 链>",
+  "continue_url": "https://auth.openai.com/sign-in-with-chatgpt/codex/consent",
   "method": "GET",
-  "page": { "type": "..." }
+  "page": {
+    "type": "sign_in_with_chatgpt_codex_consent",
+    "backstack_behavior": "default"
+  }
 }
 ```
 
-`continue_url` 跟随 redirect 会到 `localhost:1455/auth/callback?code=<auth_code>`（OAuth callback）。
+⚠️ **`continue_url` 指向 consent 页（不是 localhost:1455 callback）**。新账号第一次 OAuth 必须经过 consent 同意 step，详见 section 3。
 
-**推测 error response**（验证码错）: HTTP 400 + `{"error": {"message": "Invalid code", "type": "invalid_request_error", "code": "invalid_code"}}`
-
-**Smoke test (plan Task 26) 必须验证这些推测并更新本节为 confirmed。**
+**Error response** （验证码错）⚠️ 未实测但 OpenAI 框架一致：HTTP 400 + `{"error": {"type": "invalid_request_error", ...}}`，与 phone-start 拒号同结构 → `is_phone_rejected` 判定可复用（实际 protocol_phone_verify.py 用 `validate-error` status 表达，与 phone-rejected 区分）。
 
 ---
 
-## 3. follow continue → callback chain ⚠️ 待实测
+## 3. consent 同意 flow ✅ confirmed (smoke 2026-05-26)
 
-**抓包未到达 phone-validate**，但 OpenAI 既有 flow 一致：
-- POST validate → 200 + `continue_url`
-- GET `continue_url` → 302 → ... → 302 → `localhost:1455/auth/callback?code=<X>&state=<Y>`
-- 浏览器 fetch localhost:1455 失败（本机没监听）→ Playwright `page.url()` 拿到 `localhost:1455?code=...` URL，提取 `code` 参数
+新账号第一次 OAuth + 经过 add-phone 后，OpenAI 强制 consent UI（codex CLI 授权确认）。浏览器侧靠主循环点 "继续" 按钮，**协议侧需要主动 POST 模拟**。
 
-协议侧 `_pkce_common.follow_continue_for_auth_code` 已实现等价逻辑（curl_cffi `session.get(continue_url, allow_redirects=True)` → 抓 ConnectionError 文本里 `code=` 参数），无需改动。
+**完整序列**：
+
+```
+phone-otp/validate 200 → continue_url = /sign-in-with-chatgpt/codex/consent
+   │
+   ▼ GET /sign-in-with-chatgpt/codex/consent (HTML, 200, ~50KB Remix Turbo Stream)
+   │
+   ▼ HTML body 含 escaped workspace_id：workspaces\",[N],...,\"<uuid>\",\"profile_picture_alt_text\"
+   │   → regex 在 'workspaces' 关键字附近 1200 字符内抓首个 UUID
+   │
+   ▼ POST /api/accounts/workspace/select  body={"workspace_id": "<uuid>"}
+   │
+   ▼ 200 response 含 continue_url = http://localhost:1455/auth/callback?code=<auth_code>&scope=...&state=...
+   │
+   ▼ parse_qs(urlparse(continue_url).query).get("code") → auth_code
+   │
+   ▼ POST /oauth/token → access_token + refresh_token + id_token ✓
+```
+
+**关键发现**：
+- `POST workspace/select` **必须**带 `workspace_id`（试 empty body 返 400 "Missing required parameter: 'workspace_id'"）
+- workspace_id 不在 phone-otp/validate response 里
+- workspace_id 只在 `GET /sign-in-with-chatgpt/codex/consent` 的 HTML body 中（Remix render）
+- HTML 是 Turbo Stream 编码，UUID 被 escape 成 `\"<uuid>\"`，不能用普通 JSON regex
+- 协议侧 OAuth path 走 `authorize/continue` (email-based)，**没**调过 `session/select` (session_id-based)，所以浏览器侧从 session/select response 拿 workspaces 的 path 不适用
+
+**已在 `_pkce_common.follow_continue_for_auth_code` 内实现 fallback**（GET 拿不到 code 时自动触发 consent 流程）。
+
+**已 consent 过的账号**（如旧账号）OpenAI 直接给 `continue_url = localhost:1455/...?code=...` 跳过 consent step — `follow_continue_for_auth_code` 第一段 GET + ConnectionError regex 拿到 code，consent fallback 不触发。
 
 ---
 
@@ -152,34 +177,42 @@ def has_sms_prompt(resp):
 
 ---
 
-## 5. 全流程时序图
+## 5. 全流程时序图（smoke 2026-05-26 confirmed）
 
 ```
 Client (curl_cffi Session, cookies from PKCE)
    │
    │ POST /api/accounts/add-phone/send
-   │     Headers: Accept/Content-Type JSON + Referer add-phone + UA (无需 sentinel)
    │     Body: {"phone_number": "+E.164"}
    ▼
 OpenAI
    │
-   ├─ 400 + body.error.code=voip_phone_disallowed (或其它 reject code) ─► protocol_phone_verify.py: status='phone-rejected' (release + retry)
+   ├─ 400 + body.error.type=invalid_request_error (code=voip_phone_disallowed 等) ─► status='phone-rejected'
    │
-   └─ 200 + body.continue_url + body.page.type='sms_*' (待确认) ─► 进入 SMS 接码状态
+   └─ 200 + body.continue_url=/phone-verification + page.type=phone_otp_verification ─► 进入 SMS 接码
        │
-       │ poll_sms (local: GET smsApiUrl regex / zhusms: POST /api/order/status)
-       │   30 次 × 3s 轮询
+       │ poll_sms (local: GET smsApiUrl regex / zhusms: POST /api/order/status)  30×3s
        ▼
-       │ POST /api/accounts/add-phone/validate (推测 endpoint，待确认)
-       │     Body: {"code": "123456"} (推测 payload)
+       │ POST /api/accounts/phone-otp/validate         (✅ NOT add-phone/validate)
+       │     Body: {"code": "123456"}
        ▼
    OpenAI
        │
-       ├─ 4xx + invalid_code ──► protocol_phone_verify.py: status='validate-error' (release)
+       ├─ 4xx invalid_code ──► status='validate-error' (release)
        │
-       └─ 200 + body.continue_url ─► follow_continue_for_auth_code (既有公共函数)
+       └─ 200 + body.continue_url ─► follow_continue_for_auth_code(session, continue_url)
            │
-           │ GET continue_url → 302 → ... → localhost:1455?code=<X> (ConnectionError + regex)
+           ├─ continue_url 直接 localhost:1455?code=<X> (已 consented 账号) → 拿 code
+           │
+           └─ continue_url = /sign-in-with-chatgpt/codex/consent (新账号) → consent fallback:
+               │
+               │ GET /sign-in-with-chatgpt/codex/consent  (HTML 50KB Remix Turbo Stream)
+               │   ↓
+               │ regex 找 'workspaces' 关键字附近 UUID → workspace_id
+               │   ↓
+               │ POST /api/accounts/workspace/select  Body: {"workspace_id": "<uuid>"}
+               │   ↓
+               │ 200 + body.continue_url = localhost:1455?code=<X> → parse_qs 拿 code
            ▼
            │ POST /oauth/token (exchange_code)
            ▼
@@ -198,13 +231,14 @@ OpenAI
 | 占位常量 | 占位值 | 校准为 | Confirmed? |
 |---|---|---|---|
 | `PHONE_START_PATH` | `/api/accounts/phone/start` | `/api/accounts/add-phone/send` | ✅ |
-| `PHONE_VALIDATE_PATH` | `/api/accounts/phone/validate` | `/api/accounts/add-phone/validate` | ⚠️ 推测，smoke test 验证 |
+| `PHONE_VALIDATE_PATH` | `/api/accounts/phone/validate` | `/api/accounts/phone-otp/validate` | ✅（第一次推测 add-phone/validate 错了，smoke 修正） |
 | Request body field name (phone) | `phone` | `phone_number` | ✅ |
-| Request body field name (code) | `code` | `code` (推测同 `email-otp/validate`) | ⚠️ 推测 |
+| Request body field name (code) | `code` | `code` | ✅ |
 | sentinel flow="phone_start" 调用 | 有 | **删除**（phone-start 不带 sentinel） | ✅ |
-| sentinel flow="phone_validate" 调用 | 有 | **删除**（推测 validate 也不带 sentinel） | ⚠️ 推测 |
+| sentinel flow="phone_validate" 调用 | 有 | **删除**（phone-otp/validate 也不带 sentinel） | ✅ |
 | `is_phone_rejected` 判定 | 关键词列表匹配 | HTTP 4xx + body.error.type=='invalid_request_error' | ✅ |
-| `has_sms_prompt` 判定 | page.type 含 sms/phone_verify/code | 200 + 含 continue_url | ✅（保守） |
+| `has_sms_prompt` 判定 | page.type 含 sms/phone_verify/code | 200 + 含 continue_url | ✅ |
+| consent fallback (workspace/select) | 无 | `_pkce_common.follow_continue_for_auth_code` 内置 fallback | ✅ 新增 |
 
 ---
 
@@ -242,14 +276,18 @@ const rejectedNode = await page.locator(':text-matches("无法向此电话号码
 
 ---
 
-## 9. 剩余 unknowns + 下一步
+## 9. Smoke test 结果（2026-05-26 second pass）
 
-**Smoke test (plan Task 26) 必须实测以下推测项**，并把本报告对应 section 标 confirmed：
+**全部推测项已 confirm**，使用 `fbpi1478530@outlook.com` + `+12282351427`：
 
-1. **phone-start success response body schema**（拿一个 OpenAI 接受的真实非 VoIP 号实测）
-2. **phone-validate endpoint URL**（推测 `/api/accounts/add-phone/validate`）
-3. **phone-validate payload schema**（推测 `{"code": "..."}`）
-4. **phone-validate success response**（推测含 `continue_url`）
-5. **phone-validate error response**（推测 4xx + invalid_code）
+1. ✅ phone-start success response — `{continue_url: "/phone-verification", page.type: "phone_otp_verification"}`
+2. ✅ phone-validate endpoint — `POST /api/accounts/phone-otp/validate`（第一次推测 add-phone/validate 错，404 修正）
+3. ✅ phone-validate payload — `{"code": "<6 digits>"}`
+4. ✅ phone-validate success response — `{continue_url: ".../codex/consent"}` (新账号 consent 待签)
+5. ⚠️ phone-validate error response — 未实测，OpenAI 一致 4xx + invalid_request_error 框架
+6. ✅ **新发现**：consent fallback — `POST /api/accounts/workspace/select {workspace_id}`，`workspace_id` 从 consent 页 HTML 的 Remix Turbo Stream 编码里 regex 提取（near 'workspaces' 关键字）
+7. ✅ token exchange RT 入袋
 
-校准方法：smoke test 时**临时 export `PHASE0_CAPTURE=1`**（utils.js 已含 capture hook，restore 时记得把 hook 也去掉 → 临时改 restore 顺序），重启服务跑账号，dump 后人工补完本报告 section 1-2 的 ⚠️。
+**Smoke 端到端结果**：`fbpi1478530@outlook.com` 协议模式 → `status=plus` + RT/AT/id_token 全部入袋 + cpa-auth/codex-fbpi1478530-at-outlook-com.json 含 refresh_token。
+
+**附带发现**：OpenAI 允许同号给多个账号绑定（`+12282351427` 同时绑 cmdxps7772 + fbpi1478530，OpenAI 不拒）。v2.37.0 phone-pool 的"永久绑定"语义可放宽（v2.41+ 优化）。

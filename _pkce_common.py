@@ -55,10 +55,15 @@ def _post_with_h1_fallback(session, url, *, json=None, headers=None, timeout=30)
     return r
 
 
-def follow_continue_for_auth_code(session, continue_url):
+def follow_continue_for_auth_code(session, continue_url, device_id=None):
     """跟 continue_url 的 redirect chain，从 localhost:1455 重定向中提取 code= 参数。
     OpenAI 内部 redirect 到 localhost:1455 会触发 ConnectionError（本机没监听），
     需要从 exception 字符串里 regex 提 code。
+
+    v2.40.0 新增 consent fallback: 协议侧 OAuth 在新账号第一次 OAuth 或新增 scope 时，
+    continue_url 会指向 /sign-in-with-chatgpt/codex/consent 页（HTML UI，需要用户点
+    "继续"按钮）。浏览器侧靠主循环 click 触发 POST /api/accounts/workspace/select。
+    协议侧在 follow GET 拿不到 code 后主动 POST workspace/select 模拟同意 → 拿 callback。
     """
     auth_code = None
     try:
@@ -86,6 +91,59 @@ def follow_continue_for_auth_code(session, continue_url):
         code_match = re.search(r'code=([^&\s\'"]+)', tb + err_str)
         if code_match:
             auth_code = code_match.group(1)
+
+    # v2.40.0 consent fallback
+    if not auth_code and ("/consent" in continue_url or "/sign-in-with-chatgpt" in continue_url):
+        try:
+            headers = {
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+                "Origin": AUTH,
+                "Referer": continue_url,
+            }
+            if device_id:
+                headers["oai-device-id"] = device_id
+            # OpenAI 要求 workspace_id required。先 GET consent HTML 试着 parse workspace_id；
+            # 失败的话退而 GET /sign-in-with-chatgpt/codex/consent.data + 各种 _routes 探查
+            workspace_id = None
+            try:
+                rh = session.get(continue_url, headers={"Accept": "text/html"}, allow_redirects=True, timeout=30)
+                # OpenAI consent 页是 Remix Turbo Stream 渲染，workspace_id 在 escape 串里：
+                # 形如：workspaces\",[32],...,\"86892992-c7f0-4896-a636-1053e697e1f1\",\"profile_picture_alt_text\"
+                # 不能直接 regex `"workspaces":[{"id":"<uuid>"`（backslash-escape 不匹配），
+                # 改为：在 'workspaces' 关键字附近 1200 字符内找首个 UUID。
+                if rh.ok:
+                    ws_idx = rh.text.find('workspaces')
+                    if ws_idx >= 0:
+                        nearby = rh.text[ws_idx:ws_idx + 1200]
+                        m = re.search(r'([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})', nearby)
+                        if m:
+                            workspace_id = m.group(1)
+                            _log(f"consent: parsed workspace_id={workspace_id}")
+            except Exception as e:
+                _log(f"consent GET HTML err: {str(e)[:80]}")
+
+            if workspace_id:
+                r = session.post(
+                    f"{AUTH}/api/accounts/workspace/select",
+                    json={"workspace_id": workspace_id},
+                    headers=headers,
+                    timeout=30,
+                )
+                _log(f"consent fallback workspace/select: status={r.status_code} body={(r.text or '')[:300]}")
+                if r.ok:
+                    d = r.json()
+                    cu = d.get("continue_url", "")
+                    if "localhost:1455" in cu and "code=" in cu:
+                        auth_code = parse_qs(urlparse(cu).query).get("code", [None])[0]
+                    if not auth_code:
+                        payload_url = ((d.get("page") or {}).get("payload") or {}).get("url", "")
+                        if "localhost:1455" in payload_url and "code=" in payload_url:
+                            auth_code = parse_qs(urlparse(payload_url).query).get("code", [None])[0]
+            else:
+                _log("consent fallback: no workspace_id parsed from HTML")
+        except Exception as e:
+            _log(f"consent fallback workspace/select err: {str(e)[:80]}")
     return auth_code
 
 
