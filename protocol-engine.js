@@ -279,9 +279,30 @@ class ProtocolEngine extends EventEmitter {
         console.log(`[${progress}] PKCE success, saving with refresh_token`);
         saveCPAAuthFile(account.email, pkce.access_token || loginResult.accessToken, { ...loginResult.session, refresh_token: pkce.refresh_token, id_token: pkce.id_token || '' });
         this.emitStatus({ email: account.email, status: 'plus', phase: 'done', progress });
+      } else if (pkce.needsPhone) {
+        // v2.40.0: 协议模式 add_phone 自动化
+        console.log(`[${progress}] PKCE requires phone verification, running protocol add-phone flow...`);
+        const r = await this._finalizePhoneVerify(pkce.session_state || {}, account);
+        if (r.tokens) {
+          console.log(`[${progress}] add-phone success, saving with refresh_token`);
+          saveCPAAuthFile(account.email, r.tokens.access_token || loginResult.accessToken, {
+            ...loginResult.session,
+            refresh_token: r.tokens.refresh_token,
+            id_token: r.tokens.id_token || '',
+          });
+          this.emitStatus({ email: account.email, status: 'plus', phase: 'done', progress });
+        } else {
+          // failure 映射：phonePoolEmpty → phone_pool_empty；phoneVerifyFail/pool-disabled → 既有 status
+          let failStatus;
+          if (r.phonePoolEmpty) failStatus = 'phone_pool_empty';
+          else if (r.phoneVerifyFail === 'pool-disabled') failStatus = 'plus_no_rt';
+          else failStatus = 'phone_verify_fail';
+          console.log(`[${progress}] add-phone failed: ${r.phoneVerifyFail || 'pool-empty'}, status=${failStatus}`);
+          saveCPAAuthFile(account.email, loginResult.accessToken, loginResult.session);
+          this.emitStatus({ email: account.email, status: failStatus, phase: 'done', progress });
+        }
       } else {
-        if (pkce.needsPhone) console.log(`[${progress}] PKCE requires phone verification`);
-        else console.log(`[${progress}] PKCE no RT: ${pkce.error || 'unknown'}`);
+        console.log(`[${progress}] PKCE no RT: ${pkce.error || 'unknown'}`);
         saveCPAAuthFile(account.email, loginResult.accessToken, loginResult.session);
         this.emitStatus({ email: account.email, status: 'plus_no_rt', phase: 'done', progress });
       }
