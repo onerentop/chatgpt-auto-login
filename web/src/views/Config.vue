@@ -36,6 +36,29 @@
           <el-form-item label="SMS 最多尝试次数">
             <el-input-number v-model="form.phonePool.smsMaxAttempts" :min="1" :max="100" />
           </el-form-item>
+
+          <el-form-item label="Provider">
+            <el-radio-group v-model="form.phonePool.provider">
+              <el-radio value="local">本地号池（v2.37）</el-radio>
+              <el-radio value="zhusms">zhusms 卡密</el-radio>
+            </el-radio-group>
+          </el-form-item>
+
+          <template v-if="form.phonePool.provider === 'zhusms'">
+            <el-form-item label="zhusms 卡密">
+              <el-input v-model="form.phonePool.zhusms.cardKey" placeholder="ZS-XXXXXXXX" />
+            </el-form-item>
+            <el-form-item label="Service">
+              <el-input v-model="form.phonePool.zhusms.service" placeholder="codex" />
+            </el-form-item>
+            <el-form-item label="Base URL">
+              <el-input v-model="form.phonePool.zhusms.baseUrl" placeholder="https://zhusms.com" />
+            </el-form-item>
+            <el-form-item label="余额测试">
+              <el-button @click="testZhusmsBalance" :loading="testingZhusms">查询余额</el-button>
+              <span style="margin-left:8px;color:#909399">{{ zhusmsBalance || '点按钮测试' }}</span>
+            </el-form-item>
+          </template>
         </el-form>
       </el-tab-pane>
 
@@ -294,6 +317,8 @@ import SectionCard from '../components/ui/SectionCard.vue'
 const formRef = ref(null)
 const saving = ref(false)
 const refreshingProxy = ref(false)
+const testingZhusms = ref(false)
+const zhusmsBalance = ref('')
 const proxyStatus = ref(null)
 const allNodeTags = ref([])
 const jpKddiTagSet = ref(new Set())
@@ -333,7 +358,7 @@ const form = reactive({
   proxyJpEnabled: true,
   proxyJpKeyword: 'KDDI',
   proxyJpWhitelist: [],
-  phonePool: { enabled: false, maxBindingsPerPhone: 5, smsPollIntervalMs: 3000, smsMaxAttempts: 30 },
+  phonePool: { enabled: false, maxBindingsPerPhone: 5, smsPollIntervalMs: 3000, smsMaxAttempts: 30, provider: 'local', zhusms: { cardKey: '', service: 'codex', baseUrl: 'https://zhusms.com' } },
 })
 
 onMounted(async () => {
@@ -364,9 +389,20 @@ onMounted(async () => {
         maxBindingsPerPhone: cfg.phonePool.maxBindingsPerPhone ?? 5,
         smsPollIntervalMs: cfg.phonePool.smsPollIntervalMs ?? 3000,
         smsMaxAttempts: cfg.phonePool.smsMaxAttempts ?? 30,
+        provider: cfg.phonePool.provider || 'local',
+        zhusms: cfg.phonePool.zhusms
+          ? { ...{ cardKey: '', service: 'codex', baseUrl: 'https://zhusms.com' }, ...cfg.phonePool.zhusms }
+          : { cardKey: '', service: 'codex', baseUrl: 'https://zhusms.com' },
       }
     } else {
-      form.phonePool = { enabled: false, maxBindingsPerPhone: 5, smsPollIntervalMs: 3000, smsMaxAttempts: 30 }
+      form.phonePool = {
+        enabled: false,
+        maxBindingsPerPhone: 5,
+        smsPollIntervalMs: 3000,
+        smsMaxAttempts: 30,
+        provider: 'local',
+        zhusms: { cardKey: '', service: 'codex', baseUrl: 'https://zhusms.com' },
+      }
     }
   } catch (err) {
     console.error('Failed to load config:', err)
@@ -595,6 +631,21 @@ function formatTtl(ms) {
   const min = Math.floor(ms / 60000)
   const sec = Math.floor((ms % 60000) / 1000)
   return min > 0 ? `${min}m ${sec}s` : `${sec}s`
+}
+
+async function testZhusmsBalance() {
+  testingZhusms.value = true
+  zhusmsBalance.value = ''
+  try {
+    const { data } = await api.post('/phone-pool/zhusms/balance', {})
+    zhusmsBalance.value = JSON.stringify(data.balance)
+    ElMessage.success('余额查询成功')
+  } catch (e) {
+    zhusmsBalance.value = `错误: ${e?.response?.data?.error || e?.message || '未知'}`
+    ElMessage.error(zhusmsBalance.value)
+  } finally {
+    testingZhusms.value = false
+  }
 }
 
 onBeforeUnmount(() => {
