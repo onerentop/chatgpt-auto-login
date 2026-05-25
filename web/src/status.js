@@ -16,6 +16,8 @@ const TYPE_MAP = {
   login_fail: 'danger',
   paypal_captcha: 'warning',
   aborted: 'info',
+  phone_pool_empty: 'warning',
+  phone_verify_fail: 'danger',
 }
 
 const LABEL_MAP = {
@@ -34,6 +36,8 @@ const LABEL_MAP = {
   login_fail: '登录失败',
   paypal_captcha: 'PayPal人机验证',
   aborted: '已停止',
+  phone_pool_empty: '号池已用尽',
+  phone_verify_fail: '手机验证失败',
 }
 
 export function statusType(s) {
@@ -60,7 +64,7 @@ export function rowClassFor(status) {
 }
 
 export const PLUS_STATUSES = ['plus', 'plus_no_rt']
-export const ERROR_STATUSES = ['error', 'no_link', 'deactivated', 'no_promo', 'canceled', 'token_expired', 'login_fail']
+export const ERROR_STATUSES = ['error', 'no_link', 'deactivated', 'no_promo', 'canceled', 'token_expired', 'login_fail', 'phone_pool_empty', 'phone_verify_fail']
 
 export function isPlus(status) {
   return PLUS_STATUSES.includes((status || '').toLowerCase())
@@ -118,6 +122,8 @@ export const GROUP_ORDER = [
   'canceled',       // 已取消（测活同步）
   'token_expired',  // Token失效（测活同步）
   'login_fail',     // 登录失败（测活同步）
+  'phone_pool_empty', // 号池已用尽（v2.38.0）
+  'phone_verify_fail', // 手机验证失败（v2.38.0）
   'no_link',        // 无链接
   'no_promo',       // 无0元资格
   'verify_error',   // Stripe验证失败

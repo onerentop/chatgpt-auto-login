@@ -48,3 +48,11 @@ test('rowClassFor: 大小写不敏感', () => {
   assert.strictEqual(rowClassFor('PLUS'), 'row-status-success')
   assert.strictEqual(rowClassFor('Running'), 'row-status-running')
 })
+
+test('rowClassFor: v2.38.0 phone_pool_empty 走 warning', () => {
+  assert.strictEqual(rowClassFor('phone_pool_empty'), 'row-status-warning')
+})
+
+test('rowClassFor: v2.38.0 phone_verify_fail 走 danger', () => {
+  assert.strictEqual(rowClassFor('phone_verify_fail'), 'row-status-danger')
+})
