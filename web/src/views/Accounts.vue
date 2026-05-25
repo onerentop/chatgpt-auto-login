@@ -1,105 +1,106 @@
 <template>
-  <div>
-    <!-- v2.28 #6: Row 1 — 数据管理 -->
-    <el-row style="margin-bottom: 8px" :gutter="8" align="middle">
-      <el-button type="primary" @click="showImport = true">批量导入</el-button>
-      <el-button @click="exportAccounts">导出全部</el-button>
-      <el-button :disabled="selected.length === 0" @click="exportSelected">导出选中 ({{ selected.length }})</el-button>
-      <el-button type="success" @click="openAdd">添加单个</el-button>
-      <el-button v-if="selected.length > 0" type="danger" size="small" :loading="batchDeleting" @click="confirmDelSelected">
-        {{ batchDeleting ? '删除中…' : `删除选中 (${selected.length})` }}
-      </el-button>
-    </el-row>
+  <div class="app-stack--lg">
+    <PageHeader title="账号管理" :subtitle="headerSubtitle">
+      <template #actions>
+        <el-button @click="exportAccounts">导出全部</el-button>
+        <el-button type="primary" @click="showImport = true">批量导入</el-button>
+        <el-button type="success" data-hotkey="submit" @click="openAdd">添加单个</el-button>
+      </template>
+    </PageHeader>
 
-    <!-- v2.28 #6: Row 2 — 筛选 -->
-    <el-row style="margin-bottom: 8px" :gutter="8" align="middle">
-      <el-input v-model="search" placeholder="搜索 (邮箱/RT/Client ID/TOTP/密码) — 按 / 聚焦" clearable style="width:280px" data-hotkey="search" />
-      <el-select v-model="statusFilter" placeholder="状态" clearable multiple collapse-tags collapse-tags-tooltip style="width:180px;margin-left:8px">
-        <el-option v-for="opt in EXECUTE_STATUS_FILTER_OPTIONS" :key="opt.value" :label="opt.label" :value="opt.value" />
-      </el-select>
-      <el-select v-model="planFilter" placeholder="Plan" clearable style="width:110px;margin-left:8px">
-        <el-option label="Plus" value="plus" />
-        <el-option label="Free" value="free" />
-        <el-option label="未知" value="unknown" />
-      </el-select>
-      <el-select v-model="authFilter" placeholder="Auth" clearable style="width:110px;margin-left:8px">
-        <el-option label="已生成" value="yes" />
-        <el-option label="未生成" value="no" />
-      </el-select>
-      <el-select v-model="aliveFilter" placeholder="活性" clearable multiple collapse-tags collapse-tags-tooltip size="small" style="width:180px;margin-left:8px">
-        <el-option v-for="o in aliveFilterOptions" :key="o.value" :label="o.label" :value="o.value" />
-      </el-select>
-      <el-button size="small" text @click="aliveFilter = ['unknown']" style="margin-left:8px">仅看未测试</el-button>
-      <el-button size="small" :type="staleOnly ? 'primary' : ''" text @click="staleOnly = !staleOnly">7天未测</el-button>
-      <el-button size="small" text :disabled="!hasAnyFilter" @click="resetFilters">重置筛选</el-button>
-      <el-tag style="margin-left: 8px">{{ filteredAccounts.length }} / {{ accounts.length }}</el-tag>
-      <el-button size="small" style="margin-left: 8px" @click="clearAllSelection">取消选中</el-button>
-    </el-row>
-
-    <!-- v2.28 #6 + #8: Row 3 — 测活 -->
-    <el-row style="margin-bottom: 8px" :gutter="8" align="middle">
-      <el-button size="small" type="primary" :disabled="selected.length === 0 || livenessRunning" @click="startLiveness('selected')">
-        测活选中 ({{ selected.length }})
-      </el-button>
-      <el-button size="small" type="primary" :disabled="livenessRunning" @click="checkAllWithConfirm">
-        测活全部
-      </el-button>
-      <el-button v-if="livenessRunning" size="small" type="danger" @click="stopLiveness">
-        停止测活
-      </el-button>
-      <el-tag v-if="livenessRunning" type="info" size="small" style="margin-left: 8px">
-        {{ socketState.liveness.done }}/{{ socketState.liveness.total }} (✗{{ socketState.liveness.failed }})
-      </el-tag>
-    </el-row>
-
-    <!-- v2.28 #6: Row 4 — 下载 -->
-    <el-row style="margin-bottom: 12px" :gutter="8" align="middle">
-      <el-dropdown :disabled="selected.length === 0" @command="downloadSelectedAs" split-button size="small">
-        下载选中 ({{ selected.length }})
-        <template #dropdown>
-          <el-dropdown-menu>
-            <el-dropdown-item command="cpa">CPA 格式</el-dropdown-item>
-            <el-dropdown-item command="sub2api">Sub2API 格式</el-dropdown-item>
-          </el-dropdown-menu>
-        </template>
-      </el-dropdown>
-      <el-dropdown @command="downloadAllAs" split-button size="small" style="margin-left:8px">
-        下载全部 (ZIP)
-        <template #dropdown>
-          <el-dropdown-menu>
-            <el-dropdown-item command="cpa">CPA 格式</el-dropdown-item>
-            <el-dropdown-item command="sub2api">Sub2API 格式</el-dropdown-item>
-          </el-dropdown-menu>
-        </template>
-      </el-dropdown>
-    </el-row>
-
-    <el-collapse v-model="oldLogsExpanded" style="margin-bottom: 8px">
-      <el-collapse-item :title="`旧日志 (${oldLogs.length})`" name="old">
-        <div class="liveness-log-list">
-          <div v-for="(log, i) in oldLogs" :key="'o-' + i" :class="'log-' + log.level">
-            <span class="log-time">{{ log.timestamp.slice(11, 19) }}</span>
-            <span v-if="log.email" class="log-email">{{ log.email }}</span>
-            <span class="log-msg">{{ log.message }}</span>
-          </div>
-          <div v-if="oldLogs.length === 0" style="color:#c0c4cc; padding: 8px;">暂无历史日志</div>
+    <!-- Toolbar — 筛选 + 选中操作两行 -->
+    <SectionCard flush>
+      <div class="ac-toolbar">
+        <div class="ac-toolbar__row">
+          <el-input v-model="search" placeholder="搜索 (邮箱/RT/Client ID/TOTP/密码) — 按 / 聚焦" clearable
+                    style="width:300px" data-hotkey="search" />
+          <el-select v-model="statusFilter" placeholder="状态" clearable multiple collapse-tags collapse-tags-tooltip style="width:170px">
+            <el-option v-for="opt in EXECUTE_STATUS_FILTER_OPTIONS" :key="opt.value" :label="opt.label" :value="opt.value" />
+          </el-select>
+          <el-select v-model="planFilter" placeholder="Plan" clearable style="width:110px">
+            <el-option label="Plus" value="plus" />
+            <el-option label="Free" value="free" />
+            <el-option label="未知" value="unknown" />
+          </el-select>
+          <el-select v-model="authFilter" placeholder="Auth" clearable style="width:110px">
+            <el-option label="已生成" value="yes" />
+            <el-option label="未生成" value="no" />
+          </el-select>
+          <el-select v-model="aliveFilter" placeholder="活性" clearable multiple collapse-tags collapse-tags-tooltip size="small" style="width:170px">
+            <el-option v-for="o in aliveFilterOptions" :key="o.value" :label="o.label" :value="o.value" />
+          </el-select>
+          <el-button size="small" text @click="aliveFilter = ['unknown']">仅看未测试</el-button>
+          <el-button size="small" :type="staleOnly ? 'primary' : ''" text @click="staleOnly = !staleOnly">7 天未测</el-button>
+          <el-button size="small" text :disabled="!hasAnyFilter" @click="resetFilters">重置</el-button>
+          <span class="app-spacer" />
+          <el-tag round>{{ filteredAccounts.length }} / {{ accounts.length }}</el-tag>
         </div>
-      </el-collapse-item>
-    </el-collapse>
-
-    <el-collapse v-model="newLogsExpanded" style="margin-bottom: 12px">
-      <el-collapse-item :title="`实时日志 (${newLogs.length})`" name="new">
-        <div ref="newLogsContainer" class="liveness-log-list">
-          <div v-for="(log, i) in newLogs" :key="'n-' + i" :class="'log-' + log.level">
-            <span class="log-time">{{ log.timestamp.slice(11, 19) }}</span>
-            <span v-if="log.email" class="log-email">{{ log.email }}</span>
-            <span class="log-msg">{{ log.message }}</span>
-          </div>
-          <div v-if="newLogs.length === 0" style="color:#c0c4cc; padding: 8px;">暂无实时日志</div>
+        <div class="ac-toolbar__row">
+          <el-button :disabled="selected.length === 0" @click="exportSelected">导出选中 ({{ selected.length }})</el-button>
+          <el-dropdown :disabled="selected.length === 0" @command="downloadSelectedAs" split-button size="default">
+            下载选中 ({{ selected.length }})
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="cpa">CPA 格式</el-dropdown-item>
+                <el-dropdown-item command="sub2api">Sub2API 格式</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+          <el-dropdown @command="downloadAllAs" split-button size="default">
+            下载全部 (ZIP)
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="cpa">CPA 格式</el-dropdown-item>
+                <el-dropdown-item command="sub2api">Sub2API 格式</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+          <el-button :disabled="selected.length === 0" @click="clearAllSelection">取消选中</el-button>
+          <el-button v-if="selected.length > 0" type="danger" :loading="batchDeleting" @click="confirmDelSelected">
+            {{ batchDeleting ? '删除中…' : `删除选中 (${selected.length})` }}
+          </el-button>
+          <span class="app-spacer" />
+          <el-divider direction="vertical" />
+          <el-button type="primary" :disabled="selected.length === 0 || livenessRunning" @click="startLiveness('selected')">
+            测活选中 ({{ selected.length }})
+          </el-button>
+          <el-button type="primary" :disabled="livenessRunning" @click="checkAllWithConfirm">测活全部</el-button>
+          <el-button v-if="livenessRunning" type="danger" @click="stopLiveness">停止测活</el-button>
+          <el-tag v-if="livenessRunning" type="info" size="small">
+            {{ socketState.liveness.done }}/{{ socketState.liveness.total }} (✗{{ socketState.liveness.failed }})
+          </el-tag>
         </div>
-      </el-collapse-item>
-    </el-collapse>
+      </div>
+    </SectionCard>
 
+    <SectionCard v-if="oldLogs.length > 0 || newLogs.length > 0" title="测活日志" flush>
+      <el-collapse v-model="oldLogsExpanded">
+        <el-collapse-item :title="`旧日志 (${oldLogs.length})`" name="old">
+          <div class="liveness-log-list">
+            <div v-for="(log, i) in oldLogs" :key="'o-' + i" :class="'log-' + log.level">
+              <span class="log-time">{{ log.timestamp.slice(11, 19) }}</span>
+              <span v-if="log.email" class="log-email">{{ log.email }}</span>
+              <span class="log-msg">{{ log.message }}</span>
+            </div>
+            <div v-if="oldLogs.length === 0" style="color:var(--app-text-mute);padding:var(--sp-2)">暂无历史日志</div>
+          </div>
+        </el-collapse-item>
+      </el-collapse>
+      <el-collapse v-model="newLogsExpanded">
+        <el-collapse-item :title="`实时日志 (${newLogs.length})`" name="new">
+          <div ref="newLogsContainer" class="liveness-log-list">
+            <div v-for="(log, i) in newLogs" :key="'n-' + i" :class="'log-' + log.level">
+              <span class="log-time">{{ log.timestamp.slice(11, 19) }}</span>
+              <span v-if="log.email" class="log-email">{{ log.email }}</span>
+              <span class="log-msg">{{ log.message }}</span>
+            </div>
+            <div v-if="newLogs.length === 0" style="color:var(--app-text-mute);padding:var(--sp-2)">暂无实时日志</div>
+          </div>
+        </el-collapse-item>
+      </el-collapse>
+    </SectionCard>
+
+    <SectionCard flush>
     <el-table ref="tableRef" :data="filteredAccounts" stripe border size="small" row-key="email" :row-class-name="rowClass" @selection-change="onSelectionChange" @row-click="onRowClick">
       <el-table-column type="selection" width="45" :reserve-selection="true" />
       <el-table-column type="index" label="#" width="50" />
@@ -195,6 +196,7 @@
         </template>
       </el-table-column>
     </el-table>
+    </SectionCard>
 
     <!-- Import Dialog -->
     <el-dialog v-model="showImport" title="批量导入" width="650">
@@ -233,6 +235,8 @@ import { socketState } from '../socket'
 import { getSelectionSet, setSelectionFromRows, clearSelection } from '../selection'
 import { useUrlSyncedFilters } from '../composables/useUrlSyncedFilters'
 import { confirmDanger } from '../composables/useConfirmDanger'
+import PageHeader from '../components/ui/PageHeader.vue'
+import SectionCard from '../components/ui/SectionCard.vue'
 
 const tableRef = ref(null)
 const accounts = ref([])
@@ -253,6 +257,15 @@ useUrlSyncedFilters({
   auth: authFilter,
   alive: aliveFilter,
   stale: staleOnly,
+})
+
+// PageHeader subtitle — live tally of account groups; updates as the
+// underlying accounts list mutates (import / delete / edit).
+const headerSubtitle = computed(() => {
+  const total = accounts.value.length
+  const plus = accounts.value.filter((a) => PLUS_STATUSES.includes((a._status || '').toLowerCase())).length
+  const err = accounts.value.filter((a) => ERROR_STATUSES.includes((a._status || '').toLowerCase())).length
+  return `共 ${total} 个 · Plus ${plus} · 失败 ${err}`
 })
 
 const hasAnyFilter = computed(() =>
@@ -615,26 +628,47 @@ async function downloadSelectedAs(format) {
 </script>
 
 <style scoped>
-:deep(.el-table__body tr) {
-  cursor: pointer;
+:deep(.el-table__body tr) { cursor: pointer; }
+
+/* Toolbar — two rows of filters + actions; gap pulled from token scale. */
+.ac-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
 }
-.liveness-log-list { max-height: 300px; overflow-y: auto; font-family: monospace; font-size: 12px; padding: 4px 8px; background: #fafafa; border-radius: 4px; }
+.ac-toolbar__row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+}
+
+.liveness-log-list {
+  max-height: 300px;
+  overflow-y: auto;
+  font-family: var(--ff-mono);
+  font-size: var(--fs-sm);
+  padding: var(--sp-1) var(--sp-2);
+  background: var(--app-surface-2);
+  border-radius: var(--rad-sm);
+}
 .liveness-log-list > div { padding: 2px 0; }
-.log-time { color: #909399; margin-right: 8px; }
-.log-email { color: #409EFF; margin-right: 8px; }
-.log-msg { color: #303133; }
-.log-success .log-msg { color: #67C23A; }
-.log-warning .log-msg { color: #E6A23C; }
-.log-error .log-msg { color: #F56C6C; }
-.log-info .log-msg { color: #909399; }
+.log-time  { color: var(--app-text-mute); margin-right: var(--sp-2); }
+.log-email { color: var(--app-brand);     margin-right: var(--sp-2); }
+.log-msg   { color: var(--app-text); }
+.log-success .log-msg { color: var(--app-success); }
+.log-warning .log-msg { color: var(--app-warning); }
+.log-error   .log-msg { color: var(--app-danger); }
+.log-info    .log-msg { color: var(--app-text-3); }
 
-/* v2.33.0: 运行时整行高亮，对应 rowClassFor 返回 */
-:deep(.row-status-success td) { background-color: #f0f9eb !important; }
-:deep(.row-status-warning td) { background-color: #fdf6ec !important; }
-:deep(.row-status-danger  td) { background-color: #fef0f0 !important; }
-:deep(.row-status-info    td) { background-color: #f4f4f5 !important; }
+/* v2.33 row highlights — colors now sourced from tokens so dark mode auto-applies */
+:deep(.row-status-success td) { background-color: var(--app-row-success) !important; }
+:deep(.row-status-warning td) { background-color: var(--app-row-warning) !important; }
+:deep(.row-status-danger  td) { background-color: var(--app-row-danger)  !important; }
+:deep(.row-status-info    td) { background-color: var(--app-row-info)    !important; }
 
-/* v2.33.1: running 专属浅蓝 + 左边框，避免与多状态共用的 warning 撞色 */
-:deep(.row-status-running td) { background-color: #ecf5ff !important; }
-:deep(.row-status-running td:first-child) { border-left: 4px solid #409eff !important; }
+/* v2.33.1: running 专属浅蓝 + 左边框 */
+:deep(.row-status-running td) { background-color: rgba(64, 158, 255, 0.10) !important; }
+:deep(.row-status-running td:first-child) { border-left: 4px solid var(--app-brand) !important; }
 </style>
