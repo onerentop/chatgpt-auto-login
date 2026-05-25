@@ -56,6 +56,24 @@
               </div>
             </div>
           </el-popover>
+          <el-divider direction="vertical" />
+          <!-- v2.41.2: 分组/平铺切换 + 分组维度选择（参照 Execute v2.34.0） -->
+          <el-switch
+            v-model="groupingEnabled"
+            active-text="分组"
+            inactive-text="平铺"
+            inline-prompt
+          />
+          <el-select
+            v-if="groupingEnabled"
+            v-model="groupBy"
+            placeholder="分组方式"
+            style="width:130px"
+          >
+            <el-option label="按 Plan" value="plan" />
+            <el-option label="按 活性" value="alive_status" />
+            <el-option label="按 登录类型" value="loginType" />
+          </el-select>
           <span class="app-spacer" />
           <el-tag round>{{ filteredAccounts.length }} / {{ accounts.length }}</el-tag>
         </div>
@@ -126,102 +144,41 @@
       </el-collapse>
     </SectionCard>
 
+    <!-- v2.41.2: 分组视图（collapse 多 table）/ 平铺视图（单 table）切换 -->
     <SectionCard flush>
-    <el-table ref="tableRef" :data="filteredAccounts" stripe border size="small" row-key="email" :row-class-name="rowClass" @selection-change="onSelectionChange" @row-click="onRowClick">
-      <el-table-column type="selection" width="45" :reserve-selection="true" />
-      <el-table-column type="index" label="#" width="50" />
-      <el-table-column prop="email" label="邮箱" min-width="220" />
-      <el-table-column prop="loginType" label="类型" width="90">
-        <template #default="{ row }">
-          <el-tag :type="row.loginType === 'Google' ? 'danger' : 'warning'" size="small">{{ row.loginType }}</el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column label="计划" width="80">
-        <template #default="{ row }">
-          <el-tag v-if="row._plan === 'plus'" type="success" size="small">Plus</el-tag>
-          <el-tag v-else-if="row._plan === 'free'" size="small">Free</el-tag>
-          <span v-else style="color:#c0c4cc">-</span>
-        </template>
-      </el-table-column>
-      <el-table-column label="活性" width="120">
-        <template #default="{ row }">
-          <el-tooltip v-if="row._aliveReason" :content="row._aliveReason" placement="top">
-            <el-tag :type="aliveStatusType(row._aliveStatus)" size="small">
-              {{ aliveStatusLabel(row._aliveStatus) }}
-            </el-tag>
-          </el-tooltip>
-          <el-tag v-else :type="aliveStatusType(row._aliveStatus)" size="small">
-            {{ aliveStatusLabel(row._aliveStatus) }}
-          </el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column label="上次测活" width="120">
-        <template #default="{ row }">
-          <span v-if="row._aliveCheckedAt" :title="row._aliveCheckedAt" style="color:#909399">
-            {{ formatRelative(row._aliveCheckedAt) }}
-          </span>
-          <span v-else style="color:#c0c4cc">-</span>
-        </template>
-      </el-table-column>
-      <el-table-column label="密码" width="150">
-        <template #default="{ row }">
-          <span style="font-family:monospace">{{ row._showPw ? row.password : '••••••' }}</span>
-          <el-button size="small" text @click.stop="row._showPw = !row._showPw">{{ row._showPw ? '隐' : '显' }}</el-button>
-        </template>
-      </el-table-column>
-      <el-table-column label="凭证" width="120">
-        <template #default="{ row }">
-          <!-- 三个圆点：是否设置。绿=有 灰=空。点击 '查' 弹出 popover
-               展示完整字段 + 复制按钮，避免主表挤 4 个长字段列。 -->
-          <span style="display:inline-flex;gap:4px;align-items:center">
-            <span title="TOTP" :style="{ display:'inline-block', width:'8px', height:'8px', borderRadius:'50%', background: row.totp_secret ? '#67c23a' : '#dcdfe6' }" />
-            <span title="Client ID" :style="{ display:'inline-block', width:'8px', height:'8px', borderRadius:'50%', background: row.client_id ? '#67c23a' : '#dcdfe6' }" />
-            <span title="Refresh Token" :style="{ display:'inline-block', width:'8px', height:'8px', borderRadius:'50%', background: row.refresh_token ? '#67c23a' : '#dcdfe6' }" />
-            <el-popover placement="left" :width="420" trigger="click">
-              <template #reference>
-                <el-button size="small" text style="margin-left:4px">查</el-button>
-              </template>
-              <div style="display:flex;flex-direction:column;gap:8px;font-size:13px">
-                <div>
-                  <strong style="display:block;color:#606266;font-size:12px;margin-bottom:2px">TOTP 密钥</strong>
-                  <div v-if="row.totp_secret" style="display:flex;gap:6px;align-items:center">
-                    <code style="font-family:monospace;background:#f5f7fa;padding:2px 6px;border-radius:3px;flex:1;overflow-wrap:break-word">{{ row.totp_secret }}</code>
-                    <el-button size="small" @click="copyToClipboard(row.totp_secret, 'TOTP')">复制</el-button>
-                  </div>
-                  <span v-else style="color:#c0c4cc">未设置</span>
-                </div>
-                <div>
-                  <strong style="display:block;color:#606266;font-size:12px;margin-bottom:2px">Client ID</strong>
-                  <div v-if="row.client_id" style="display:flex;gap:6px;align-items:center">
-                    <code style="font-family:monospace;background:#f5f7fa;padding:2px 6px;border-radius:3px;flex:1;overflow-wrap:break-word">{{ row.client_id }}</code>
-                    <el-button size="small" @click="copyToClipboard(row.client_id, 'Client ID')">复制</el-button>
-                  </div>
-                  <span v-else style="color:#c0c4cc">未设置</span>
-                </div>
-                <div>
-                  <strong style="display:block;color:#606266;font-size:12px;margin-bottom:2px">Refresh Token</strong>
-                  <div v-if="row.refresh_token" style="display:flex;gap:6px;align-items:center">
-                    <code style="font-family:monospace;background:#f5f7fa;padding:2px 6px;border-radius:3px;flex:1;overflow-wrap:break-word;word-break:break-all;max-height:80px;overflow-y:auto">{{ row.refresh_token }}</code>
-                    <el-button size="small" @click="copyToClipboard(row.refresh_token, 'Refresh Token')">复制</el-button>
-                  </div>
-                  <span v-else style="color:#c0c4cc">未设置</span>
-                </div>
-              </div>
-            </el-popover>
-          </span>
-        </template>
-      </el-table-column>
-      <el-table-column label="操作" width="240">
-        <template #default="{ row }">
-          <el-button size="small" text type="success" :disabled="!row._hasAuth" @click.stop="downloadAuth(row.email, 'cpa')">CPA</el-button>
-          <el-button size="small" text type="primary" :disabled="!row._hasAuth" @click.stop="downloadAuth(row.email, 'sub2api')">Sub</el-button>
-          <el-button size="small" text type="primary" @click="openEdit(row)">编辑</el-button>
-          <el-popconfirm title="确定删除?" @confirm="del(row.email)">
-            <template #reference><el-button size="small" text type="danger">删除</el-button></template>
-          </el-popconfirm>
-        </template>
-      </el-table-column>
-    </el-table>
+      <el-collapse v-if="groupingEnabled" v-model="expandedKeys" style="margin-top:0">
+        <el-collapse-item v-for="g in visibleGroups" :key="g.key" :name="g.key">
+          <template #title>
+            <div style="display:flex;align-items:center;gap:8px;padding:0 8px">
+              <el-tag size="small" :type="g.tagType || ''">{{ g.label }}</el-tag>
+              <span style="color:#909399;font-size:13px">共 {{ g.rows.length }} 个</span>
+            </div>
+          </template>
+          <AccountsTable
+            :ref="el => { if (el) groupRefs[g.key] = el }"
+            :rows="g.rows"
+            :global-selected-set="globalSelectedSet"
+            @selection-change="onGroupSelectionChange(g.key, $event)"
+            @row-click="onRowClick"
+            @edit="openEdit"
+            @delete="del"
+            @auth-download="onAuthDownload"
+            @copy="onCopy"
+          />
+        </el-collapse-item>
+      </el-collapse>
+      <AccountsTable
+        v-else
+        ref="flatTableRef"
+        :rows="filteredAccounts"
+        :global-selected-set="globalSelectedSet"
+        @selection-change="onFlatSelectionChange"
+        @row-click="onRowClick"
+        @edit="openEdit"
+        @delete="del"
+        @auth-download="onAuthDownload"
+        @copy="onCopy"
+      />
     </SectionCard>
 
     <!-- Import Dialog -->
@@ -257,24 +214,36 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { DocumentCopy } from '@element-plus/icons-vue'
 import api from '../api'
-import { PLUS_STATUSES, ERROR_STATUSES, aliveStatusType, aliveStatusLabel, ALIVE_FILTER_OPTIONS, EXECUTE_STATUS_FILTER_OPTIONS, rowClassFor } from '../status'
+import { PLUS_STATUSES, ERROR_STATUSES, aliveStatusType, aliveStatusLabel, ALIVE_FILTER_OPTIONS, EXECUTE_STATUS_FILTER_OPTIONS } from '../status'
 import { socketState } from '../socket'
-import { getSelectionSet, setSelectionFromRows, clearSelection } from '../selection'
+import { getSelectionSet, clearSelection } from '../selection'
 import { useUrlSyncedFilters } from '../composables/useUrlSyncedFilters'
 import { confirmDanger } from '../composables/useConfirmDanger'
 import PageHeader from '../components/ui/PageHeader.vue'
 import SectionCard from '../components/ui/SectionCard.vue'
 import ContextActionBar from '../components/ui/ContextActionBar.vue'
+import AccountsTable from '../components/AccountsTable.vue'
 
-const tableRef = ref(null)
+// 平铺视图下指向单个 AccountsTable；分组视图下指向 ref map（每组一个）。
+const flatTableRef = ref(null)
+const groupRefs = ref({})
 const accounts = ref([])
+// selected 数组用于既有按钮逻辑（导出/下载/测活/删除）；其底层来源已迁移到
+// globalSelectedSet（跨组跨视图的真实选中集），两者通过 syncSelectedFromGlobal
+// 单向保持同步。保留 ref 形态以最小化对其他函数的改动。
 const selected = ref([])
+const globalSelectedSet = getSelectionSet('accounts')
 const search = ref('')
 const statusFilter = ref([])
 const planFilter = ref('')
 const authFilter = ref('')
 const aliveFilter = ref([])
 const staleOnly = ref(false)
+
+// v2.41.2: 分组开关 + 分组维度（参照 Execute v2.34.0 分组模式）
+const groupingEnabled = ref(false)  // 默认平铺，保持兼容
+const groupBy = ref('plan')  // 默认按 plan 分组
+const expandedKeys = ref([])  // 分组视图默认全展开（在 visibleGroups 变化时同步）
 
 // FX-8: persist all 6 filter refs in the URL so reloading the page (or
 // pasting the URL to a colleague) keeps the filter state.
@@ -367,6 +336,73 @@ const filteredAccounts = computed(() => {
     return true
   })
 })
+// v2.41.2: 分组维度计算 —— 三个维度（plan / alive_status / loginType）
+// 每个维度都把空 / 未知值归到独立 key，避免被丢弃。组按 count 倒序展示，
+// 让数量最多的组排前。
+function groupKeyOf(row) {
+  if (groupBy.value === 'plan') {
+    return row._plan || 'unknown'
+  } else if (groupBy.value === 'alive_status') {
+    return row._aliveStatus || 'unknown'
+  } else {  // loginType
+    return (row.loginType || 'other').toLowerCase()
+  }
+}
+
+function groupLabelOf(key) {
+  if (groupBy.value === 'plan') {
+    if (key === 'plus') return 'Plus'
+    if (key === 'free') return 'Free'
+    return '未知'
+  } else if (groupBy.value === 'alive_status') {
+    // 复用 status.js 的活性标签（Plus / 已取消 / 已删除 / Token过期 / ...
+    // 未测试 / 检测中 等），保持单一来源
+    return aliveStatusLabel(key)
+  } else {  // loginType
+    if (key === 'outlook') return 'Outlook'
+    if (key === 'google') return 'Google'
+    return '其它'
+  }
+}
+
+function groupTagTypeOf(key) {
+  if (groupBy.value === 'plan') {
+    if (key === 'plus') return 'success'
+    if (key === 'free') return ''
+    return 'info'
+  } else if (groupBy.value === 'alive_status') {
+    return aliveStatusType(key)
+  } else {  // loginType
+    if (key === 'outlook') return 'warning'
+    if (key === 'google') return 'danger'
+    return 'info'
+  }
+}
+
+const visibleGroups = computed(() => {
+  const groups = new Map()
+  for (const a of filteredAccounts.value) {
+    const key = groupKeyOf(a)
+    if (!groups.has(key)) {
+      groups.set(key, { key, label: groupLabelOf(key), tagType: groupTagTypeOf(key), rows: [] })
+    }
+    groups.get(key).rows.push(a)
+  }
+  return Array.from(groups.values()).sort((a, b) => b.rows.length - a.rows.length)
+})
+
+// 分组视图默认全展开 —— visibleGroups 变化（或切换 groupBy）时把所有
+// key 灌进 expandedKeys；用户手动收起的状态会在下一次重算时被覆盖，
+// 与 Execute 的 expandedKeys 行为一致（页面级 DEFAULT_EXPANDED_STATUSES）。
+watch(visibleGroups, (groups) => {
+  expandedKeys.value = groups.map(g => g.key)
+}, { immediate: true })
+
+// 切换分组维度时清空 groupRefs（旧 key 已无意义；新的 ref 由模板渲染时填充）
+watch(groupBy, () => {
+  groupRefs.value = {}
+})
+
 const showImport = ref(false)
 const showEdit = ref(false)
 const editMode = ref(false)
@@ -464,11 +500,6 @@ watch(() => socketState.accountStatuses, (statuses) => {
   }
 }, { deep: true })
 
-// v2.33.0: el-table :row-class-name 钩子，按 row._status 上色
-function rowClass({ row }) {
-  return rowClassFor(row._status)
-}
-
 function openAdd() {
   editMode.value = false
   form.value = { email: '', password: '', totp_secret: '', client_id: '', refresh_token: '' }
@@ -511,37 +542,52 @@ async function del(email) {
   catch { ElMessage.error('删除失败') }
 }
 
-function onSelectionChange(rows) {
-  selected.value = rows
-  setSelectionFromRows('accounts', rows)
+// 平铺视图：单 table 管理全部行，全局选择即所选 rows
+function onFlatSelectionChange(rows) {
+  clearSelection('accounts')
+  for (const r of rows) globalSelectedSet.add(r.email)
+  syncSelectedFromGlobal()
+}
+
+// 分组视图：本组的选中变化合并到全局 Set（参照 Execute.onGroupSelectionChange）。
+// 先移除本组所有 emails，再加入本次 rows 的 emails。
+function onGroupSelectionChange(groupKey, rows) {
+  const group = visibleGroups.value.find(g => g.key === groupKey)
+  const groupEmails = new Set((group?.rows || []).map(r => r.email))
+  for (const email of Array.from(globalSelectedSet)) {
+    if (groupEmails.has(email)) globalSelectedSet.delete(email)
+  }
+  for (const r of rows) globalSelectedSet.add(r.email)
+  syncSelectedFromGlobal()
+}
+
+// 把 globalSelectedSet 投影回 selected 数组（既有按钮逻辑读取 selected）。
+function syncSelectedFromGlobal() {
+  const set = globalSelectedSet
+  selected.value = accounts.value.filter(a => set.has(a.email))
 }
 
 function clearAllSelection() {
-  tableRef.value?.clearSelection()
   clearSelection('accounts')
+  // 平铺和分组各自的 table 都得 clear（确保 el-table 内置 selection 同步）
+  flatTableRef.value?.clearSelection?.()
+  for (const ref of Object.values(groupRefs.value)) {
+    ref?.clearSelection?.()
+  }
   selected.value = []
 }
 
+// 页面 load 后回填选中：globalSelectedSet 已是源；AccountsTable 内部 watch
+// rows 时会按 Set 自动 toggle，因此只需要把 selected 数组同步出来即可。
 function restoreSelection() {
-  const saved = getSelectionSet('accounts')
-  if (saved.size === 0 || !tableRef.value) return
+  const saved = globalSelectedSet
+  if (saved.size === 0) return
   nextTick(() => {
-    for (const row of accounts.value) {
-      if (saved.has(row.email)) tableRef.value.toggleRowSelection(row, true)
-    }
+    syncSelectedFromGlobal()
   })
 }
 
 const livenessRunning = computed(() => socketState.liveness.running)
-
-function formatRelative(iso) {
-  if (!iso) return '-'
-  const ms = Date.now() - new Date(iso).getTime()
-  if (ms < 60_000) return '刚刚'
-  if (ms < 3_600_000) return Math.floor(ms / 60_000) + ' 分钟前'
-  if (ms < 86_400_000) return Math.floor(ms / 3_600_000) + ' 小时前'
-  return Math.floor(ms / 86_400_000) + ' 天前'
-}
 
 async function startLiveness(scope) {
   const body = scope === 'selected'
@@ -583,10 +629,26 @@ async function checkAllWithConfirm() {
   startLiveness('all')
 }
 
-function onRowClick(row, column, event) {
+// AccountsTable 子组件 emit 包装成 { row, column, event } 对象，
+// 平铺视图和分组视图共用同一 handler；toggleRowSelection 走到对应的 table
+// 实例（平铺用 flatTableRef；分组按 row 当前所属组 key 路由）。
+function onRowClick({ row, column, event }) {
   if (column?.type === 'selection') return
   if (event?.target?.closest('.el-button, .el-dropdown, .el-popconfirm, a')) return
-  tableRef.value?.toggleRowSelection(row)
+  if (groupingEnabled.value) {
+    const key = groupKeyOf(row)
+    groupRefs.value[key]?.toggleRowSelection?.(row)
+  } else {
+    flatTableRef.value?.toggleRowSelection?.(row)
+  }
+}
+
+// 复制 / 下载 / row-action emit 透传
+async function onCopy({ text, label }) {
+  await copyToClipboard(text, label)
+}
+function onAuthDownload({ email, format }) {
+  downloadAuth(email, format)
 }
 
 function exportAccounts() { window.open('/api/accounts/export') }
@@ -683,10 +745,9 @@ async function downloadSelectedAs(format) {
 </script>
 
 <style scoped>
-:deep(.el-table__body tr) { cursor: pointer; }
-
 /* Toolbar — v2.35: one filter row + one liveness/global-action row.
- * Bulk per-selection actions moved to ContextActionBar (bottom slide-in). */
+ * Bulk per-selection actions moved to ContextActionBar (bottom slide-in).
+ * v2.41.2: el-table 相关样式（cursor / 行高亮）已迁到 AccountsTable.vue。 */
 .ac-toolbar {
   display: flex;
   flex-direction: column;
@@ -747,14 +808,4 @@ async function downloadSelectedAs(format) {
 .log-warning .log-msg { color: var(--app-warning); }
 .log-error   .log-msg { color: var(--app-danger); }
 .log-info    .log-msg { color: var(--app-text-3); }
-
-/* v2.33 row highlights — colors now sourced from tokens so dark mode auto-applies */
-:deep(.row-status-success td) { background-color: var(--app-row-success) !important; }
-:deep(.row-status-warning td) { background-color: var(--app-row-warning) !important; }
-:deep(.row-status-danger  td) { background-color: var(--app-row-danger)  !important; }
-:deep(.row-status-info    td) { background-color: var(--app-row-info)    !important; }
-
-/* v2.33.1: running 专属浅蓝 + 左边框 */
-:deep(.row-status-running td) { background-color: rgba(64, 158, 255, 0.10) !important; }
-:deep(.row-status-running td:first-child) { border-left: 4px solid var(--app-brand) !important; }
 </style>
