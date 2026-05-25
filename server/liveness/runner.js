@@ -86,6 +86,7 @@ function createRunner({ io, statusDB, accountsDB, checker, lightLogin, codexFile
         try {
           const fresh = await lightLogin(account, {
             protocolMode: config.protocolMode,
+            proxyUrl: getProxyMgr()?.getProxyUrl(),
             signal: abortSignal,
           });
           await codexFile.write(email, {
