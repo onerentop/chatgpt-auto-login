@@ -47,6 +47,9 @@
           <el-menu-item index="/results">
             <el-icon><Document /></el-icon><span>执行结果</span>
           </el-menu-item>
+          <el-menu-item index="/phone-pool">
+            <el-icon><Iphone /></el-icon><span>号池</span>
+          </el-menu-item>
           <el-menu-item index="/config">
             <el-icon><Setting /></el-icon><span>配置设置</span>
           </el-menu-item>
@@ -115,7 +118,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Monitor, User, Setting, VideoPlay, Document, Moon, Sunny, Bell, Search } from '@element-plus/icons-vue'
+import { Monitor, User, Setting, VideoPlay, Document, Moon, Sunny, Bell, Search, Iphone } from '@element-plus/icons-vue'
 import { socketState, reconnectSocket } from '../socket'
 import CommandPalette from './ui/CommandPalette.vue'
 import PipelineHUD from './ui/PipelineHUD.vue'

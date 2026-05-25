@@ -26,6 +26,12 @@ const routes = [
     meta: { title: '执行结果' },
   },
   {
+    path: '/phone-pool',
+    name: 'PhonePool',
+    component: () => import('./views/PhonePool.vue'),
+    meta: { title: '号池' },
+  },
+  {
     path: '/config',
     name: 'Config',
     component: () => import('./views/Config.vue'),

@@ -20,6 +20,25 @@
         </el-form>
       </el-tab-pane>
 
+      <el-tab-pane label="号池" name="phone-pool">
+        <el-form :model="form" label-width="160px" style="max-width: 600px">
+          <el-divider content-position="left">号池</el-divider>
+          <el-form-item label="启用号池">
+            <el-switch v-model="form.phonePool.enabled" />
+            <span style="margin-left:8px;color:#909399;font-size:12px">PKCE 撞手机验证时从池里取号（Phase 2 接通）</span>
+          </el-form-item>
+          <el-form-item label="每号最大绑定数">
+            <el-input-number v-model="form.phonePool.maxBindingsPerPhone" :min="1" :max="100" />
+          </el-form-item>
+          <el-form-item label="SMS 轮询间隔 (ms)">
+            <el-input-number v-model="form.phonePool.smsPollIntervalMs" :min="500" :max="60000" :step="500" />
+          </el-form-item>
+          <el-form-item label="SMS 最多尝试次数">
+            <el-input-number v-model="form.phonePool.smsMaxAttempts" :min="1" :max="100" />
+          </el-form-item>
+        </el-form>
+      </el-tab-pane>
+
       <el-tab-pane label="执行" name="execute">
         <el-form :model="form" label-width="160px" style="max-width: 600px">
           <el-form-item label="协议注册模式">
@@ -314,6 +333,7 @@ const form = reactive({
   proxyJpEnabled: true,
   proxyJpKeyword: 'KDDI',
   proxyJpWhitelist: [],
+  phonePool: { enabled: false, maxBindingsPerPhone: 5, smsPollIntervalMs: 3000, smsMaxAttempts: 30 },
 })
 
 onMounted(async () => {
@@ -337,6 +357,16 @@ onMounted(async () => {
         if (cfg.proxy.jpCheckout.keyword !== undefined) form.proxyJpKeyword = cfg.proxy.jpCheckout.keyword
         if (Array.isArray(cfg.proxy.jpCheckout.whitelist)) form.proxyJpWhitelist = cfg.proxy.jpCheckout.whitelist
       }
+    }
+    if (cfg.phonePool) {
+      form.phonePool = {
+        enabled: cfg.phonePool.enabled ?? false,
+        maxBindingsPerPhone: cfg.phonePool.maxBindingsPerPhone ?? 5,
+        smsPollIntervalMs: cfg.phonePool.smsPollIntervalMs ?? 3000,
+        smsMaxAttempts: cfg.phonePool.smsMaxAttempts ?? 30,
+      }
+    } else {
+      form.phonePool = { enabled: false, maxBindingsPerPhone: 5, smsPollIntervalMs: 3000, smsMaxAttempts: 30 }
     }
   } catch (err) {
     console.error('Failed to load config:', err)
