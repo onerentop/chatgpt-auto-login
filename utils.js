@@ -530,6 +530,14 @@ async function fetchTokensViaPKCE(browser, account, lastOtp) {
 
   // Exchange code for tokens
   try {
+    // v2.40.9: token exchange 必须走代理（Node 默认 fetch 不读 HTTPS_PROXY / 系统代理 → 直连）
+    let _exchangeAgent;
+    try {
+      const _proxyState = require('./server/proxy').getState?.();
+      if (_proxyState?.enabled) {
+        _exchangeAgent = new (require('https-proxy-agent').HttpsProxyAgent)('http://127.0.0.1:7890');
+      }
+    } catch {}
     const res = await fetch('https://auth.openai.com/oauth/token', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -540,6 +548,7 @@ async function fetchTokensViaPKCE(browser, account, lastOtp) {
         code_verifier: codeVerifier,
         redirect_uri: redirectUri,
       }),
+      agent: _exchangeAgent,
     });
     const tokens = await res.json();
     if (tokens.access_token) {
