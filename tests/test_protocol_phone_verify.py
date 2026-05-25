@@ -46,9 +46,9 @@ class TestProtocolPhoneVerify(unittest.TestCase):
 
         # Mock curl_cffi session
         fake_session = MagicMock()
-        # phone-start: 200 + sms prompt
-        phone_start_resp = MagicMock(ok=True, status_code=200, text='{"page":{"type":"phone_sms_code"}}')
-        phone_start_resp.json.return_value = {"page": {"type": "phone_sms_code"}}
+        # phone-start: 200 + continue_url (Phase 0 校准：has_sms_prompt 依据 continue_url 判定)
+        phone_start_resp = MagicMock(ok=True, status_code=200, text='{"continue_url":"https://auth.openai.com/add-phone-verify"}')
+        phone_start_resp.json.return_value = {"continue_url": "https://auth.openai.com/add-phone-verify", "method": "GET", "page": {"type": "sms_phone_verify"}}
         # phone-validate: 200 + continue_url
         validate_resp = MagicMock(ok=True, status_code=200, text='{"continue_url":"https://auth.openai.com/cont"}')
         validate_resp.json.return_value = {"continue_url": "https://auth.openai.com/cont"}
@@ -59,10 +59,8 @@ class TestProtocolPhoneVerify(unittest.TestCase):
         # Mock rebuild_session 返回 fake_session
         # Mock follow_continue_for_auth_code 返回 "test-code"
         # Mock exchange_code 返回 tokens
-        # Mock get_sentinel_token 返回 ""
         # Mock poll_sms 返回 "123456"
         with patch.object(pv, "rebuild_session", return_value=fake_session), \
-             patch.object(pv, "get_sentinel_token", return_value="sentinel-tok"), \
              patch.object(pv, "follow_continue_for_auth_code", return_value="test-auth-code"), \
              patch.object(pv, "exchange_code", return_value={"access_token": "AT", "refresh_token": "RT", "id_token": "ID"}), \
              patch.object(pv, "poll_sms", return_value="123456"):
@@ -79,7 +77,7 @@ class TestProtocolPhoneVerify(unittest.TestCase):
 
         fake_session = MagicMock()
         ps_resp = MagicMock(ok=True, status_code=200)
-        ps_resp.json.return_value = {"page": {"type": "phone_sms_code"}}
+        ps_resp.json.return_value = {"continue_url": "https://auth.openai.com/add-phone-verify", "method": "GET", "page": {"type": "sms_phone_verify"}}
         val_resp = MagicMock(ok=True, status_code=200)
         val_resp.json.return_value = {"continue_url": "https://auth.openai.com/cont"}
         fake_session.post.side_effect = [ps_resp, val_resp]
@@ -95,7 +93,6 @@ class TestProtocolPhoneVerify(unittest.TestCase):
         })
 
         with patch.object(pv, "rebuild_session", return_value=fake_session), \
-             patch.object(pv, "get_sentinel_token", return_value=""), \
              patch.object(pv, "follow_continue_for_auth_code", return_value="code-x"), \
              patch.object(pv, "exchange_code", return_value={"access_token": "AT", "refresh_token": "RT", "id_token": "ID"}), \
              patch.object(pv, "poll_sms", return_value="654321"):
@@ -109,14 +106,13 @@ class TestProtocolPhoneVerify(unittest.TestCase):
         import protocol_phone_verify as pv
 
         fake_session = MagicMock()
-        reject_resp = MagicMock(ok=False, status_code=400, text='{"error":"phone_send_failed"}')
-        reject_resp.json.return_value = {"error": "phone_send_failed"}
+        reject_resp = MagicMock(ok=False, status_code=400, text='{"error":{"type":"invalid_request_error","code":"voip_phone_disallowed"}}')
+        reject_resp.json.return_value = {"error": {"type": "invalid_request_error", "code": "voip_phone_disallowed"}}
         fake_session.post.return_value = reject_resp
         fake_session.headers = {}
         fake_session.cookies = MagicMock()
 
-        with patch.object(pv, "rebuild_session", return_value=fake_session), \
-             patch.object(pv, "get_sentinel_token", return_value=""):
+        with patch.object(pv, "rebuild_session", return_value=fake_session):
             result = self._run_with_input(self._build_input())
 
         self.assertEqual(result["status"], "phone-rejected")
@@ -130,13 +126,12 @@ class TestProtocolPhoneVerify(unittest.TestCase):
 
         fake_session = MagicMock()
         ps_resp = MagicMock(ok=True, status_code=200)
-        ps_resp.json.return_value = {"page": {"type": "phone_sms_code"}}
+        ps_resp.json.return_value = {"continue_url": "https://auth.openai.com/add-phone-verify", "method": "GET", "page": {"type": "sms_phone_verify"}}
         fake_session.post.return_value = ps_resp
         fake_session.headers = {}
         fake_session.cookies = MagicMock()
 
         with patch.object(pv, "rebuild_session", return_value=fake_session), \
-             patch.object(pv, "get_sentinel_token", return_value=""), \
              patch.object(pv, "poll_sms", return_value=None):
             result = self._run_with_input(self._build_input())
 
@@ -150,14 +145,13 @@ class TestProtocolPhoneVerify(unittest.TestCase):
 
         fake_session = MagicMock()
         ps_resp = MagicMock(ok=True, status_code=200)
-        ps_resp.json.return_value = {"page": {"type": "phone_sms_code"}}
+        ps_resp.json.return_value = {"continue_url": "https://auth.openai.com/add-phone-verify", "method": "GET", "page": {"type": "sms_phone_verify"}}
         val_resp = MagicMock(ok=False, status_code=400, text='{"error":"invalid_code"}')
         fake_session.post.side_effect = [ps_resp, val_resp]
         fake_session.headers = {}
         fake_session.cookies = MagicMock()
 
         with patch.object(pv, "rebuild_session", return_value=fake_session), \
-             patch.object(pv, "get_sentinel_token", return_value=""), \
              patch.object(pv, "poll_sms", return_value="123456"):
             result = self._run_with_input(self._build_input())
 
@@ -169,7 +163,7 @@ class TestProtocolPhoneVerify(unittest.TestCase):
 
         fake_session = MagicMock()
         ps_resp = MagicMock(ok=True, status_code=200)
-        ps_resp.json.return_value = {"page": {"type": "phone_sms_code"}}
+        ps_resp.json.return_value = {"continue_url": "https://auth.openai.com/add-phone-verify", "method": "GET", "page": {"type": "sms_phone_verify"}}
         val_resp = MagicMock(ok=True, status_code=200)
         val_resp.json.return_value = {"continue_url": "https://auth.openai.com/cont"}
         fake_session.post.side_effect = [ps_resp, val_resp]
@@ -177,7 +171,6 @@ class TestProtocolPhoneVerify(unittest.TestCase):
         fake_session.cookies = MagicMock()
 
         with patch.object(pv, "rebuild_session", return_value=fake_session), \
-             patch.object(pv, "get_sentinel_token", return_value=""), \
              patch.object(pv, "poll_sms", return_value="123456"), \
              patch.object(pv, "follow_continue_for_auth_code", return_value=None):
             result = self._run_with_input(self._build_input())
@@ -191,7 +184,7 @@ class TestProtocolPhoneVerify(unittest.TestCase):
 
         fake_session = MagicMock()
         ps_resp = MagicMock(ok=True, status_code=200)
-        ps_resp.json.return_value = {"page": {"type": "phone_sms_code"}}
+        ps_resp.json.return_value = {"continue_url": "https://auth.openai.com/add-phone-verify", "method": "GET", "page": {"type": "sms_phone_verify"}}
         val_resp = MagicMock(ok=True, status_code=200)
         val_resp.json.return_value = {"continue_url": "https://auth.openai.com/cont"}
         fake_session.post.side_effect = [ps_resp, val_resp]
@@ -199,7 +192,6 @@ class TestProtocolPhoneVerify(unittest.TestCase):
         fake_session.cookies = MagicMock()
 
         with patch.object(pv, "rebuild_session", return_value=fake_session), \
-             patch.object(pv, "get_sentinel_token", return_value=""), \
              patch.object(pv, "poll_sms", return_value="123456"), \
              patch.object(pv, "follow_continue_for_auth_code", return_value="code-x"), \
              patch.object(pv, "exchange_code", return_value={}):

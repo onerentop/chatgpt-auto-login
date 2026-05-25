@@ -8,48 +8,49 @@ import time
 
 from _pkce_common import (
     AUTH, _log,
-    get_sentinel_token,
     follow_continue_for_auth_code,
     exchange_code,
     rebuild_session,
 )
+# 注意：phone-start 已 Phase 0 confirmed 无需 sentinel；phone-validate 推测同样无需
+# （smoke test 待验证）。故此处不再 import get_sentinel_token。若 phone-validate
+# smoke test 失败再补回。
 
 
 def is_phone_rejected(resp):
-    """判定 phone-start 响应是否表示 OpenAI 拒号（红字"无法发送验证码"）。
-    根据 Phase 0 抓包报告 docs/superpowers/research/2026-05-26-openai-add-phone-http.md
-    判定条件填入此函数。占位实现：HTTP 4xx 一律算拒；JSON body 含 error/code 字段也算。"""
-    if resp.status_code >= 400 and resp.status_code < 500:
+    """判定 phone-start 响应是否表示 OpenAI 拒号。
+    Phase 0 confirmed: HTTP 4xx + body.error.type == 'invalid_request_error' 即拒号
+    （已观测 error.code = 'voip_phone_disallowed'；其它 code 后续累积）。
+    所有 4xx 一律算 rejected（保守策略）—— release+retry 比 hang/submit-error 好。
+    """
+    if 400 <= resp.status_code < 500:
         return True
     try:
         data = resp.json()
-        # Phase 0 报告确认具体 error key — 占位用通用判定
-        err = (data.get("error") or "").lower()
-        code = (data.get("code") or "").lower()
-        for kw in ["phone_send_failed", "unable_to_send", "cannot_send", "phone_rejected"]:
-            if kw in err or kw in code:
-                return True
+        err = data.get("error") or {}
+        if err.get("type") == "invalid_request_error":
+            return True
     except Exception:
         pass
     return False
 
 
 def has_sms_prompt(resp):
-    """判定 phone-start 响应是否进入"等待 SMS 输入"状态。Phase 0 报告填入。"""
+    """判定 phone-start 是否进入"等待 SMS 输入"状态。
+    Phase 0 推测：成功响应 200 + body.continue_url（OpenAI 一致用 continue_url
+    串联多步流程 — authorize/continue → email-verification → add-phone → ...）。
+    Smoke test 待确认 page.type 真实值。
+    """
     if not resp.ok:
         return False
     try:
         data = resp.json()
+        if data.get("continue_url"):
+            return True
         page_type = (data.get("page") or {}).get("type", "")
-        if "sms" in page_type.lower() or "phone_verify" in page_type or "code" in page_type:
-            return True
-        # 或者根据 continue_url 路径判定
-        cont = data.get("continue_url", "")
-        if "sms" in cont or "verify-phone" in cont or "phone-code" in cont:
-            return True
+        return any(kw in page_type.lower() for kw in ["sms", "phone_verify", "phone_code", "verify_phone"])
     except Exception:
-        pass
-    return False
+        return False
 
 
 def poll_sms(sms_cfg, max_attempts=30, interval=3, proxy_url=None):
@@ -102,19 +103,17 @@ def main():
     s = rebuild_session(ss, proxy_url)
 
     # Step 1: phone-start
-    sentinel = get_sentinel_token(s, ss["device_id"], flow="phone_start", user_agent=ss["user_agent"]) or ""
-    # NOTE: endpoint path 来自 Phase 0 报告 — 替换为真实 path
-    PHONE_START_PATH = "/api/accounts/phone/start"
+    # Phase 0 confirmed: path = /api/accounts/add-phone/send, payload = {"phone_number": ...}, 无需 sentinel
+    PHONE_START_PATH = "/api/accounts/add-phone/send"
     r = s.post(
         f"{AUTH}{PHONE_START_PATH}",
-        json={"phone": phone},  # payload schema 来自 Phase 0 报告
+        json={"phone_number": phone},
         headers={
             "Accept": "application/json",
             "Content-Type": "application/json",
             "Origin": AUTH,
             "Referer": ss.get("current_url", AUTH + "/add-phone"),
             "oai-device-id": ss["device_id"],
-            "openai-sentinel-token": sentinel,
         },
         timeout=30,
     )
@@ -132,18 +131,17 @@ def main():
         return
 
     # Step 3: phone-validate
-    sentinel = get_sentinel_token(s, ss["device_id"], flow="phone_validate", user_agent=ss["user_agent"]) or ""
-    PHONE_VALIDATE_PATH = "/api/accounts/phone/validate"  # 来自 Phase 0
+    # Phase 0 推测：path = /api/accounts/add-phone/validate，无需 sentinel；smoke test 待验证
+    PHONE_VALIDATE_PATH = "/api/accounts/add-phone/validate"
     r = s.post(
         f"{AUTH}{PHONE_VALIDATE_PATH}",
-        json={"code": code},  # payload 来自 Phase 0
+        json={"code": code},  # payload 来自 Phase 0（code 字段名仍是推测）
         headers={
             "Accept": "application/json",
             "Content-Type": "application/json",
             "Origin": AUTH,
             "Referer": ss.get("current_url", AUTH + "/add-phone"),
             "oai-device-id": ss["device_id"],
-            "openai-sentinel-token": sentinel,
         },
         timeout=30,
     )
