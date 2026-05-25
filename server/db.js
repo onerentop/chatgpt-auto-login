@@ -70,6 +70,22 @@ async function initDB() {
       message   TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_liveness_logs_id_desc ON liveness_logs(id DESC);
+
+    -- v2.37.0 phone pool
+    CREATE TABLE IF NOT EXISTS phone_pool (
+      phone          TEXT PRIMARY KEY,
+      sms_api_url    TEXT NOT NULL,
+      bindings_used  INTEGER NOT NULL DEFAULT 0,
+      created_at     TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS phone_bindings (
+      phone    TEXT NOT NULL,
+      email    TEXT NOT NULL,
+      bound_at TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (phone, email)
+    );
+    CREATE INDEX IF NOT EXISTS idx_phone_bindings_phone ON phone_bindings(phone);
+    CREATE INDEX IF NOT EXISTS idx_phone_bindings_email ON phone_bindings(email);
   `);
 
   // Wire blacklist persistence module to the live DB
@@ -368,4 +384,4 @@ function mapRows(result) {
   });
 }
 
-module.exports = { initDB, accountsDB, statusDB, logsDB, livenessLogsDB, save };
+module.exports = { initDB, accountsDB, statusDB, logsDB, livenessLogsDB, save, getRawDb: () => db };
