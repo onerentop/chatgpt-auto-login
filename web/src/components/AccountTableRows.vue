@@ -4,6 +4,7 @@
     :data="rows"
     row-key="email"
     stripe border size="small"
+    :row-class-name="rowClass"
     @selection-change="onSelectionChange"
     @expand-change="onExpandChange"
     @row-click="onRowClick"
@@ -95,7 +96,7 @@
 
 <script setup>
 import { ref, watch } from 'vue'
-import { statusType, statusLabel, isFailedToRetry } from '../status'
+import { statusType, statusLabel, isFailedToRetry, rowClassFor } from '../status'
 
 const props = defineProps({
   rows: { type: Array, required: true },
@@ -105,6 +106,11 @@ const props = defineProps({
   getRealtimeLogs: { type: Function, required: true },
 })
 const emit = defineEmits(['group-selection-change', 'expand-change', 'row-action', 'auth-download', 'row-click'])
+
+// v2.33.0: el-table :row-class-name 钩子，按 row._status 上色
+function rowClass({ row }) {
+  return rowClassFor(row._status)
+}
 
 const tableRef = ref(null)
 
@@ -163,4 +169,10 @@ defineExpose({
 :deep(.el-table__body tr) {
   cursor: pointer;
 }
+
+/* v2.33.0: 运行时整行高亮，对应 rowClassFor 返回 */
+:deep(.row-status-success td) { background-color: #f0f9eb !important; }
+:deep(.row-status-warning td) { background-color: #fdf6ec !important; }
+:deep(.row-status-danger  td) { background-color: #fef0f0 !important; }
+:deep(.row-status-info    td) { background-color: #f4f4f5 !important; }
 </style>
