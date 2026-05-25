@@ -172,21 +172,37 @@ def exchange_code(session, auth_code, code_verifier, client_id, redirect_uri):
 
 
 def rebuild_session(session_state, proxy_url=None):
-    """根据 session_state（cookies + UA + device_id）重建 curl_cffi.Session。"""
+    """根据 session_state（cookies + UA + device_id）重建 curl_cffi.Session。
+
+    v2.40.2: curl_cffi 只支持有限 Chrome impersonate profile（实测最新 chrome146）。
+    UA 是 Chrome/148 时 `chrome148` profile 不存在 → ImpersonateError。
+    fallback 用一组已知 curl_cffi 普遍支持的 profile 逐个 try，全失败才 raise。
+    """
     from curl_cffi import requests as curl_requests
     ua = session_state.get("user_agent", "")
     m = re.search(r"Chrome/(\d+)", ua)
-    chrome_major = int(m.group(1)) if m else 120
-    impersonate = f"chrome{chrome_major}"
+    chrome_major = int(m.group(1)) if m else 0
+    # 优先用 UA 提的 major，失败按 curl_cffi 已知支持的 profile 降级 try
+    candidates = []
+    if chrome_major:
+        candidates.append(f"chrome{chrome_major}")
+    # 已知 curl_cffi 支持的 profile（与 protocol_register.py _CHROME_PROFILES 对齐）
+    candidates += ["chrome146", "chrome142", "chrome136", "chrome131", "chrome124", "chrome120", "chrome"]
     proxies = None
     if proxy_url:
         if proxy_url.startswith("http://"):
             proxy_url = "socks5h://" + proxy_url[len("http://"):]
         proxies = {"http": proxy_url, "https": proxy_url}
-    try:
-        s = curl_requests.Session(impersonate=impersonate)
-    except Exception:
-        s = curl_requests.Session(impersonate="chrome120")
+    s = None
+    last_err = None
+    for imp in candidates:
+        try:
+            s = curl_requests.Session(impersonate=imp)
+            break
+        except Exception as e:
+            last_err = e
+    if s is None:
+        raise RuntimeError(f"rebuild_session: no curl_cffi impersonate profile worked, last={last_err}")
     if proxies:
         s.proxies.update(proxies)
     if ua:

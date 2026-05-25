@@ -121,7 +121,7 @@ let runProtocolPhoneVerify = function (sessionState, phone, smsConfig, proxyUrl,
       try {
         resolve(JSON.parse(stdout));
       } catch {
-        resolve({ status: 'submit-error', detail: stderr.slice(-200) || `python exit ${code}` });
+        resolve({ status: 'submit-error', detail: stderr.slice(-800) || `python exit ${code}` });
       }
     });
     py.on('error', (e) => {
@@ -251,7 +251,7 @@ class ProtocolEngine extends EventEmitter {
         return { tokens: result.tokens };
       }
       if (result.status === 'phone-rejected') {
-        console.log(`[protocol] OpenAI rejected ${phone}: ${(result.detail || '').slice(0, 80)}, retry`);
+        console.log(`[protocol] OpenAI rejected ${phone}: ${(result.detail || '').slice(0, 500)}, retry`);
         if (releaseFn) try { await releaseFn(); } catch {}
         try { save(); } catch {}
         lastReason = 'phone-rejected-by-openai';
@@ -259,13 +259,13 @@ class ProtocolEngine extends EventEmitter {
       }
       if (result.status === 'sms-timeout' || result.status === 'validate-error') {
         // OpenAI 那边号没真用 → release
-        console.log(`[protocol] add-phone ${result.status}: ${(result.detail || '').slice(0, 80)}`);
+        console.log(`[protocol] add-phone ${result.status}: ${(result.detail || '').slice(0, 500)}`);
         if (releaseFn) try { await releaseFn(); } catch {}
         try { save(); } catch {}
         return { phoneVerifyFail: result.status };
       }
       // post-validate-error: OpenAI 已接受号 + 验证码，binding 保留
-      console.log(`[protocol] add-phone post-validate failure: ${(result.detail || '').slice(0, 80)}, binding kept`);
+      console.log(`[protocol] add-phone post-validate failure: ${(result.detail || '').slice(0, 500)}, binding kept`);
       return { phoneVerifyFail: 'post-validate-error' };
     }
 
@@ -512,7 +512,7 @@ class ProtocolEngine extends EventEmitter {
             }
             console.log(`[${progress}] Protocol login OK: ${result.accessToken}`);
           } catch (e) {
-            console.log(`[${progress}] Protocol login failed: ${e.message?.slice(0, 80)}`);
+            console.log(`[${progress}] Protocol login failed: ${e.message?.slice(0, 500)}`);
             // T8: 网络类异常算节点失败；业务异常不算
             if (proxyMgr.isProxyNetError(e.message) && proxyMgr.getState().enabled) {
               try { proxyMgr.recordBadAttempt(proxyMgr.getState().currentNode, 'main', 'protocol_net_error'); } catch {}
@@ -603,7 +603,7 @@ class ProtocolEngine extends EventEmitter {
                 this.emitStatus({ email: account.email, status: 'no_jp_proxy', phase: 'done', progress, reason: 'JP checkout channel unavailable' });
                 summary.noJpProxy++;
               } else if (!link) {
-                console.log(`[${progress}] ${(fetchResult.raw || 'No link').slice(0, 80)}`);
+                console.log(`[${progress}] ${(fetchResult.raw || 'No link').slice(0, 500)}`);
                 this.emitStatus({ email: account.email, status: 'no_link', phase: 'done', progress, reason: fetchResult.raw });
                 summary.noLink++;
               }
@@ -751,7 +751,7 @@ class ProtocolEngine extends EventEmitter {
             summary.error++;
           }
         } catch (e) {
-          console.log(`[${progress}] ${account.email} error: ${e.message?.slice(0, 80)}`);
+          console.log(`[${progress}] ${account.email} error: ${e.message?.slice(0, 500)}`);
           this.emitStatus({ email: account.email, status: 'error', phase: 'payment', progress, reason: e.message });
           summary.error++;
         } finally {

@@ -176,4 +176,10 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    # v2.40.2: top-level try/except 包整个 main，任何未处理异常都返 JSON status
+    # 避免 ImpersonateError 等 Python exception 直接 stderr，被 Node spawn 收到无法解析
+    try:
+        main()
+    except Exception as _e:
+        import traceback as _tb
+        print(json.dumps({"status": "submit-error", "detail": f"{type(_e).__name__}: {str(_e)[:200]} | {_tb.format_exc()[-500:]}"}))
