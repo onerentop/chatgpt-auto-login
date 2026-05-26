@@ -1,3 +1,4 @@
+require('./proxy/global');  // FIRST — must precede all other requires to set env + setGlobalDispatcher
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
