@@ -13,7 +13,7 @@ const { statusDB } = require('./server/db');
 const { connectGateway, getPaymentLink } = require('./server/discord-gateway');
 const { fetchCheckoutLink } = require('./server/chatgpt-checkout');
 const { verifyCheckoutIsFree } = require('./server/stripe-verify');
-const { launchChrome, waitForCDP } = require('./server/chrome');
+const { launchChrome, waitForCDP, findFreePort } = require('./server/chrome');
 const proxyMgr = require('./server/proxy');
 const { killTree } = require('./server/process-utils');
 const phonePool = require('./server/phone-pool');
@@ -678,7 +678,11 @@ class ProtocolEngine extends EventEmitter {
         }
 
         // Step 3: Payment (fresh Chrome for each account)
-        const port = 9222 + i;
+        // findFreePort: avoid colliding with any chrome already listening on
+        // 9222 (e.g. superpowers-chrome MCP), which would otherwise silently
+        // make Playwright connect to the wrong browser and run the entire
+        // payment flow in the wrong incognito session.
+        const port = await findFreePort();
         const tempDir = path.join(os.tmpdir(), `proto-pay-${Date.now()}-${i}`);
         let chromeProc = null, browser = null;
         try {
@@ -779,6 +783,11 @@ class ProtocolEngine extends EventEmitter {
           summary.error++;
         } finally {
           if (browser) try { await browser.close(); } catch {}
+          // Windows: chromeProc.kill() = SIGTERM, which Chrome's GUI/renderer
+          // subprocesses ignore (see process-utils.js header). Without killTree,
+          // the parent chrome.exe lingers and Chrome auto-opens an about:blank
+          // tab to replace the CDP-closed page — visible as a phantom window.
+          if (chromeProc) try { killTree(chromeProc.pid); } catch {}
           if (chromeProc) try { chromeProc.kill(); } catch {}
           try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {}
           this._browser = null; this._chromeProc = null; this._tempDir = null;
@@ -819,6 +828,7 @@ class ProtocolEngine extends EventEmitter {
       summary.error = summary.total;  // All accounts failed due to gateway
     } finally {
       if (this._browser) try { await this._browser.close(); } catch {}
+      if (this._chromeProc) try { killTree(this._chromeProc.pid); } catch {}
       if (this._chromeProc) try { this._chromeProc.kill(); } catch {}
       if (this._gw) try { this._gw.cleanup(); } catch {}
       if (this._tempDir) try { fs.rmSync(this._tempDir, { recursive: true, force: true }); } catch {}

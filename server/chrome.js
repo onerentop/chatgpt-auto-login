@@ -1,5 +1,6 @@
 // Chrome launch + CDP connection helpers (shared by both engines)
 const { spawn, execSync } = require('child_process');
+const net = require('net');
 const path = require('path');
 const fs = require('fs');
 const { chromium } = require('playwright');
@@ -64,4 +65,22 @@ async function waitForCDP(port, timeoutMs = 15000) {
   throw new Error('CDP timeout');
 }
 
-module.exports = { findChrome, launchChrome, waitForCDP };
+// Scan 127.0.0.1:start..end for a port we can bind a TCP listener to.
+// Critical for `--remote-debugging-port` because if the requested port is
+// already taken (e.g. another chrome / DevTools client), chrome silently
+// starts WITHOUT exposing CDP, then waitForCDP() connects to the OTHER
+// chrome on that port and the whole automation runs in the wrong browser.
+async function findFreePort(start = 9300, end = 9999) {
+  for (let p = start; p <= end; p++) {
+    const ok = await new Promise((resolve) => {
+      const srv = net.createServer();
+      srv.once('error', () => resolve(false));
+      srv.once('listening', () => srv.close(() => resolve(true)));
+      srv.listen(p, '127.0.0.1');
+    });
+    if (ok) return p;
+  }
+  throw new Error(`No free port in ${start}-${end}`);
+}
+
+module.exports = { findChrome, launchChrome, waitForCDP, findFreePort };

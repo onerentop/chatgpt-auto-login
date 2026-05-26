@@ -18,7 +18,7 @@ const { LogCapture } = require('./logger');
 const { connectGateway, getPaymentLink } = require('./discord-gateway');
 const { fetchCheckoutLink } = require('./chatgpt-checkout');
 const { verifyCheckoutIsFree } = require('./stripe-verify');
-const { launchChrome, waitForCDP, findChrome } = require('./chrome');
+const { launchChrome, waitForCDP, findChrome, findFreePort } = require('./chrome');
 const proxyMgr = require('./proxy');
 const { killTree } = require('./process-utils');
 
@@ -156,7 +156,6 @@ class PipelineEngine extends EventEmitter {
     this.logCapture.start();
 
     const allResults = [];
-    const basePort = 19222;
     let gw = null;
 
     try {
@@ -243,7 +242,11 @@ class PipelineEngine extends EventEmitter {
 
         console.log(`${p} === ${account.email} ===`);
 
-        const port = basePort + i;
+        // findFreePort: prevents Playwright from silently latching onto another
+        // chrome already listening on a fixed debug port (e.g. superpowers-chrome
+        // MCP holds 9222), which would route the entire payment flow into the
+        // wrong browser.
+        const port = await findFreePort();
         const tempDir = path.join(os.tmpdir(), `chatgpt-login-${Date.now()}`);
         this._chromeProc = null;
         this._browser = null;
@@ -635,6 +638,10 @@ class PipelineEngine extends EventEmitter {
           finalResult.reason = error.message.slice(0, 200);
         } finally {
           if (this._browser) try { await this._browser.close(); } catch {}
+          // Mirror stop() (line 92-93): kill() alone leaves Chrome's renderer/GPU
+          // subprocesses on Windows (process-utils.js header), so a phantom
+          // about:blank window survives after the account loop completes.
+          if (this._chromeProc) try { killTree(this._chromeProc.pid); } catch {}
           if (this._chromeProc) try { this._chromeProc.kill(); } catch {}
           try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {}
           this._browser = null;
