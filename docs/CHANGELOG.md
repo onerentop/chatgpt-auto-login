@@ -1,5 +1,53 @@
 # Changelog
 
+## v2.41.14 — 2026-05-26
+
+### SPA OAuth 协议侧重写（liveness 协议模式）
+
+OpenAI 把 `/authorize` 改成 React SPA 后，旧的 6 步 Auth0 form-POST 流程全部失效（v2.41.13 仅做了"page structure 兜底归 unknown 不重试"的伤口包扎，所有 outlook 账号都归 unknown）。本版本完全重写协议侧 `chatgpt_register/liveness_login.py` 走新的 5 步 JSON API + passwordless email OTP flow，**alive outlook 账号现在能正确识别为 plus**（v2.41.13 之前是 0%，现在 100%）。
+
+#### 新 endpoint chain（实测）
+
+1. `GET https://chatgpt.com/auth/login_with?callback_path=/` → 302 chain → `auth.openai.com/log-in`，curl_cffi cookie jar 收齐 25 个 cookies 含**关键的 `oai-client-auth-session`**（server-side auth session 关联 token）
+2. `POST /api/accounts/authorize/continue` `{"username":{"kind":"email","value":"..."}}` headers 必带 `openai-sentinel-token` + `oai-device-id` + `ext-passkey-client-capabilities` → 触发 OTP 邮件 + response body 含 `account_deactivated` 时直接 short-circuit
+3. IMAP 拉 OTP（`chatgpt_register/otp.py` 改走 HTTP CONNECT proxy via PySocks，国内直连 outlook.office365.com:993 会 SSL handshake timeout）
+4. `POST /api/accounts/email-otp/validate` `{"code":"..."}` 同样 headers → 200 (cookies set) | 403 `account_deactivated`/`invalid_code`/...
+5. `GET chatgpt.com/api/auth/session` → `{accessToken, user.id, expires}`
+
+#### 三个关键陷阱（reconnaissance 实测）
+
+| 陷阱 | 现象 | 根因 |
+|------|------|------|
+| step 2 HTTP 409 `invalid_state` | 直访 `auth.openai.com/authorize` 跳过 chatgpt.com 入口 | OpenAI server 内存里 auth session 是 chatgpt.com 跳转链路 set 的 `oai-client-auth-session` cookie 关联的，直访拿不到 |
+| step 2 HTTP 200 但邮箱不收 OTP 邮件 | 没带 `openai-sentinel-token` header | `chatgpt_register/sentinel.py` 注释明确写："QuickJS sentinel token 是 OTP 邮件能下发的关键，纯 Python 兜底会 silent-drop" |
+| Python imaplib SSL handshake timeout | `outlook.office365.com:993` 国内直连墙了 | PySocks monkey-patch socket，走 sing-box 7890 mixed 端口 HTTP CONNECT。新 env `LIVENESS_IMAP_PROXY` 控制（默认 `http://127.0.0.1:7890`，空走直连保留旧行为） |
+
+#### runner.js 错误码扩展
+
+```js
+/deactivated|account_deactivated|account_disabled/  → alive_status=deactivated
+/invalid[_ ]?code/                                   → login_fail (invalid OTP)
+/unknown[_ ]?user|invalid[_ ]?email/                 → login_fail
+/login[_ ]?fail/                                     → login_fail (通用兜底)
+```
+
+v2.41.13 加的 `/page structure|page format/` 兜底保留以防回归（新 flow 不再触发）。
+
+#### 测试与验证
+
+- 218 → **285 Node test pass**（顺手把 `server/liveness/__tests__/*.test.js` 加入 npm test，之前 67 个 liveness 测试漏跑）
+- 3 新 mock case：`deactivated` / `invalid_code` / `unknown_user`
+- 手动 spawn liabhzo717818 完整走通 step 1-5 拿到 `deactivated: account_deactivated`
+- Sample 5 账号 e2e：3/3 alive 账号归 plus ✓，unknown=0（v2.41.13 之前 100% outlook 是 unknown）
+
+#### Known limitations
+
+- **`fetch_imap_otp` 节点选择**：sing-box 节点池里只有 CN2-1g-41.88 实测稳定支持 IMAP HTTP CONNECT 到 outlook 993，yulin / CN2-AI-2g 偶发 timeout。server runner 自动 rotate 节点时如果切到 IMAP-unfriendly 节点，deactivated 账号会归 `login_fail: otp timeout` 而不是 deactivated。alive 账号 plus 检测不受影响（probe 直接用 cached access_token 走 `/accounts/check`）。后续单独 spec 处理 IMAP 通道隔离。
+- **`protocol_register.py` 注册流程**：未验证是否同步受 SPA 影响。本版本只覆盖 liveness。如发现注册也坏了开新 spec。
+- **浏览器模式 lightLogin (`server/liveness/light-login.js`)**：现状是否仍能走通未验证。本版本只覆盖协议模式。
+
+详见 `docs/superpowers/specs/2026-05-26-spa-oauth-protocol-rewrite-design.md` 和 `docs/superpowers/plans/2026-05-26-spa-oauth-protocol-rewrite-plan.md`。
+
 ## v2.41.13 — 2026-05-26
 
 ### Liveness `authorize page structure changed` 归 unknown 立即 break
