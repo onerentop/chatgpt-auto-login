@@ -39,6 +39,11 @@ sys.stdout = sys.stderr
 try:
     from chatgpt_register.sentinel import get_sentinel_token
     from chatgpt_register.otp import fetch_imap_otp, get_imap_baseline, gen_totp
+    try:
+        from chatgpt_register.proxy_helpers import report_bad_node
+    except Exception:
+        def report_bad_node(*a, **k):  # type: ignore[no-redef]
+            pass  # v2.42 Task 11: helper 缺失时静默
 except Exception as _import_err:
     # 不再静默 swallow —— 把错误信息记下来便于诊断（但 stdout 仍走 stderr 避免污染
     # JSON-lines protocol）。如果 fetch_imap_otp/get_imap_baseline 仍可能为 None
@@ -46,6 +51,8 @@ except Exception as _import_err:
     print(f"[liveness_login.py import fallback] {_import_err}", file=sys.stderr)
     def get_sentinel_token(*a, **k): return ""
     fetch_imap_otp = get_imap_baseline = gen_totp = None
+    def report_bad_node(*a, **k):  # type: ignore[no-redef]
+        pass  # v2.42 Task 11: import 失败时兜底
 finally:
     sys.stdout = _orig_stdout
 
@@ -161,14 +168,19 @@ def login(email, password, login_type, client_id, refresh_token, totp_secret, pr
     except Exception as e:
         msg = str(e)
         if 'ECONNRESET' in msg or 'CONNECTION_RESET' in msg or 'reset' in msg.lower():
+            report_bad_node('connection_reset', 'main')  # v2.42 Task 11
             raise Exception("proxy reset (login)")
         raise Exception(f"unexpected: GET csrf {msg[:40]}")
     if r_csrf.status_code >= 500:
+        report_bad_node('connection_reset', 'main')  # v2.42 Task 11: 5xx 视作上游不稳
         raise Exception(f"proxy reset (login): HTTP {r_csrf.status_code}")
     if r_csrf.status_code in (403, 429):
         _body_lower = (r_csrf.text or "").lower()
         if any(kw in _body_lower for kw in ('cloudflare', 'just a moment', 'challenge-platform', 'cf-mitigated', 'attention required')):
+            report_bad_node('cloudflare_403', 'main')  # v2.42 Task 11
             raise Exception(f"proxy reset (login): Cloudflare HTTP {r_csrf.status_code}")
+        if r_csrf.status_code == 429:
+            report_bad_node('rate_limited', 'main')  # v2.42 Task 11
         raise Exception(f"unexpected: csrf HTTP {r_csrf.status_code}")
     try:
         csrf_token = r_csrf.json().get("csrfToken")
@@ -200,11 +212,17 @@ def login(email, password, login_type, client_id, refresh_token, totp_secret, pr
     except Exception as e:
         msg = str(e)
         if 'ECONNRESET' in msg or 'reset' in msg.lower():
+            report_bad_node('connection_reset', 'main')  # v2.42 Task 11
             raise Exception("proxy reset (login)")
         raise Exception(f"unexpected: signin/openai {msg[:40]}")
     if r_signin.status_code >= 500:
+        report_bad_node('connection_reset', 'main')  # v2.42 Task 11: 5xx 视作上游不稳
         raise Exception(f"proxy reset (login): HTTP {r_signin.status_code}")
     if r_signin.status_code in (403, 429):
+        if r_signin.status_code == 429:
+            report_bad_node('rate_limited', 'main')  # v2.42 Task 11
+        else:
+            report_bad_node('cloudflare_403', 'main')  # v2.42 Task 11: 403 走 main 路径，最可能是 CF
         raise Exception(f"proxy reset (login): HTTP {r_signin.status_code}")
     try:
         authorize_url = r_signin.json().get("url")
@@ -220,14 +238,19 @@ def login(email, password, login_type, client_id, refresh_token, totp_secret, pr
     except Exception as e:
         msg = str(e)
         if 'ECONNRESET' in msg or 'CONNECTION_RESET' in msg or 'reset' in msg.lower():
+            report_bad_node('connection_reset', 'main')  # v2.42 Task 11
             raise Exception("proxy reset (login)")
         raise Exception(f"unexpected: GET authorize {msg[:40]}")
     if r_auth.status_code >= 500:
+        report_bad_node('connection_reset', 'main')  # v2.42 Task 11: 5xx 视作上游不稳
         raise Exception(f"proxy reset (login): HTTP {r_auth.status_code}")
     if r_auth.status_code in (403, 429):
         _body_lower = (r_auth.text or "").lower()
         if any(kw in _body_lower for kw in ('cloudflare', 'just a moment', 'challenge-platform', 'cf-mitigated', 'attention required')):
+            report_bad_node('cloudflare_403', 'main')  # v2.42 Task 11
             raise Exception(f"proxy reset (login): Cloudflare HTTP {r_auth.status_code}")
+        if r_auth.status_code == 429:
+            report_bad_node('rate_limited', 'main')  # v2.42 Task 11
 
     # 校验拿到了关键 session cookie
     # curl_cffi 的 session.cookies 直接迭代返回 cookie name 字符串
@@ -267,10 +290,15 @@ def login(email, password, login_type, client_id, refresh_token, totp_secret, pr
     except Exception as e:
         msg = str(e)
         if 'ECONNRESET' in msg or 'reset' in msg.lower():
+            report_bad_node('connection_reset', 'main')  # v2.42 Task 11
             raise Exception("proxy reset (login)")
         raise Exception(f"unexpected: authorize/continue {msg[:40]}")
 
     if r2.status_code in (429,) or r2.status_code >= 500:
+        if r2.status_code == 429:
+            report_bad_node('rate_limited', 'main')  # v2.42 Task 11
+        else:
+            report_bad_node('connection_reset', 'main')  # v2.42 Task 11: 5xx 视作上游不稳
         raise Exception(f"proxy reset (login): HTTP {r2.status_code}")
 
     body_text = r2.text or ""
@@ -285,6 +313,7 @@ def login(email, password, login_type, client_id, refresh_token, totp_secret, pr
         # 排除 Cloudflare 模板
         _body_lower = body_text.lower()
         if any(kw in _body_lower for kw in ('cloudflare', 'just a moment', 'challenge-platform')):
+            report_bad_node('cloudflare_403', 'main')  # v2.42 Task 11
             raise Exception(f"proxy reset (login): Cloudflare HTTP {r2.status_code}")
         # 其他 403 视作 login_fail
         raise Exception(f"login_fail: authorize/continue HTTP 403 body={body_text[:80]}")
@@ -356,12 +385,16 @@ def login(email, password, login_type, client_id, refresh_token, totp_secret, pr
     except Exception as e:
         msg = str(e)
         if 'reset' in msg.lower():
+            report_bad_node('connection_reset', 'main')  # v2.42 Task 11
             raise Exception("proxy reset (login)")
         raise Exception(f"unexpected: email-otp/validate {msg[:40]}")
 
     if r4.status_code in (403, 429) and r4.status_code != 403:
+        # 等价于 r4.status_code == 429
+        report_bad_node('rate_limited', 'main')  # v2.42 Task 11
         raise Exception(f"proxy reset (login): HTTP {r4.status_code}")
     if r4.status_code >= 500:
+        report_bad_node('connection_reset', 'main')  # v2.42 Task 11: 5xx 视作上游不稳
         raise Exception(f"proxy reset (login): HTTP {r4.status_code}")
 
     if r4.status_code >= 400:
@@ -375,6 +408,7 @@ def login(email, password, login_type, client_id, refresh_token, totp_secret, pr
         if err == "invalid_code":
             raise Exception("login_fail: invalid_code")
         if err == "rate_limited":
+            report_bad_node('rate_limited', 'main')  # v2.42 Task 11
             raise Exception(f"proxy reset (login): rate_limited")
         raise Exception(f"login_fail: email-otp/validate code={err}")
     _log(f"Step 4 OK: HTTP {r4.status_code} cookies={len(session.cookies)}")

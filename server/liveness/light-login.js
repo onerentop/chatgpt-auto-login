@@ -12,6 +12,7 @@
 
 const path = require('path');
 const { redact } = require('../logger');
+const { reportBadNode } = require('../proxy/with-retry');
 
 const PROTOCOL_SCRIPT = path.join(__dirname, '..', '..', 'chatgpt_register', 'liveness_login.py');
 // IMAP OTP 轮询最多 90s + sentinel + 4 次 POST 开销 ≈ 110s；120s 留余量。
@@ -57,6 +58,7 @@ async function lightLogin(account, opts = {}) {
       await page.goto('https://auth.openai.com/authorize?client_id=pdlLIX2Y72MIl2rhLhTE9VV9bN9MD869&scope=openid%20email%20profile%20offline_access%20model.request%20model.read%20organization.read%20organization.write&response_type=code&redirect_uri=https%3A%2F%2Fchatgpt.com%2Fapi%2Fauth%2Fcallback%2Flogin-web', { timeout: 30_000 });
     } catch (e) {
       if (/ERR_CONNECTION_RESET|net::ERR_CONNECTION|ECONNRESET/i.test(e.message)) {
+        reportBadNode('connection_reset', 'main');  // v2.42 Task 11
         throw new Error('proxy reset (login)');
       }
       throw new Error(`navigation: ${String(e.message).slice(0, 40)}`);
@@ -99,6 +101,7 @@ async function lightLogin(account, opts = {}) {
     try {
       await page.waitForURL(/chatgpt\.com\//, { timeout: 30_000 });
     } catch (e) {
+      reportBadNode('captcha', 'main');  // v2.42 Task 11
       throw new Error('captcha');
     }
 

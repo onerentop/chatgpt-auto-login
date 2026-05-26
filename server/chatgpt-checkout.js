@@ -14,6 +14,12 @@ const fs = require('fs');
 const path = require('path');
 const { ProxyAgent } = require('undici');
 const proxyMgr = require('./proxy');
+// v2.42 Task 11: fetchWithRetry / reportBadNode helper（spec §4.2）。
+// 本模块当前没有直接 fetch(...) 调用（OpenAI checkout 走 spawn checkout_link.py
+// Python 子进程），所以 fetchWithRetry 仅作为「未来如果新增 Node 侧 fetch」时
+// 的预留 import。Python 子进程的风控检测在 checkout_link.py 内部自行处理。
+// eslint-disable-next-line no-unused-vars
+const { fetchWithRetry, reportBadNode } = require('./proxy/with-retry');
 
 const SCRIPT = path.join(__dirname, '..', 'checkout_link.py');
 

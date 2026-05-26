@@ -4,6 +4,7 @@
 const { spawn } = require('child_process');
 const path = require('path');
 const proxyMgr = require('./proxy');
+const { reportBadNode } = require('./proxy/with-retry');
 
 const SCRIPT = path.join(__dirname, '..', 'stripe_init.py');
 const TIMEOUT_MS = 15000;
@@ -97,6 +98,18 @@ function verifyCheckoutIsFree(link, pk) {
       clearTimeout(timer);
       if (settled) return;
       settled = true;
+      // v2.42 Task 11: 在解析 stdout 之前先扫一遍 stderr，检测代理风控关键字
+      // → 调 reportBadNode 让 sing-box urltest 切节点。不阻塞既有 reportFail /
+      // resolve 流程；仅 fire-and-forget 上报。检测顺序：cloudflare 优先（最确定
+      // 是代理出口被风控），rate_limited 次之（429），connection_reset 兜底。
+      const _stderrLower = (stderr || '');
+      if (/cloudflare|just a moment|challenge-platform|cf-mitigated/i.test(_stderrLower)) {
+        reportBadNode('cloudflare_403', 'main');
+      } else if (/rate.?limit|\b429\b/i.test(_stderrLower)) {
+        reportBadNode('rate_limited', 'main');
+      } else if (/ECONNRESET|connection.*reset/i.test(_stderrLower)) {
+        reportBadNode('connection_reset', 'main');
+      }
       let parsed;
       try { parsed = JSON.parse(stdout); }
       catch {
