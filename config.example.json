@@ -22,6 +22,12 @@
       "cardKey": "",
       "service": "codex",
       "baseUrl": "https://zhusms.com"
+    },
+    "smscloud": {
+      "apiKey": "",
+      "baseUrl": "https://smscloud.sbs/api/system",
+      "serviceCode": "",
+      "countryCode": 187
     }
   }
 }

@@ -1,5 +1,32 @@
 # Changelog
 
+## v2.44.0 — 2026-05-27
+
+### 新增 smscloud 手机号 SMS provider
+
+继 `local` / `zhusms` 之后加第三个 SMS provider：**smscloud.sbs**。`config.phonePool.provider = "smscloud"` 互斥启用（沿用 zhusms 模式）。
+
+**API 概览**（来自 reconnaissance）：Base URL `https://smscloud.sbs/api/system`，HTTP header `apiKey: <key>` 鉴权，所有 endpoint GET，响应 `{ code, message, data }`，`code === 0` 为成功。跟 zhusms 不同：纯 apiKey 无 session/cookie，更简单。
+
+**6 个 commit**：
+
+| Commit | 改动 |
+|--------|------|
+| `c0fe0ac` | `server/smscloud-provider.js` 新建 — 6 API 包装函数 (takeOrder / pollOrderSms / cancelOrder / finishOrder / getBalance / listServices / listCountries) + 6 mock fetch 单测 |
+| `52b68e2` | `protocol-engine.js _acquirePhoneForProtocol` 加 smscloud dispatch，返回兼容 zhusms shape `{ phone, smsConfig: {provider, order_no, api_key, base_url}, releaseFn }` |
+| `7c2d693` | `protocol_phone_verify.py poll_sms` 加 smscloud 分支：curl_cffi GET `/orders/sync/{id}` with apiKey header |
+| `377d51d` | `server/routes/phone-pool.js` 加 3 路由 `POST /api/phone-pool/smscloud/{balance,services,countries}` |
+| `c812094` | `Config.vue` provider radio 加 smscloud + 配置 form (apiKey / baseUrl + 动态拉服务/国家 select + 测试余额按钮) |
+| 本 commit | `config.example.json` + CHANGELOG |
+
+**错误处理**：`takeOrder` 失败 → `_acquirePhoneForProtocol` 返 `{}` → 沿用既有 `phonePoolEmpty: true` fallback。`code !== 0` 抛 Error 带 `_smscloudCode` 字段。网络错误 `_smscloudCode = 'network_error'`。
+
+**测试**：310 Node test pass (+6 smscloud unit tests)，17 Python (3 skip) pass，web build OK。
+
+**外部依赖**：smscloud.sbs apiKey 用户自行获取，详见 https://smscloud.sbs/docx/。
+
+参考 `docs/superpowers/specs/2026-05-27-smscloud-provider-design.md` + `docs/superpowers/plans/2026-05-27-smscloud-provider.md`。
+
 ## v2.43.3 — 2026-05-27
 
 ### ProtocolEngine 同步 PipelineEngine：每账号重读 config.json 拿 phoneSlots
