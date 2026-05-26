@@ -9,6 +9,34 @@
     @row-click="onRowClick"
   >
     <el-table-column type="selection" width="45" :reserve-selection="true" />
+    <el-table-column type="expand">
+      <template #default="{ row }">
+        <!-- v2.41.5: 测活日志每账号 expand row。参照 AccountTableRows.vue 的暗色
+             面板样式；数据由父组件通过 getHistoryLogs / getRealtimeLogs prop
+             从 socketState.logs (全账号混合) 按 email 过滤后传入。 -->
+        <div style="font-family:'Consolas','Courier New',monospace;font-size:13px;max-height:calc(100vh - 350px);overflow-y:auto;padding:12px;background:#1e1e1e;color:#d4d4d4;border-radius:4px;line-height:1.6">
+          <div v-if="getHistoryLogs(row.email).length > 0">
+            <div @click="row._showHistory = !row._showHistory" style="cursor:pointer;color:#569cd6;margin-bottom:6px;user-select:none">
+              {{ row._showHistory ? '▼' : '▶' }} 历史日志 ({{ getHistoryLogs(row.email).length }} 条)
+            </div>
+            <div v-if="row._showHistory">
+              <div v-for="(log, i) in getHistoryLogs(row.email)" :key="'h'+i" style="white-space:pre-wrap;word-break:break-all">
+                <span style="color:#606060">{{ formatTs(log.timestamp) }}</span>
+                <span :style="{ color: logLevelColor(log.level) }"> [{{ log.level }}]</span>
+                <span style="color:#808080"> {{ log.message }}</span>
+              </div>
+              <div style="border-bottom:1px solid #404040;margin:8px 0"></div>
+            </div>
+          </div>
+          <div v-for="(log, i) in getRealtimeLogs(row.email)" :key="'r'+i" style="white-space:pre-wrap;word-break:break-all">
+            <span style="color:#808080">{{ formatTs(log.timestamp) }}</span>
+            <span :style="{ color: logLevelColor(log.level) }"> [{{ log.level }}]</span>
+            <span> {{ log.message }}</span>
+          </div>
+          <div v-if="getHistoryLogs(row.email).length === 0 && getRealtimeLogs(row.email).length === 0" style="color:#808080;padding:10px;text-align:center">暂无日志</div>
+        </div>
+      </template>
+    </el-table-column>
     <el-table-column type="index" label="#" width="50" />
     <el-table-column prop="email" label="邮箱" min-width="220" />
     <el-table-column prop="loginType" label="类型" width="90">
@@ -111,6 +139,10 @@ import { aliveStatusType, aliveStatusLabel, rowClassFor } from '../status'
 const props = defineProps({
   rows: { type: Array, required: true },
   globalSelectedSet: { type: Set, required: true },
+  // v2.41.5: 每账号测活日志 — 由父组件按 email filter 后传入。默认 () => [] 保证
+  // 该 prop 未传时（其他调用方）也能渲染 expand 内的"暂无日志"占位，无报错。
+  getHistoryLogs: { type: Function, default: () => () => [] },
+  getRealtimeLogs: { type: Function, default: () => () => [] },
 })
 const emit = defineEmits(['selection-change', 'row-click', 'edit', 'delete', 'auth-download', 'copy'])
 
@@ -127,6 +159,23 @@ function onSelectionChange(rows) {
 
 function onRowClick(row, column, event) {
   emit('row-click', { row, column, event })
+}
+
+// v2.41.5: expand row 测活日志的 timestamp 渲染（YYYY-MM-DD HH:mm:ss），
+// 与 AccountTableRows.vue 同一实现。
+function formatTs(ts) {
+  if (!ts) return ''
+  return ts.slice(0, 19).replace('T', ' ')
+}
+
+// v2.41.5: log level 文字颜色（暗色面板 + 高对比）。Accounts.vue 既有的
+// .log-success/.log-warning/... CSS class 是浅色背景版本，这里 expand 内是
+// 暗背景，单独走一组配色。
+function logLevelColor(level) {
+  if (level === 'success') return '#4ec9b0'
+  if (level === 'warning') return '#d7ba7d'
+  if (level === 'error')   return '#f48771'
+  return '#9cdcfe'  // info / 默认
 }
 
 function formatRelative(iso) {

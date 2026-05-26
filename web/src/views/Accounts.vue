@@ -117,32 +117,10 @@
       </el-button>
     </ContextActionBar>
 
-    <SectionCard v-if="oldLogs.length > 0 || newLogs.length > 0" title="测活日志" flush>
-      <el-collapse v-model="oldLogsExpanded">
-        <el-collapse-item :title="`旧日志 (${oldLogs.length})`" name="old">
-          <div class="liveness-log-list">
-            <div v-for="(log, i) in oldLogs" :key="'o-' + i" :class="'log-' + log.level">
-              <span class="log-time">{{ log.timestamp.slice(11, 19) }}</span>
-              <span v-if="log.email" class="log-email">{{ log.email }}</span>
-              <span class="log-msg">{{ log.message }}</span>
-            </div>
-            <div v-if="oldLogs.length === 0" style="color:var(--app-text-mute);padding:var(--sp-2)">暂无历史日志</div>
-          </div>
-        </el-collapse-item>
-      </el-collapse>
-      <el-collapse v-model="newLogsExpanded">
-        <el-collapse-item :title="`实时日志 (${newLogs.length})`" name="new">
-          <div ref="newLogsContainer" class="liveness-log-list">
-            <div v-for="(log, i) in newLogs" :key="'n-' + i" :class="'log-' + log.level">
-              <span class="log-time">{{ log.timestamp.slice(11, 19) }}</span>
-              <span v-if="log.email" class="log-email">{{ log.email }}</span>
-              <span class="log-msg">{{ log.message }}</span>
-            </div>
-            <div v-if="newLogs.length === 0" style="color:var(--app-text-mute);padding:var(--sp-2)">暂无实时日志</div>
-          </div>
-        </el-collapse-item>
-      </el-collapse>
-    </SectionCard>
+    <!-- v2.41.5: 底部集中"测活日志"面板已删除；改成每账号 expand row 单独
+         渲染该账号的历史 + 实时日志（getHistoryLogs / getRealtimeLogs prop 走
+         AccountsTable.vue 的 expand 列）。socketState.logs 仍是数据源，filter
+         逻辑见下方 script。 -->
 
     <!-- v2.41.2: 分组视图（collapse 多 table）/ 平铺视图（单 table）切换 -->
     <SectionCard flush>
@@ -158,6 +136,8 @@
             :ref="el => { if (el) groupRefs[g.key] = el }"
             :rows="g.rows"
             :global-selected-set="globalSelectedSet"
+            :get-history-logs="getHistoryLogs"
+            :get-realtime-logs="getRealtimeLogs"
             @selection-change="onGroupSelectionChange(g.key, $event)"
             @row-click="onRowClick"
             @edit="openEdit"
@@ -172,6 +152,8 @@
         ref="flatTableRef"
         :rows="filteredAccounts"
         :global-selected-set="globalSelectedSet"
+        :get-history-logs="getHistoryLogs"
+        :get-realtime-logs="getRealtimeLogs"
         @selection-change="onFlatSelectionChange"
         @row-click="onRowClick"
         @edit="openEdit"
@@ -292,10 +274,11 @@ function resetFilters() {
 }
 
 const aliveFilterOptions = ALIVE_FILTER_OPTIONS
-const oldLogsExpanded = ref([])                // 默认折叠
-const newLogsExpanded = ref(['new'])           // 默认展开
-const newLogsContainer = ref(null)             // DOM ref for auto-scroll
 
+// v2.41.5: 集中"测活日志"面板已删除，但 socketState.logs 仍是测活日志真源
+// （loadLivenessLogs 从 DB 回放，socket.on('liveness-log') 实时推送）。
+// 这两个 computed 保留作为按 email filter 的输入；新的 expand row 渲染
+// 直接调 getHistoryLogs(email) / getRealtimeLogs(email) 在子组件 template 用。
 const oldLogs = computed(() =>
   socketState.logs.filter(l => l.source === 'liveness' && l.isHistorical).slice(-200)
 )
@@ -303,14 +286,14 @@ const newLogs = computed(() =>
   socketState.logs.filter(l => l.source === 'liveness' && !l.isHistorical).slice(-500)
 )
 
-// Auto-scroll the realtime log container to the bottom whenever a new entry
-// arrives. nextTick lets Vue re-render the v-for before we read scrollHeight.
-watch(() => newLogs.value.length, () => {
-  nextTick(() => {
-    const el = newLogsContainer.value
-    if (el) el.scrollTop = el.scrollHeight
-  })
-})
+// v2.41.5: 按 email 分桶 — AccountsTable expand 列通过 prop 调用。
+// 数据为全账号混合的 oldLogs/newLogs computed，按 email 字段 filter。
+function getHistoryLogs(email) {
+  return oldLogs.value.filter(l => l.email === email)
+}
+function getRealtimeLogs(email) {
+  return newLogs.value.filter(l => l.email === email)
+}
 const filteredAccounts = computed(() => {
   const q = search.value.toLowerCase()
   return accounts.value.filter(a => {
@@ -471,12 +454,9 @@ onMounted(() => {
     router.replace({ query: { ...route.query, action: undefined } })
   }
 })
-// Auto-expand log panel when liveness starts; user controls collapsing afterwards.
-watch(() => socketState.liveness.running, (now) => {
-  if (now && !newLogsExpanded.value.includes('new')) {
-    newLogsExpanded.value = ['new']
-  }
-})
+// v2.41.5: 旧的"测活开始时自动展开实时日志 collapse"逻辑已删除（集中面板
+// 不存在了）。每账号 expand row 由用户点击 el-table expand 列 toggle，不在
+// liveness 开始时自动展开 — 一次测活动则上百行，全展开反而无法定位。
 
 watch(() => socketState.aliveStatuses, (val) => {
   for (const row of accounts.value) {
@@ -791,21 +771,6 @@ async function downloadSelectedAs(format) {
   color: var(--app-text-2);
 }
 
-.liveness-log-list {
-  max-height: 300px;
-  overflow-y: auto;
-  font-family: var(--ff-mono);
-  font-size: var(--fs-sm);
-  padding: var(--sp-1) var(--sp-2);
-  background: var(--app-surface-2);
-  border-radius: var(--rad-sm);
-}
-.liveness-log-list > div { padding: 2px 0; }
-.log-time  { color: var(--app-text-mute); margin-right: var(--sp-2); }
-.log-email { color: var(--app-brand);     margin-right: var(--sp-2); }
-.log-msg   { color: var(--app-text); }
-.log-success .log-msg { color: var(--app-success); }
-.log-warning .log-msg { color: var(--app-warning); }
-.log-error   .log-msg { color: var(--app-danger); }
-.log-info    .log-msg { color: var(--app-text-3); }
+/* v2.41.5: .liveness-log-list / .log-* 旧集中面板样式已删除（面板下沉到
+   每账号 expand row，由 AccountsTable.vue 内联样式渲染）。 */
 </style>
