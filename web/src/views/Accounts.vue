@@ -362,6 +362,24 @@ function groupTagTypeOf(key) {
   }
 }
 
+// v2.41.6: 分组排序优先级 — 能用 (priority 小) 排前，不能用排后
+const ALIVE_TIER = {
+  // 能用 (tier 0)
+  plus: 0,
+  // 未知 / 介于 (tier 1) — 测活失败 / canceled 等可恢复 / 未测试
+  unknown: 1, checking: 1, canceled: 1, proxy_error: 1, network_error: 1,
+  // 不能用 (tier 2)
+  deactivated: 2, login_fail: 2, token_expired: 2,
+}
+
+const PLAN_PRIORITY = { plus: 0, unknown: 1, free: 2 }
+
+function groupPriority(key) {
+  if (groupBy.value === 'plan') return PLAN_PRIORITY[key] ?? 99
+  if (groupBy.value === 'alive_status') return ALIVE_TIER[key] ?? 99
+  return 0  // loginType: 全部 priority 0，仅按 count 排
+}
+
 const visibleGroups = computed(() => {
   const groups = new Map()
   for (const a of filteredAccounts.value) {
@@ -371,7 +389,12 @@ const visibleGroups = computed(() => {
     }
     groups.get(key).rows.push(a)
   }
-  return Array.from(groups.values()).sort((a, b) => b.rows.length - a.rows.length)
+  return Array.from(groups.values()).sort((a, b) => {
+    const pa = groupPriority(a.key)
+    const pb = groupPriority(b.key)
+    if (pa !== pb) return pa - pb           // priority asc：能用在前
+    return b.rows.length - a.rows.length    // 同档内 count 倒序
+  })
 })
 
 // 分组视图默认全展开 —— visibleGroups 变化（或切换 groupBy）时把所有
