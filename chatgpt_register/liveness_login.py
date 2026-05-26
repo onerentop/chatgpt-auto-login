@@ -167,6 +167,14 @@ def login(email, password, login_type, client_id, refresh_token, totp_secret, pr
     body_len = len(r.text or "")
     if body_len < 500:
         raise Exception(f"proxy reset (login): HTTP {r.status_code} body_len={body_len}")
+    # v2.41.11: HTTP 403/429 + Cloudflare challenge body 关键词 → proxy_error
+    #   实测 /authorize 拿到 HTTP 403 + body ~6966 字节 (Cloudflare 'Just a moment')，
+    #   v2.41.4 只检 >=500，403 漏了 → 走到 _parse_state 拿不到 state → 归 network_error 重试 3 次浪费。
+    if r.status_code in (403, 429):
+        _body_lower = (r.text or "").lower()
+        if any(kw in _body_lower for kw in ('cloudflare', 'just a moment', 'challenge-platform', 'cf-mitigated', 'attention required')):
+            raise Exception(f"proxy reset (login): Cloudflare HTTP {r.status_code}")
+        # 非 Cloudflare 的 403/429 继续走 fallback，归 network_error 等
     # v2.41.9 / v2.41.10: 按 final_path 分类（state 缺失时）
     from urllib.parse import urlparse as _urlparse_lv
     _final_path = _urlparse_lv(str(r.url)).path
