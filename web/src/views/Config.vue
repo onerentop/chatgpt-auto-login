@@ -195,10 +195,10 @@
       <el-tab-pane label="节点黑名单" name="blacklist">
         <div style="margin-bottom: 24px">
           <div style="font-weight:600;margin-bottom:8px">主代理黑名单</div>
-          <div style="width: 700px">
+          <div style="width: 760px">
             <div style="display:flex; gap:8px; margin-bottom:8px; align-items:center">
               <span style="font-size:12px; color:#909399">
-                共 {{ blacklist.main.length }} 个节点 · 连续 {{ FAIL_THRESHOLD }} 次代理错误自动加入
+                共 {{ blacklist.main.length }} 个节点 · 业务遇 Cloudflare / rate_limited / connection_reset 等风控自动加入，默认 5 分钟过期
               </span>
               <el-button size="small" :disabled="!blacklist.main.length" @click="clearChannel('main')">
                 清空主代理黑名单
@@ -206,22 +206,25 @@
               <el-button size="small" @click="loadBlacklist">刷新</el-button>
             </div>
             <el-table :data="blacklist.main" size="small" empty-text="（无）" max-height="260">
-              <el-table-column prop="tag" label="节点" min-width="220" show-overflow-tooltip />
-              <el-table-column label="剩余时间" width="110">
-                <template #default="{ row }">{{ formatTtl(row.ttlRemainingMs) }}</template>
+              <el-table-column label="节点" min-width="200" show-overflow-tooltip>
+                <template #default="{ row }">{{ row.node || row.tag }}</template>
               </el-table-column>
-              <el-table-column label="来源" width="80">
+              <el-table-column label="原因" width="160">
                 <template #default="{ row }">
-                  <el-tag size="small" :type="row.source === 'manual' ? 'warning' : 'info'">
-                    {{ row.source === 'manual' ? '手动' : '自动' }}
-                  </el-tag>
+                  <el-tag :type="reasonTagType(row.reason)" size="small">{{ reasonLabel(row.reason) }}</el-tag>
                 </template>
               </el-table-column>
-              <el-table-column prop="reason" label="原因" min-width="140" show-overflow-tooltip />
+              <el-table-column label="解禁时间" width="120">
+                <template #default="{ row }">
+                  <span v-if="row.bannedUntil">{{ formatRemaining(row.bannedUntil) }}</span>
+                  <span v-else-if="row.ttlRemainingMs > 0">{{ formatTtl(row.ttlRemainingMs) }}</span>
+                  <span v-else style="color:#909399">已过期</span>
+                </template>
+              </el-table-column>
               <el-table-column label="操作" width="80">
                 <template #default="{ row }">
-                  <el-button size="small" link type="primary" @click="removeNode(row.tag, 'main')">
-                    移除
+                  <el-button size="small" link type="primary" @click="unbanOne(row.node || row.tag, 'main')">
+                    解禁
                   </el-button>
                 </template>
               </el-table-column>
@@ -231,10 +234,10 @@
 
         <div>
           <div style="font-weight:600;margin-bottom:8px">JP 通道黑名单</div>
-          <div style="width: 700px">
+          <div style="width: 760px">
             <div style="display:flex; gap:8px; margin-bottom:8px; align-items:center">
               <span style="font-size:12px; color:#909399">
-                共 {{ blacklist.jp.length }} 个节点 · 连续 {{ FAIL_THRESHOLD }} 次代理错误自动加入
+                共 {{ blacklist.jp.length }} 个节点 · 业务遇 Cloudflare / rate_limited / connection_reset 等风控自动加入，默认 5 分钟过期
               </span>
               <el-button size="small" :disabled="!blacklist.jp.length" @click="clearChannel('jp')">
                 清空 JP 黑名单
@@ -242,22 +245,25 @@
               <el-button size="small" @click="loadBlacklist">刷新</el-button>
             </div>
             <el-table :data="blacklist.jp" size="small" empty-text="（无）" max-height="260">
-              <el-table-column prop="tag" label="节点" min-width="220" show-overflow-tooltip />
-              <el-table-column label="剩余时间" width="110">
-                <template #default="{ row }">{{ formatTtl(row.ttlRemainingMs) }}</template>
+              <el-table-column label="节点" min-width="200" show-overflow-tooltip>
+                <template #default="{ row }">{{ row.node || row.tag }}</template>
               </el-table-column>
-              <el-table-column label="来源" width="80">
+              <el-table-column label="原因" width="160">
                 <template #default="{ row }">
-                  <el-tag size="small" :type="row.source === 'manual' ? 'warning' : 'info'">
-                    {{ row.source === 'manual' ? '手动' : '自动' }}
-                  </el-tag>
+                  <el-tag :type="reasonTagType(row.reason)" size="small">{{ reasonLabel(row.reason) }}</el-tag>
                 </template>
               </el-table-column>
-              <el-table-column prop="reason" label="原因" min-width="140" show-overflow-tooltip />
+              <el-table-column label="解禁时间" width="120">
+                <template #default="{ row }">
+                  <span v-if="row.bannedUntil">{{ formatRemaining(row.bannedUntil) }}</span>
+                  <span v-else-if="row.ttlRemainingMs > 0">{{ formatTtl(row.ttlRemainingMs) }}</span>
+                  <span v-else style="color:#909399">已过期</span>
+                </template>
+              </el-table-column>
               <el-table-column label="操作" width="80">
                 <template #default="{ row }">
-                  <el-button size="small" link type="primary" @click="removeNode(row.tag, 'jp')">
-                    移除
+                  <el-button size="small" link type="primary" @click="unbanOne(row.node || row.tag, 'jp')">
+                    解禁
                   </el-button>
                 </template>
               </el-table-column>
@@ -288,7 +294,6 @@ const jpKddiTagSet = ref(new Set())
 const usTagSet = ref(new Set())
 const activeTab = ref('payment')
 
-const FAIL_THRESHOLD = 3
 const blacklist = ref({ main: [], jp: [] })
 let blacklistTimer = null
 
@@ -507,11 +512,23 @@ async function detectExit() {
   }
 }
 
+// v2.42.1: 直接保留后端 superset 字段（node / reason / bannedUntil / addedAt + 老的
+// tag / ttlRemainingMs / source），表格列按需取值；做 防御性兜底以兼容字符串数组形态。
 function normalizeBlacklist(data) {
-  return {
-    main: Array.isArray(data?.main) ? data.main : [],
-    jp: Array.isArray(data?.jp) ? data.jp : [],
-  }
+  const norm = (arr) => (Array.isArray(arr) ? arr : []).map((item) => {
+    if (typeof item === 'string') return { node: item, tag: item, reason: 'custom', bannedUntil: null }
+    return {
+      node: item.node || item.tag || '',
+      reason: item.reason || 'custom',
+      bannedUntil: item.bannedUntil || null,
+      addedAt: item.addedAt || null,
+      // 保留 v2.30 兼容字段，formatTtl fallback 用
+      tag: item.tag || item.node || '',
+      ttlRemainingMs: typeof item.ttlRemainingMs === 'number' ? item.ttlRemainingMs : 0,
+      source: item.source || 'auto',
+    }
+  })
+  return { main: norm(data?.main), jp: norm(data?.jp) }
 }
 
 async function loadBlacklist() {
@@ -525,33 +542,72 @@ async function loadBlacklist() {
   }
 }
 
-async function removeNode(tag, channel) {
-  try {
-    const { data } = await api.post('/proxy/blacklist/remove', { tag, channel })
-    blacklist.value = normalizeBlacklist(data)
-    ElMessage.success(`已移除 ${tag}`)
-  } catch (err) {
-    ElMessage.error(err.response?.data?.error || '移除失败')
-  }
-}
-
+// v2.42.1 Task 3: 批量解禁 → 调 POST /proxy/clear-blacklist (后端 listBanned + unbanNode 逐条)，
+// 而不是旧 /proxy/blacklist/clear（后者仅清 manual 内存映射，碰不到 DB 持久层）。
 async function clearChannel(channel) {
+  const nodes = blacklist.value[channel] || []
+  if (nodes.length === 0) return
   try {
     await ElMessageBox.confirm(
-      `确认清空${channel === 'main' ? '主代理' : 'JP 通道'}黑名单？`,
-      '确认操作',
+      `确定清空 ${channel === 'main' ? '主代理' : 'JP'} 黑名单 ${nodes.length} 个节点？`,
+      '批量解禁',
       { type: 'warning' },
     )
   } catch { return }
   try {
-    const { data } = await api.post('/proxy/blacklist/clear', { channel })
-    blacklist.value = normalizeBlacklist(data)
-    ElMessage.success('已清空')
+    const { data } = await api.post('/proxy/clear-blacklist', { channel })
+    await loadBlacklist()
+    ElMessage?.success(`已清空 ${data.cleared} 个节点`)
   } catch (err) {
-    ElMessage.error(err.response?.data?.error || '清空失败')
+    ElMessage?.error(`清空失败: ${err?.response?.data?.error || err.message}`)
   }
 }
 
+// v2.42.1 Task 3: 单个解禁 → POST /proxy/unban-node。
+async function unbanOne(node, channel = 'main') {
+  if (!node) return
+  try {
+    await api.post('/proxy/unban-node', { node, channel })
+    await loadBlacklist()
+    const display = node.length > 40 ? node.slice(0, 40) + '...' : node
+    ElMessage?.success(`已解禁 ${display}`)
+  } catch (err) {
+    ElMessage?.error(`解禁失败: ${err?.response?.data?.error || err.message}`)
+  }
+}
+
+// v2.42.1 Task 3: reason → tag color。与 server/proxy/bad-node.js classifyReason 对齐。
+function reasonTagType(reason) {
+  if (reason === 'cloudflare_403') return 'danger'
+  if (reason === 'rate_limited') return 'warning'
+  if (reason === 'captcha' || reason === 'openai_403') return 'danger'
+  return 'info'
+}
+function reasonLabel(reason) {
+  const map = {
+    'cloudflare_403': 'Cloudflare 风控',
+    'rate_limited': '速率限制',
+    'connection_reset': '连接重置',
+    'connection_upload_closed': '连接关闭',
+    'openai_403': 'OpenAI 403',
+    'captcha': '验证码',
+    'custom': '手动',
+  }
+  return map[reason] || reason || '未知'
+}
+// v2.42.1 Task 3: 用 ISO bannedUntil 算剩余时间。
+function formatRemaining(iso) {
+  if (!iso) return ''
+  const t = new Date(iso).getTime()
+  if (!Number.isFinite(t)) return ''
+  const remainSec = Math.max(0, Math.round((t - Date.now()) / 1000))
+  if (remainSec === 0) return '已过期'
+  if (remainSec < 60) return `${remainSec}s 后`
+  if (remainSec < 3600) return `${Math.round(remainSec / 60)}min 后`
+  return new Date(t).toLocaleTimeString()
+}
+
+// 兼容 v2.30 旧 schema（ttlRemainingMs）。新 row 使用 formatRemaining(row.bannedUntil)。
 function formatTtl(ms) {
   if (typeof ms !== 'number' || !Number.isFinite(ms) || ms <= 0) return '已过期'
   const min = Math.floor(ms / 60000)
