@@ -1,5 +1,48 @@
 # Changelog
 
+## v2.41.7 — 2026-05-26
+
+### 账户列表表头加可排序（Accounts 和 Execute 两侧）
+
+用户诉求：两个表格的列表头可点击排序。
+
+**改动**：
+
+- **新建 `web/src/sortHelpers.js`** (58 行) — 抽公共排序常量 + 比较函数：
+  - 常量 `PLAN_PRIORITY` / `ALIVE_TIER` （v2.41.6 在 `Accounts.vue` 加的，本次抽出共享）
+  - 比较函数 `byPlan` / `byAliveStatus` / `byExecuteStatus` / `byAliveCheckedAt` / `byHasAuth`
+  - el-table-column `:sort-method` 兼容 `(a, b) => number`
+
+- **`AccountsTable.vue`** 7 列 sortable：邮箱 / 类型 / 计划（byPlan 业务序）/ 活性（byAliveStatus 三档）/ 上次测活（byAliveCheckedAt 时间戳）/ 凭证（byHasAuth）/ 字母排（邮箱 + 类型）。selection / expand / # / 密码 / 操作不排
+- **`AccountTableRows.vue`** 7 列 sortable：邮箱 / 类型 / 计划 / 状态（byExecuteStatus 按 GROUP_ORDER）/ 阶段 / Auth / 原因。selection / # / 操作 / expand 不排
+- **`Accounts.vue`** 把 v2.41.6 局部 `ALIVE_TIER` / `PLAN_PRIORITY` 改 import 自 sortHelpers（去重）
+
+**实现细节**：
+
+- `byAliveStatus` / `byAliveCheckedAt` 用 view-model 字段 `_aliveStatus` / `_aliveCheckedAt`（带下划线前缀，由 `Accounts.vue#load()` 注入；row 上没 snake_case 原字段）
+- 不设 `:default-sort`，保留 v2.41.6 的 visibleGroups 业务序作为初始顺序
+- 分组视图：每个 collapse-item 独立 el-table，sort 仅作用该组内（el-table 默认行为）
+- 平铺视图：单 table，sort 作用全 filteredRows
+
+**已知 minor**：`AccountsTable` "凭证" 列视觉是 TOTP/Client ID/RT 三圆点（凭据完整性），sortable 按 `_hasAuth`（CPA/Sub2API 文件是否生成）。语义略偏，后续根据用户反馈再细化（v2.41.8 候选）。
+
+**测试**：218 Node + 17 Python pass。web build 成功（新 sortHelpers chunk 1.76 kB / gzip 0.95 kB）。
+
+## v2.41.6 — 2026-05-26
+
+### Accounts 分组排序按"能用优先"（不能用的往后排）
+
+v2.41.2 引入分组视图后默认按 `b.rows.length - a.rows.length` count 倒序排。用户诉求：能用的优先，不能用的往后。
+
+**改动**（只动 `web/src/views/Accounts.vue` +24/-1）：
+
+- 加 `ALIVE_TIER` 3 档：能用 (`plus` tier 0) → 未知 (`unknown`/`checking`/`canceled`/`proxy_error`/`network_error` tier 1) → 不能用 (`deactivated`/`login_fail`/`token_expired` tier 2)
+- 加 `PLAN_PRIORITY` 3 档：`plus` 0 → `unknown` 1 → `free` 2
+- 加 `groupPriority(key)` helper 按当前 `groupBy` 返 priority；`loginType` 全部 priority 0（保留 count 倒序原行为）
+- `visibleGroups` 排序：主键 priority asc（能用在前），次键 `rows.length` desc
+
+**测试**：218 Node + 17 Python pass。
+
 ## v2.41.5 — 2026-05-26
 
 ### Accounts 测活日志改每账号 expand row（删底部集中面板）
