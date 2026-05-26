@@ -53,9 +53,15 @@
     </el-table-column>
     <el-table-column label="活性" width="160" sortable :sort-method="byAliveStatus">
       <template #default="{ row }">
-        <el-tag :type="aliveStatusType(row._aliveStatus)" size="small">
-          {{ aliveStatusLabel(row._aliveStatus) }}
-        </el-tag>
+        <el-tooltip
+          :content="row._aliveReason || ''"
+          :disabled="!row._aliveReason"
+          placement="top"
+        >
+          <el-tag :type="aliveStatusType(row._aliveStatus)" size="small">
+            {{ aliveStatusLabel(row._aliveStatus) }}
+          </el-tag>
+        </el-tooltip>
         <el-tag
           v-if="row._aliveStatus === 'plus'"
           :type="row._hasRefreshToken ? 'success' : 'warning'"
