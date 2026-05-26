@@ -42,8 +42,13 @@ function launchChrome(port, tempDir, options = {}) {
     `--window-size=${q.w},${q.h}`,
     '--window-position=0,0',
   ];
-  if (options.proxyServer) {
-    args.push(`--proxy-server=${options.proxyServer}`);
+  // v2.42: options.proxyServer 显式优先，未传则默认 process.env.HTTPS_PROXY。
+  // 这样业务代码无需再 require proxy manager + 调用 getProxyUrl()，
+  // 由 server/proxy/global.js 设的 HTTPS_PROXY env 成为唯一来源。
+  // 显式传 '' / null 仍可走直连（不加 --proxy-server）。
+  const proxyServer = options.proxyServer ?? process.env.HTTPS_PROXY;
+  if (proxyServer) {
+    args.push(`--proxy-server=${proxyServer}`);
     args.push('--proxy-bypass-list=<-loopback>');  // route everything (incl. localhost upstreams) through proxy
   }
   args.push('about:blank');
