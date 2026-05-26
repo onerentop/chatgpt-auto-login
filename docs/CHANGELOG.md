@@ -1,5 +1,44 @@
 # Changelog
 
+## v2.43.0 — 2026-05-27
+
+### login_password 死局修复：step 1B 加 screen_hint=login_or_signup
+
+batch 数据显示 ~55% outlook 账号在 step 2 拿 `page.type=login_password` → liveness 归 `login_fail`。reconnaissance 实测确认：**根因是 liveness step 1B 缺关键 query 参数**，protocol_register.py 同账号能拿 `final_url=/email-verification`（OTP path）因为它传了 `screen_hint=login_or_signup`。
+
+**死局验证（5 个 endpoint 全被 OpenAI reject）**：
+
+| Endpoint | 结果 |
+|----------|------|
+| `POST /password/verify` (DB pw) | 401 invalid_username_or_password |
+| `POST /password/verify` (默认 email-@) | 401 invalid_username_or_password |
+| `POST /passwordless/send-otp` (referer=log-in/password) | 409 invalid_state |
+| `POST /passwordless/send-otp` (referer=create-account/password) | 409 invalid_state |
+| `POST /user/register` (默认 22 字符) | 400 invalid_auth_step |
+
+OpenAI 设计上对已注册 `page.type=login_password` 账号**所有切换路径全拒**。唯一办法：**从 step 1 就让 OpenAI 给 OTP path，不要进入 login_password state**。
+
+**修复** (`chatgpt_register/liveness_login.py`)：
+
+1. step 1B `POST signin/openai` 加 query params（参考 protocol_register.py:590-600）：
+   - `screen_hint=login_or_signup` ← 关键标志
+   - `login_hint=email` / `prompt=login` / `ext-oai-did` / `auth_session_logging_id`
+2. step 1 末尾检测 `final_url`：含 `/email-verification` 则**跳过 step 2 POST authorize/continue**（避免把 session 切回 login_password 触发死局），直接进 step 3 IMAP poll OTP
+
+**实测 `okrlx9229`**（v2.42.x batch login_fail）：
+
+```
+Step 1 OK: final_url=https://auth.openai.com/email-verification
+Step 1 final_path /email-verification — 跳过 step 2
+Step 3: IMAP poll OTP
+```
+
+流程根本性修通。OTP timeout 是 sing-box 节点 IMAP 不稳 v2.42.x known issue，跟本修复无关。
+
+**参考项目**：`Gpt-Agreement-Payment/CTF-reg/auth_flow.py` 验证 endpoint shape，`protocol_register.py:590` 验证 signin_params 设计。
+
+**测试**：304 Node + 17 Python (3 skip) pass。
+
 ## v2.42.2 — 2026-05-27
 
 ### 修 sing-box reload 端口冲突 bug
