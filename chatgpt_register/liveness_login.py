@@ -230,15 +230,29 @@ def login(email, password, login_type, client_id, refresh_token, totp_secret, pr
     _log(f"Step 1 OK: status={r_auth.status_code} cookies={len(session.cookies)} final_url={str(r_auth.url)[:80]}")
 
     # Step 2: POST /api/accounts/authorize/continue → 触发 OTP 邮件
+    #   关键 headers：
+    #     openai-sentinel-token = QuickJS 跑 OpenAI sdk.js 生成的 token，没这个 OpenAI 会
+    #       silent-drop OTP 邮件下发（200 OK 假成功但邮件根本不发）
+    #     oai-device-id = 第一行 session.cookies.set 的同一个 uuid
+    #     ext-passkey-client-capabilities = passkey 能力声明，protocol_register.py 也带
     _log("Step 2: POST authorize/continue")
+    try:
+        sentinel = get_sentinel_token(session, device_id, flow="authorize_continue",
+                                     user_agent=session.headers.get("User-Agent", "")) or ""
+    except Exception as _e:
+        _log(f"sentinel token fail (continue 用空): {str(_e)[:50]}")
+        sentinel = ""
     try:
         r2 = session.post(
             f"{_AUTH}/api/accounts/authorize/continue",
             headers={
-                "Content-Type": "application/json",
                 "Accept": "application/json",
+                "Content-Type": "application/json",
                 "Origin": _AUTH,
-                "Referer": f"{_AUTH}/log-in",
+                "Referer": str(r_auth.url),  # step 1 final URL（chatgpt.com → auth.openai.com chain 后的 /log-in）
+                "oai-device-id": device_id,
+                "openai-sentinel-token": sentinel,
+                "ext-passkey-client-capabilities": "conditional-create,conditional-get",
             },
             json={"username": {"kind": "email", "value": email}},
             timeout=30,
@@ -249,10 +263,25 @@ def login(email, password, login_type, client_id, refresh_token, totp_secret, pr
             raise Exception("proxy reset (login)")
         raise Exception(f"unexpected: authorize/continue {msg[:40]}")
 
-    if r2.status_code in (403, 429):
+    if r2.status_code in (429,) or r2.status_code >= 500:
         raise Exception(f"proxy reset (login): HTTP {r2.status_code}")
-    if r2.status_code >= 500:
-        raise Exception(f"proxy reset (login): HTTP {r2.status_code}")
+
+    body_text = r2.text or ""
+    # protocol_register.py line 646: deactivated 在 authorize/continue response body
+    # 就能识别（不需要走到 step 4）。OpenAI 给 deactivated 账号返回 HTTP 200 但 body
+    # 含 account_deactivated / account_disabled，这是 short-circuit 信号。
+    if "account_deactivated" in body_text or "account_disabled" in body_text:
+        _log("Step 2: account_deactivated detected (short-circuit, no OTP needed)")
+        raise Exception("deactivated: account_deactivated")
+
+    if r2.status_code in (403,):
+        # 排除 Cloudflare 模板
+        _body_lower = body_text.lower()
+        if any(kw in _body_lower for kw in ('cloudflare', 'just a moment', 'challenge-platform')):
+            raise Exception(f"proxy reset (login): Cloudflare HTTP {r2.status_code}")
+        # 其他 403 视作 login_fail
+        raise Exception(f"login_fail: authorize/continue HTTP 403 body={body_text[:80]}")
+
     try:
         j2 = r2.json()
     except Exception:
@@ -262,12 +291,18 @@ def login(email, password, login_type, client_id, refresh_token, totp_secret, pr
         err = (j2.get("error") or {}).get("code") or "unknown"
         if err == "unknown_user" or err == "invalid_email":
             raise Exception(f"login_fail: authorize/continue {err}")
+        if err == "invalid_state":
+            # invalid_state 应该被 step 1 修复后不再出现；如果还出现说明 sentinel/headers
+            # 仍有缺失，归 login_fail 不要静默吞
+            raise Exception(f"login_fail: invalid_state (sentinel/header missing?)")
         raise Exception(f"login_fail: authorize/continue HTTP {r2.status_code} code={err}")
 
     page_type = (j2.get("page") or {}).get("type")
     if page_type != "email_otp_verification":
+        # 可能是 password_login（账号还没切到 passwordless）—— 这种情况下 protocol 侧
+        # 暂不支持（YAGNI），归 login_fail
         raise Exception(f"login_fail: unexpected page.type={page_type}")
-    _log(f"Step 2 OK: page.type={page_type}")
+    _log(f"Step 2 OK: page.type={page_type} sentinel={'yes' if sentinel else 'NO'}")
 
     # Step 3: IMAP 取 OTP（Outlook 路径；Gmail TOTP 不在本 flow 范围）
     if login_type != "outlook":
@@ -291,13 +326,21 @@ def login(email, password, login_type, client_id, refresh_token, totp_secret, pr
     # Step 4: POST /api/accounts/email-otp/validate → 拿 chatgpt.com session cookies
     _log("Step 4: POST email-otp/validate")
     try:
+        sentinel4 = get_sentinel_token(session, device_id, flow="email_otp_validate",
+                                      user_agent=session.headers.get("User-Agent", "")) or ""
+    except Exception as _e:
+        _log(f"sentinel token fail (validate 用空): {str(_e)[:50]}")
+        sentinel4 = ""
+    try:
         r4 = session.post(
             f"{_AUTH}/api/accounts/email-otp/validate",
             headers={
-                "Content-Type": "application/json",
                 "Accept": "application/json",
+                "Content-Type": "application/json",
                 "Origin": _AUTH,
                 "Referer": f"{_AUTH}/email-verification",
+                "oai-device-id": device_id,
+                "openai-sentinel-token": sentinel4,
             },
             json={"code": otp},
             allow_redirects=True,
