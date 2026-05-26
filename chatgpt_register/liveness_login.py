@@ -160,9 +160,16 @@ def login(email, password, login_type, client_id, refresh_token, totp_secret, pr
             raise Exception("proxy reset (login)")
         raise Exception(f"unexpected: navigation {msg[:40]}")
 
+    # v2.41.4: HTTP 5xx 或 body 空 / 过短 → connection 被服务端 close（OpenAI/Cloudflare 限速）
+    #   不归到"no state"误报；HTTP 200 + body 完整但 state 缺失才算 page 结构变
+    if r.status_code >= 500:
+        raise Exception(f"proxy reset (login): HTTP {r.status_code}")
+    body_len = len(r.text or "")
+    if body_len < 500:
+        raise Exception(f"proxy reset (login): HTTP {r.status_code} body_len={body_len}")
     state, _csrf = _parse_state_from_authorize_page(r)
     if not state:
-        raise Exception("unexpected: no state in authorize page")
+        raise Exception(f"unexpected: authorize page structure changed (HTTP {r.status_code}, body_len={body_len}, url={str(r.url)[:80]})")
 
     # Step 2: submit username
     _log("Step 2: submit username")

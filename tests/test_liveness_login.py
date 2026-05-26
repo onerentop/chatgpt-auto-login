@@ -65,10 +65,13 @@ class LivenessLoginTest(unittest.TestCase):
 
     def test_Y2_bad_password_raises(self):
         """Y2: password POST returns URL with error=invalid → raises 'bad password'."""
+        # v2.41.4: authorize GET body must be >=500 chars (新加的 partial-response guard)。
+        # 真实 authorize page 是完整 HTML，这里给个占位 body 满足体积阈值。
+        _filler_body = '<html>' + ('x' * 600) + '</html>'
         # Mock session that returns redirect with error=invalid on password POST
         fake_session = MagicMock()
         # Step 1 authorize GET — return state in URL query
-        fake_session.get.return_value = MagicMock(url='https://auth.openai.com/u/login/identifier?state=test_state', text='', status_code=200)
+        fake_session.get.return_value = MagicMock(url='https://auth.openai.com/u/login/identifier?state=test_state', text=_filler_body, status_code=200)
         # Step 2 identifier POST — succeed
         # Step 3 password POST — return error=invalid in URL
         fake_session.post.side_effect = [
@@ -85,13 +88,15 @@ class LivenessLoginTest(unittest.TestCase):
 
     def test_Y3_happy_path_returns_three_fields(self):
         """Y3: full happy path with OTP returns {accessToken, accountId, expiresAtIso}."""
+        # v2.41.4: authorize GET body must be >=500 chars (新加的 partial-response guard)。
+        _filler_body = '<html>' + ('x' * 600) + '</html>'
         fake_session = MagicMock()
         # Step 1 authorize: URL has state
         # Step 3 password POST: redirects to email-otp challenge
         # Step 5 OTP POST: redirects to chatgpt.com callback
         # Step 7 session GET: returns accessToken
         fake_session.get.side_effect = [
-            MagicMock(url='https://auth.openai.com/u/login/identifier?state=s1', text='', status_code=200),
+            MagicMock(url='https://auth.openai.com/u/login/identifier?state=s1', text=_filler_body, status_code=200),
             MagicMock(url='https://chatgpt.com/', status_code=200, json=lambda: {
                 'accessToken': 'eyJ.test_token',
                 'user': {'id': 'acc_123'},

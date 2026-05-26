@@ -2,8 +2,10 @@
 // Batch dispatcher for liveness probes. Pure orchestration: takes injectable
 // checker / lightLogin / codexFile / statusDB / io.
 
-const CONCURRENCY = 3;
-const THROTTLE_MS = 1_000;
+// v2.41.4: 5 并发触发 OpenAI/Cloudflare 限速所有 IP 风控 → 改 1 顺序 + 3s 间隔。
+// 慢但稳；用户量大需要并发可手动改这两个常量或后续做 env 配置。
+const CONCURRENCY = 1;
+const THROTTLE_MS = 3_000;
 
 const REASON_MAX = 60;
 function clipReason(s) { return String(s || '').slice(0, REASON_MAX); }
