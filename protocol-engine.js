@@ -735,7 +735,11 @@ class ProtocolEngine extends EventEmitter {
           console.log(`[${progress}] Auto-filling payment...`);
           let paymentResult = { success: false };
           try {
-            const slot = runtimeCfg.phoneSlots?.[0] || { phone: runtimeCfg.phone, smsApiUrl: runtimeCfg.smsApiUrl };
+            // v2.43.3: 每账号重读 config.json (mirror PipelineEngine server/engine.js:548-550).
+            //   让用户运行时改 config (e.g. 切手机号池) 不用重启 batch。
+            //   path / fs / ROOT 已 import (line 6/7/23)。
+            const freshCfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf-8'));
+            const slot = freshCfg.phoneSlots?.[0] || { phone: freshCfg.phone, smsApiUrl: freshCfg.smsApiUrl };
             paymentResult = await autoPayment(page, { phone: slot.phone, smsApiUrl: slot.smsApiUrl, email: account.email }, { signal: this._abortController.signal }) || { success: false };
           } catch (e) {
             if (e.code === 'NOT_FREE_TRIAL') {
