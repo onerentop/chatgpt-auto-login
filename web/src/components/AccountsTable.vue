@@ -38,20 +38,20 @@
       </template>
     </el-table-column>
     <el-table-column type="index" label="#" width="50" />
-    <el-table-column prop="email" label="邮箱" min-width="220" />
-    <el-table-column prop="loginType" label="类型" width="90">
+    <el-table-column prop="email" label="邮箱" min-width="220" sortable />
+    <el-table-column prop="loginType" label="类型" width="90" sortable>
       <template #default="{ row }">
         <el-tag :type="row.loginType === 'Google' ? 'danger' : 'warning'" size="small">{{ row.loginType }}</el-tag>
       </template>
     </el-table-column>
-    <el-table-column label="计划" width="80">
+    <el-table-column label="计划" width="80" sortable :sort-method="byPlan">
       <template #default="{ row }">
         <el-tag v-if="row._plan === 'plus'" type="success" size="small">Plus</el-tag>
         <el-tag v-else-if="row._plan === 'free'" size="small">Free</el-tag>
         <span v-else style="color:#c0c4cc">-</span>
       </template>
     </el-table-column>
-    <el-table-column label="活性" width="120">
+    <el-table-column label="活性" width="120" sortable :sort-method="byAliveStatus">
       <template #default="{ row }">
         <el-tooltip v-if="row._aliveReason" :content="row._aliveReason" placement="top">
           <el-tag :type="aliveStatusType(row._aliveStatus)" size="small">
@@ -63,7 +63,7 @@
         </el-tag>
       </template>
     </el-table-column>
-    <el-table-column label="上次测活" width="120">
+    <el-table-column label="上次测活" width="120" sortable :sort-method="byAliveCheckedAt">
       <template #default="{ row }">
         <span v-if="row._aliveCheckedAt" :title="row._aliveCheckedAt" style="color:#909399">
           {{ formatRelative(row._aliveCheckedAt) }}
@@ -77,7 +77,7 @@
         <el-button size="small" text @click.stop="row._showPw = !row._showPw">{{ row._showPw ? '隐' : '显' }}</el-button>
       </template>
     </el-table-column>
-    <el-table-column label="凭证" width="120">
+    <el-table-column label="凭证" width="120" sortable :sort-method="byHasAuth">
       <template #default="{ row }">
         <!-- 三个圆点：是否设置。绿=有 灰=空。点击 '查' 弹出 popover
              展示完整字段 + 复制按钮，避免主表挤 4 个长字段列。 -->
@@ -135,6 +135,7 @@
 <script setup>
 import { ref, watch } from 'vue'
 import { aliveStatusType, aliveStatusLabel, rowClassFor } from '../status'
+import { byPlan, byAliveStatus, byAliveCheckedAt, byHasAuth } from '../sortHelpers'
 
 const props = defineProps({
   rows: { type: Array, required: true },

@@ -205,6 +205,7 @@ import PageHeader from '../components/ui/PageHeader.vue'
 import SectionCard from '../components/ui/SectionCard.vue'
 import ContextActionBar from '../components/ui/ContextActionBar.vue'
 import AccountsTable from '../components/AccountsTable.vue'
+import { ALIVE_TIER, PLAN_PRIORITY } from '../sortHelpers'
 
 // 平铺视图下指向单个 AccountsTable；分组视图下指向 ref map（每组一个）。
 const flatTableRef = ref(null)
@@ -362,18 +363,8 @@ function groupTagTypeOf(key) {
   }
 }
 
-// v2.41.6: 分组排序优先级 — 能用 (priority 小) 排前，不能用排后
-const ALIVE_TIER = {
-  // 能用 (tier 0)
-  plus: 0,
-  // 未知 / 介于 (tier 1) — 测活失败 / canceled 等可恢复 / 未测试
-  unknown: 1, checking: 1, canceled: 1, proxy_error: 1, network_error: 1,
-  // 不能用 (tier 2)
-  deactivated: 2, login_fail: 2, token_expired: 2,
-}
-
-const PLAN_PRIORITY = { plus: 0, unknown: 1, free: 2 }
-
+// v2.41.7: ALIVE_TIER / PLAN_PRIORITY 已抽到 sortHelpers.js（共享 AccountsTable
+// / AccountTableRows 的列排序）。这里 import 复用，保持业务语义一致。
 function groupPriority(key) {
   if (groupBy.value === 'plan') return PLAN_PRIORITY[key] ?? 99
   if (groupBy.value === 'alive_status') return ALIVE_TIER[key] ?? 99

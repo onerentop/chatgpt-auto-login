@@ -11,30 +11,30 @@
   >
     <el-table-column type="selection" width="45" :reserve-selection="true" />
     <el-table-column type="index" label="#" width="50" />
-    <el-table-column prop="email" label="邮箱" min-width="220" />
-    <el-table-column prop="loginType" label="类型" width="85">
+    <el-table-column prop="email" label="邮箱" min-width="220" sortable />
+    <el-table-column prop="loginType" label="类型" width="85" sortable>
       <template #default="{ row }">
         <el-tag :type="row.loginType === 'Google' ? 'danger' : 'warning'" size="small">{{ row.loginType }}</el-tag>
       </template>
     </el-table-column>
-    <el-table-column label="计划" width="80">
+    <el-table-column label="计划" width="80" sortable :sort-method="byPlan">
       <template #default="{ row }">
         <el-tag v-if="row._plan === 'plus'" type="success" size="small">Plus</el-tag>
         <el-tag v-else-if="row._plan === 'free'" size="small">Free</el-tag>
         <span v-else style="color:var(--app-text-mute)">-</span>
       </template>
     </el-table-column>
-    <el-table-column label="状态" width="110">
+    <el-table-column label="状态" width="110" sortable :sort-method="byExecuteStatus">
       <template #default="{ row }">
         <el-tag :type="statusType(row._status)" size="small">{{ statusLabel(row._status) }}</el-tag>
       </template>
     </el-table-column>
-    <el-table-column label="阶段" width="100">
+    <el-table-column label="阶段" width="100" sortable :sort-method="(a, b) => (a._phase || '').localeCompare(b._phase || '')">
       <template #default="{ row }">
         <span style="color:var(--app-text-3)">{{ row._phase || '-' }}</span>
       </template>
     </el-table-column>
-    <el-table-column label="Auth" width="120">
+    <el-table-column label="Auth" width="120" sortable :sort-method="byHasAuth">
       <template #default="{ row }">
         <template v-if="row._hasAuth">
           <el-button size="small" text type="success" @click="emit('auth-download', { email: row.email, format: 'cpa' })">CPA</el-button>
@@ -43,7 +43,7 @@
         <span v-else style="color:var(--app-text-mute)">-</span>
       </template>
     </el-table-column>
-    <el-table-column label="原因" min-width="120" show-overflow-tooltip>
+    <el-table-column label="原因" min-width="120" show-overflow-tooltip sortable :sort-method="(a, b) => (a._reason || '').localeCompare(b._reason || '')">
       <template #default="{ row }">
         <span v-if="row._reason" :style="row._status === 'deactivated' ? 'color:var(--app-danger)' : 'color:var(--app-text-3)'">
           {{ row._reason }}
@@ -98,6 +98,7 @@
 <script setup>
 import { ref, watch } from 'vue'
 import { statusType, statusLabel, isFailedToRetry, rowClassFor } from '../status'
+import { byPlan, byExecuteStatus, byHasAuth } from '../sortHelpers'
 
 const props = defineProps({
   rows: { type: Array, required: true },
