@@ -51,15 +51,19 @@
         <span v-else style="color:#c0c4cc">-</span>
       </template>
     </el-table-column>
-    <el-table-column label="活性" width="120" sortable :sort-method="byAliveStatus">
+    <el-table-column label="活性" width="160" sortable :sort-method="byAliveStatus">
       <template #default="{ row }">
-        <el-tooltip v-if="row._aliveReason" :content="row._aliveReason" placement="top">
-          <el-tag :type="aliveStatusType(row._aliveStatus)" size="small">
-            {{ aliveStatusLabel(row._aliveStatus) }}
-          </el-tag>
-        </el-tooltip>
-        <el-tag v-else :type="aliveStatusType(row._aliveStatus)" size="small">
+        <el-tag :type="aliveStatusType(row._aliveStatus)" size="small">
           {{ aliveStatusLabel(row._aliveStatus) }}
+        </el-tag>
+        <el-tag
+          v-if="row._aliveStatus === 'plus'"
+          :type="row._hasRefreshToken ? 'success' : 'warning'"
+          size="small"
+          style="margin-left: 4px"
+          effect="plain"
+        >
+          {{ row._hasRefreshToken ? 'RT' : '无RT' }}
         </el-tag>
       </template>
     </el-table-column>

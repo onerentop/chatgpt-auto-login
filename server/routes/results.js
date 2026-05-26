@@ -12,6 +12,15 @@ function emailToAuthFilename(email, format = 'cpa') {
   return format === 'sub2api' ? `sub2api-${sanitized}.json` : `codex-${sanitized}.json`;
 }
 
+function hasRefreshTokenInCPA(email) {
+  const f = path.join(CPA_AUTH_DIR, emailToAuthFilename(email, 'cpa'));
+  if (!fs.existsSync(f)) return false;
+  try {
+    const j = JSON.parse(fs.readFileSync(f, 'utf-8'));
+    return !!(j.refresh_token && j.refresh_token.length > 10);
+  } catch { return false; }
+}
+
 // GET / — list all account statuses
 router.get('/', (req, res) => {
   try {
@@ -23,6 +32,7 @@ router.get('/', (req, res) => {
       progress: s.progress,
       reason: s.reason,
       hasAuthFile: s.has_auth_file === 1 || fs.existsSync(path.join(CPA_AUTH_DIR, emailToAuthFilename(s.email, 'cpa'))) || fs.existsSync(path.join(CPA_AUTH_DIR, emailToAuthFilename(s.email, 'sub2api'))),
+      hasRefreshToken: hasRefreshTokenInCPA(s.email),
       updatedAt: s.updated_at,
       proxyNode: s.proxy_node || '',
       exitIp: s.exit_ip || '',

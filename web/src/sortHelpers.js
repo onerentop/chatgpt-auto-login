@@ -36,8 +36,14 @@ export function byPlan(a, b) {
   return (PLAN_PRIORITY[a._plan] ?? 99) - (PLAN_PRIORITY[b._plan] ?? 99)
 }
 
+function aliveStatusTier(status, hasRT) {
+  if (status === 'plus') return hasRT ? 0 : 0.5
+  return ALIVE_TIER[status] ?? 99
+}
+
 export function byAliveStatus(a, b) {
-  return (ALIVE_TIER[a._aliveStatus] ?? 99) - (ALIVE_TIER[b._aliveStatus] ?? 99)
+  return aliveStatusTier(a._aliveStatus, a._hasRefreshToken) -
+         aliveStatusTier(b._aliveStatus, b._hasRefreshToken)
 }
 
 export function byExecuteStatus(a, b) {

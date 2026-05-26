@@ -420,6 +420,7 @@ async function load() {
       const plan = PLUS_STATUSES.includes(st) ? 'plus' : (ERROR_STATUSES.includes(st) ? 'free' : '')
       return {
         ...a, _showPw: false, _status: st || 'idle', _plan: plan, _hasAuth: !!r.hasAuthFile,
+        _hasRefreshToken: r.hasRefreshToken === true,
         _aliveStatus: r.alive_status || 'unknown',
         _aliveReason: r.alive_reason || '',
         _aliveCheckedAt: r.alive_checked_at || '',
