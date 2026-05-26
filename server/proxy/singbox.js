@@ -176,13 +176,49 @@ async function start(configJson) {
 
 async function stop() {
   if (!_proc) return;
-  return new Promise((resolve) => {
-    const p = _proc;
-    _proc = null;
-    p.once('exit', () => resolve());
-    try { p.kill(); } catch { resolve(); }
-    setTimeout(resolve, 3000);
+  const p = _proc;
+  const cfgPathSnapshot = _configPath;  // 进程退出前 snapshot，stop 内 _proc=null 不会丢
+  _proc = null;
+
+  // (1) kill + 等 exit (最多 3s)
+  await new Promise((resolve) => {
+    let done = false;
+    const finish = () => { if (!done) { done = true; resolve(); } };
+    p.once('exit', finish);
+    try { p.kill(); } catch { finish(); }
+    setTimeout(finish, 3000);
   });
+
+  // (2) 等 port 真正释放 (50ms 间隔 probe，最多 2s)
+  //   修 v2.42.0 已知 bug: process exit ≠ OS port 释放 (Windows TCP_TIME_WAIT)。
+  //   reloadSingbox = stop + start 时 start 立刻 spawn 新 sing-box 抢 port 失败。
+  //   用 net.createServer().listen() 测能 bind = OS 已释放。
+  if (cfgPathSnapshot && fs.existsSync(cfgPathSnapshot)) {
+    try {
+      const cfg = JSON.parse(fs.readFileSync(cfgPathSnapshot, 'utf-8'));
+      const ports = (cfg.inbounds || [])
+        .filter((ib) => ib && ['mixed', 'http', 'socks'].includes(ib.type))
+        .map((ib) => ib.listen_port)
+        .filter(Boolean);
+      if (ports.length === 0) return;
+      const net = require('net');
+      const isPortFree = (port) => new Promise((resolve) => {
+        const srv = net.createServer();
+        srv.once('error', () => resolve(false));
+        srv.once('listening', () => { srv.close(() => resolve(true)); });
+        srv.listen(port, '127.0.0.1');
+      });
+      const startTs = Date.now();
+      while (Date.now() - startTs < 2000) {
+        const results = await Promise.all(ports.map(isPortFree));
+        if (results.every(Boolean)) return;
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      console.warn(`[sing-box] stop: ports ${ports.join(',')} still occupied after 2s, proceeding anyway`);
+    } catch (e) {
+      console.warn(`[sing-box] stop: port check failed: ${String(e.message || e).slice(0, 60)}`);
+    }
+  }
 }
 
 function isRunning() { return !!_proc; }
