@@ -1,5 +1,48 @@
 # Changelog
 
+## v2.42.1 — 2026-05-27
+
+### 代理配置清理 + 黑名单 UI 升级
+
+v2.42.0 sing-box urltest 改造后 housekeeping。删 3 个已被 urltest 接管的废弃字段；Config 代理 tab 简化（状态显示转 Dashboard ProxyPanel）；黑名单 tab 升级支持 reason / 解禁时间 / 批量 unban。
+
+**删除（v2.42 后已废弃）**：
+
+- `config.proxy.rotationStrategy` / `proxy.jpCheckout.rotationStrategy` — urltest 内部自动 latency-based 选最优
+- `config.proxy.activeHealthCheck` — urltest 内置 probe (interval 3m)
+- `server/proxy/index.js` `_state.rotationStrategy` / `rotationIndex` / `rotationKeyword` 等 state 字段
+- `getState()` 返回的 `rotationStrategy` / `rotationIndex` / `rotationKeyword` 字段
+- Config 代理 tab：rotationStrategy radio UI + "代理状态" / "JP 通道状态" 显示块（转 Dashboard ProxyPanel）
+- `proxyStatus` ref + `loadProxyStatus()` 函数 + 周期 setInterval
+- `FAIL_THRESHOLD` 常量引用（v2.42 fail-counter 已删）
+
+**新增 / 升级**：
+
+- `GET /api/proxy/blacklist` 返回结构 **superset**：含 `reason` + `bannedUntil` 字段（向后兼容 v2.30 旧 `addedAt` / `tag` 字段）
+- `POST /api/proxy/clear-blacklist` 新增 — 按 channel 批量 unban
+- Config 黑名单 tab：
+  - **reason 列**：Cloudflare 风控 / 速率限制 / 连接重置 等中文 tag (按类型上色)
+  - **解禁时间列**：倒计时 "X min 后" / "X s 后" / "已过期"
+  - **单个解禁按钮**：调 `POST /proxy/unban-node`
+  - **清空按钮改批量 unban**：调 `POST /proxy/clear-blacklist` + 确认对话框
+  - 说明文改写："业务遇 Cloudflare / rate_limited / connection_reset 等风控自动加入，默认 5 分钟过期"
+  - `normalizeBlacklist` 双轨 fallback：兼容 v2.42.1 新 schema + v2.30 旧 schema + 字符串数组形态
+- Config 代理 tab 加引导链接 → Dashboard ProxyPanel 看实时状态
+
+**向后兼容**：
+
+- 老 `config.json` 含废字段 → server 启动忽略不报错
+- v2.30 旧 `currentNode` / `nodeTags` / `exitIp` 等 status 字段保留（其他模块可能用）
+- 前端兼容新 / 旧 / 字符串数组三种 blacklist API 返回 shape
+
+**Known issues**（v2.42.0 既有，v2.42.1 未修）：
+
+- sing-box reload 期间 stop+start 偶发端口冲突（旧 sing-box 进程未完全 exit 时新 start 失败）— 仅影响 ban-node API 触发的 reload，主流量不影响。后续单独 spec 处理
+
+**改动量**：净减 ~110 行（删 153 行 + 加 43 行）。
+
+详见 `docs/superpowers/specs/2026-05-26-proxy-config-cleanup-design.md` 和 `docs/superpowers/plans/2026-05-26-proxy-config-cleanup.md`。
+
 ## v2.42.0 — 2026-05-26
 
 ### 系统级透明代理 + 自动 Failover
