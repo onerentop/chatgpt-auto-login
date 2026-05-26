@@ -1,5 +1,39 @@
 # Changelog
 
+## v2.41.13 — 2026-05-26
+
+### Liveness `authorize page structure changed` 归 unknown 立即 break
+
+v2.41.12 加了 `path=/email-verification|path=/api/accounts` 关键词覆盖 fallback message，但实测 liabhzo717818 raise 含 `path=/authorize`（GET 没 redirect 到 /log-in，拿到完整 OAuth form HTML 但 `<input name="state">` regex 拿不到），仍归 `network_error` retry 3 次。
+
+**真因**：OpenAI 改 authorize page form 结构，`_parse_state_from_authorize_page` regex 跟不上。跟账号 / 代理无关，需要人工排查 regex。
+
+**修复** (`server/liveness/runner.js`)：
+
+```js
+else if (/page structure|page format/i.test(msg)) {
+  result = { alive_status: 'unknown', alive_reason: 'authorize page structure changed (needs regex update)' };
+}
+```
+
+插在 token_expired case 之后、proxy reset case 之前。`unknown` 不是 `network_error`，runner.js 既有 `if (result.alive_status !== 'network_error') break;` 自动跳出，不再 3 次无意义 retry。
+
+**测试**：218 Node + 17 Python pass。
+
+## v2.41.12 — 2026-05-26
+
+### runner.js token_expired 关键词扩展 + final_path debug log
+
+v2.41.10 加了 `_final_path.startswith('/email-verification')` 分支 raise `token_expired: OAuth jumped to ...`，runner.js 识别 `jumped to \/email-verification` 关键词。但实测仍归 network_error — raise 走 fallback `unexpected: authorize page structure changed (..., path=/email-verification)`（`_parse_state` 返了非空但无效 state，跳过 token_expired 分支；或者 path 不在白名单内）。
+
+**修复**：
+
+- **`server/liveness/runner.js`** token_expired 正则**扩展**也匹 fallback message 里 `path=\/email-verification|path=\/api\/accounts` 字面
+- `server/liveness/runner.js` network_error fallback message slice 40 → 80 字符（path 保留进 DB 便于诊断）
+- **`chatgpt_register/liveness_login.py`** Step 1 GET 后加 `_log(f"Step 1 GET response: status=... body_len=... path=...")` debug 输出 final_path
+
+**测试**：218 Node + 17 Python pass。
+
 ## v2.41.11 — 2026-05-26
 
 ### Liveness HTTP 403 Cloudflare challenge 归 proxy_error（不再 retry 3 次浪费）
