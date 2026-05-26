@@ -167,6 +167,11 @@ def login(email, password, login_type, client_id, refresh_token, totp_secret, pr
     body_len = len(r.text or "")
     if body_len < 500:
         raise Exception(f"proxy reset (login): HTTP {r.status_code} body_len={body_len}")
+    # v2.41.9: OpenAI OAuth /error 页（账号问题，非 deactivated 但 OAuth flow 错）→ 直接 login_fail，不要 retry
+    from urllib.parse import urlparse as _urlparse_v2419
+    _final_path = _urlparse_v2419(str(r.url)).path
+    if _final_path == '/error' or _final_path.endswith('/error'):
+        raise Exception(f"login_fail: OAuth /error redirect (url={str(r.url)[:80]})")
     state, _csrf = _parse_state_from_authorize_page(r)
     if not state:
         raise Exception(f"unexpected: authorize page structure changed (HTTP {r.status_code}, body_len={body_len}, url={str(r.url)[:80]})")

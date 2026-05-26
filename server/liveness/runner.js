@@ -116,6 +116,9 @@ function createRunner({ io, statusDB, accountsDB, checker, lightLogin, codexFile
           else if (/otp/i.test(msg)) result = { alive_status: 'login_fail', alive_reason: msg.includes('timeout') ? 'otp timeout' : 'otp fail' };
           else if (/captcha/i.test(msg)) result = { alive_status: 'login_fail', alive_reason: 'captcha' };
           else if (/no session/i.test(msg)) result = { alive_status: 'login_fail', alive_reason: 'no session after login' };
+          else if (/oauth.*\/error|oauth\s*error|OAuth.*redirect/i.test(msg)) {
+            result = { alive_status: 'login_fail', alive_reason: 'OAuth /error page' };
+          }
           else if (/proxy reset|ECONNRESET/i.test(msg)) result = { alive_status: 'proxy_error', alive_reason: 'proxy reset (login)' };
           else result = { alive_status: 'network_error', alive_reason: `unexpected: ${msg.slice(0, 40)}` };
         }
