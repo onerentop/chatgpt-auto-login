@@ -44,7 +44,7 @@ function verifyCheckoutIsFree(link, pk) {
       resolve({ ok: false, reason: 'invalid_pk' });
       return;
     }
-    const proxy = proxyMgr.getProxyUrl() || '';
+    // v2.42: 不再显式传 proxy，stripe_init.py 走 HTTPS_PROXY env (curl_cffi 自动识别)
     // Captured at function entry: if an external caller (e.g., UI Rotate button) rotates
     // mid-call during the up-to-15s Python wait, we'll attribute the outcome to the node
     // that was actually used for the Stripe request — not whatever node is current when
@@ -118,7 +118,7 @@ function verifyCheckoutIsFree(link, pk) {
       reportOk();
       resolve(parseInitResponse(parsed.data));
     });
-    py.stdin.write(JSON.stringify({ cs_id: csId, pk, proxy }));
+    py.stdin.write(JSON.stringify({ cs_id: csId, pk }));
     py.stdin.end();
   });
 }

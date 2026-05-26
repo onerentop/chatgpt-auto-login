@@ -61,7 +61,8 @@ const ROOT = __dirname;
   console.log('\n=== Step 2/5: Launch Chrome for login ===');
   const loginPort = 19790;
   const loginTemp = path.join(os.tmpdir(), 'verify-t3-login-' + Date.now());
-  const loginChrome = launchChrome(loginPort, loginTemp, { proxyServer: proxy.getProxyUrl() || undefined });
+  // v2.42: 不再显式传 proxyServer，launchChrome 默认读 process.env.HTTPS_PROXY
+  const loginChrome = launchChrome(loginPort, loginTemp, {});
 
   let accessToken = '';
   let renderProc = null;

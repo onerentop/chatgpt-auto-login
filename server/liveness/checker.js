@@ -9,13 +9,10 @@
 
 const { spawn } = require('child_process');
 const path = require('path');
-let proxyMgr;  // lazy require to avoid cycle at module load
-function getProxyUrl() {
-  try {
-    proxyMgr = proxyMgr || require('../proxy');
-    return proxyMgr.getProxyUrl() || '';
-  } catch { return ''; }
-}
+
+// v2.42: 系统级透明代理 —— 不再显式传 proxy_url 给 Python；
+// curl_cffi 在 Python 子进程里通过 HTTPS_PROXY env 自动识别（server/proxy/global.js
+// 已设置 env）。删除原 getProxyUrl() helper + effectiveProxy 处理。
 
 const SCRIPT = path.join(__dirname, '..', '..', 'chatgpt_register', 'liveness_probe.py');
 const FETCH_TIMEOUT_MS = 10_000;
@@ -69,7 +66,7 @@ function mapTerminal(parsed) {
 }
 
 async function probe(accessToken, opts = {}) {
-  const { signal, spawnImpl, proxyUrl } = opts;
+  const { signal, spawnImpl } = opts;
 
   // Local JWT exp check — short-circuit expired tokens (no Python spawn).
   const exp = decodeJwtExp(accessToken);
@@ -78,7 +75,6 @@ async function probe(accessToken, opts = {}) {
   }
 
   const doSpawn = spawnImpl || ((cmd, args, options) => spawn(cmd, args, options));
-  const effectiveProxy = (proxyUrl !== undefined) ? proxyUrl : getProxyUrl();
 
   return new Promise((resolve) => {
     let settled = false;
@@ -138,7 +134,7 @@ async function probe(accessToken, opts = {}) {
 
     const stdinPayload = JSON.stringify({
       access_token: accessToken,
-      proxy_url: effectiveProxy || null,
+      // v2.42: 不再传 proxy_url，Python 走 HTTPS_PROXY env
       // No `impersonate` field: lets the Python script rotate through its
       // _CHROME pool on Cloudflare-403 retry. chrome131 (the previous hard-
       // coded default) is currently 100% blocked; chrome146 / chrome142 /
@@ -153,9 +149,8 @@ const VERIFY_DEACTIVATED_SCRIPT = path.join(__dirname, '..', '..', 'chatgpt_regi
 const VERIFY_DEACTIVATED_TIMEOUT_MS = 14_000;  // 12s wall + 2s startup grace
 
 async function verifyDeactivated(account, opts = {}) {
-  const { signal, spawnImpl, proxyUrl, onLog } = opts;
+  const { signal, spawnImpl, onLog } = opts;
   const doSpawn = spawnImpl || ((cmd, args, options) => spawn(cmd, args, options));
-  const effectiveProxy = (proxyUrl !== undefined) ? proxyUrl : getProxyUrl();
 
   return new Promise((resolve) => {
     let settled = false;
@@ -217,7 +212,7 @@ async function verifyDeactivated(account, opts = {}) {
       email: account.email,
       client_id: account.client_id || '',
       refresh_token: account.refresh_token || '',
-      proxy_url: effectiveProxy || null,
+      // v2.42: 不再传 proxy_url，Python 走 HTTPS_PROXY env
     });
     try { py.stdin.write(stdinPayload); py.stdin.end(); } catch {}
   });

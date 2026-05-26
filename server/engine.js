@@ -273,7 +273,8 @@ class PipelineEngine extends EventEmitter {
             progress,
           });
           console.log(`${p} Phase 1: Login...`);
-          this._chromeProc = launchChrome(port, tempDir, { proxyServer: proxyMgr.getProxyUrl() || undefined });
+          // v2.42: 不再显式传 proxyServer，launchChrome 默认读 process.env.HTTPS_PROXY
+          this._chromeProc = launchChrome(port, tempDir, {});
           this._browser = await waitForCDP(port);
           browser = this._browser;
           loginResult = await loginAccount(browser, account);

@@ -86,9 +86,9 @@ function createRunner({ io, statusDB, accountsDB, checker, lightLogin, codexFile
       const needsRelogin = !tok || (probeRes && probeRes.alive_status === 'token_expired');
       if (needsRelogin) {
         try {
+          // v2.42: 不再显式传 proxyUrl，lightLogin/Python 走 HTTPS_PROXY env
           const fresh = await lightLogin(account, {
             protocolMode: config.protocolMode,
-            proxyUrl: getProxyMgr()?.getProxyUrl(),
             signal: abortSignal,
           });
           await codexFile.write(email, {

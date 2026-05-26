@@ -7,10 +7,16 @@ const { CONFIG: PAY_CONFIG } = require('../payment');
 // / discord.com/api even though all other automation is going via the proxy.
 // We use the main (US) channel — Discord doesn't care about geo and the main
 // channel is the stable one; JP-Checkout's :7891 stays reserved for OpenAI's
-// checkout endpoint. Both helpers return null when proxy is disabled, so
-// callers fall back to direct connections automatically.
+// checkout endpoint.
+//
+// v2.42: 系统级透明代理 —— WebSocket(ws) 的 `agent` 选项不会自动读 HTTPS_PROXY
+// env，必须显式构造 HttpsProxyAgent。URL 改为读 process.env.HTTPS_PROXY（spec §2.2
+// fallback），这样 server/proxy/global.js 设的 env 是唯一来源。同样 https.request
+// 也不会自动读 env，所以下方 _requestViaProxy 也保留显式 agent。
+// 已知限制 (Known issue)：fetch() (undici) 已通过 setGlobalDispatcher 走 env，
+// 但 ws / https 这两条仍依赖显式 agent。
 function _proxyUrlOrNull() {
-  try { return require('./proxy').getProxyUrl() || null; } catch { return null; }
+  return process.env.HTTPS_PROXY || null;
 }
 function _makeHttpsAgent() {
   const url = _proxyUrlOrNull();

@@ -31,7 +31,8 @@ function runProtocolRegister(account, engine) {
     if (engine) engine._pyProc = py;
     let settled = false;
     const timeout = setTimeout(() => { if (!settled) { settled = true; py.kill(); reject(new Error('Python timeout (120s)')); } }, 120000);
-    const input = JSON.stringify({ email: account.email, password: account.password, client_id: account.client_id || '', refresh_token: account.refresh_token || '', proxy: proxyMgr.getProxyUrl() });
+    // v2.42: 不再显式传 proxy，Python 走 HTTPS_PROXY env（global.js 已设）
+    const input = JSON.stringify({ email: account.email, password: account.password, client_id: account.client_id || '', refresh_token: account.refresh_token || '' });
     let stdout = '', stderr = '';
     py.stdout.on('data', (data) => {
       for (const line of data.toString().split('\n').filter(l => l.trim())) {
@@ -65,7 +66,8 @@ function runProtocolPKCE(account, engine) {
     if (engine) engine._pyProc = py;
     let settled = false;
     const timeout = setTimeout(() => { if (!settled) { settled = true; py.kill(); reject(new Error('PKCE Python timeout (180s)')); } }, 180000);
-    const input = JSON.stringify({ email: account.email, password: account.password, client_id: account.client_id || '', refresh_token: account.refresh_token || '', pkce: true, proxy: proxyMgr.getProxyUrl() });
+    // v2.42: 不再显式传 proxy，Python 走 HTTPS_PROXY env
+    const input = JSON.stringify({ email: account.email, password: account.password, client_id: account.client_id || '', refresh_token: account.refresh_token || '', pkce: true });
     let stdout = '', stderr = '';
     py.stdout.on('data', (data) => {
       for (const line of data.toString().split('\n').filter(l => l.trim())) {
@@ -682,7 +684,8 @@ class ProtocolEngine extends EventEmitter {
         try {
           this.emitStatus({ email: account.email, status: 'running', phase: 'payment', progress });
           console.log(`[${progress}] Opening payment: ${link}`);
-          chromeProc = launchChrome(port, tempDir, { proxyServer: proxyMgr.getProxyUrl() || undefined });
+          // v2.42: 不再显式传 proxyServer，launchChrome 默认读 process.env.HTTPS_PROXY
+          chromeProc = launchChrome(port, tempDir, {});
           browser = await waitForCDP(port);
           this._chromeProc = chromeProc;
           this._browser = browser;

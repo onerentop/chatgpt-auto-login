@@ -35,10 +35,10 @@ function toCstIso(input) {
 }
 
 async function lightLogin(account, opts = {}) {
-  const { protocolMode, playwrightConnect, getOtp, signal, proxyUrl } = opts;
+  const { protocolMode, playwrightConnect, getOtp, signal } = opts;
 
   if (protocolMode) {
-    return await protocolLightLogin(account, { signal, proxyUrl });
+    return await protocolLightLogin(account, { signal });
   }
 
   if (!account?.password) throw new Error('no password');
@@ -118,7 +118,7 @@ async function lightLogin(account, opts = {}) {
   }
 }
 
-async function protocolLightLogin(account, { signal, proxyUrl } = {}) {
+async function protocolLightLogin(account, { signal } = {}) {
   // Pre-flight contract checks — match the browser path's early validation
   // so callers see the same error keywords regardless of mode.
   if (!account?.password) throw new Error('no password');
@@ -126,6 +126,7 @@ async function protocolLightLogin(account, { signal, proxyUrl } = {}) {
     throw new Error('outlook oauth missing');
   }
 
+  // v2.42: 不再传 proxy，Python 走 HTTPS_PROXY env
   const input = JSON.stringify({
     email: account.email,
     password: account.password,
@@ -133,7 +134,6 @@ async function protocolLightLogin(account, { signal, proxyUrl } = {}) {
     client_id: account.client_id || '',
     refresh_token: account.refresh_token || '',
     totp_secret: account.totp_secret || '',
-    proxy: proxyUrl || '',
   });
 
   return new Promise((resolve, reject) => {
