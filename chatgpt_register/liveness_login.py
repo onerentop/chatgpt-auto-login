@@ -206,7 +206,48 @@ def login(email, password, login_type, client_id, refresh_token, totp_secret, pr
         raise Exception("otp timeout")
     _log(f"Step 3 OK: OTP={otp[:2]}****")
 
-    raise Exception("not_implemented: step 4-5 待 Task 4-5")
+    # Step 4: POST /api/accounts/email-otp/validate → 拿 chatgpt.com session cookies
+    _log("Step 4: POST email-otp/validate")
+    try:
+        r4 = session.post(
+            f"{_AUTH}/api/accounts/email-otp/validate",
+            headers={
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "Origin": _AUTH,
+                "Referer": f"{_AUTH}/email-verification",
+            },
+            json={"code": otp},
+            allow_redirects=True,
+            timeout=30,
+        )
+    except Exception as e:
+        msg = str(e)
+        if 'reset' in msg.lower():
+            raise Exception("proxy reset (login)")
+        raise Exception(f"unexpected: email-otp/validate {msg[:40]}")
+
+    if r4.status_code in (403, 429) and r4.status_code != 403:
+        raise Exception(f"proxy reset (login): HTTP {r4.status_code}")
+    if r4.status_code >= 500:
+        raise Exception(f"proxy reset (login): HTTP {r4.status_code}")
+
+    if r4.status_code >= 400:
+        try:
+            j4 = r4.json()
+            err = (j4.get("error") or {}).get("code") or "unknown"
+        except Exception:
+            err = "parse_error"
+        if err == "account_deactivated":
+            raise Exception("deactivated: account_deactivated")
+        if err == "invalid_code":
+            raise Exception("login_fail: invalid_code")
+        if err == "rate_limited":
+            raise Exception(f"proxy reset (login): rate_limited")
+        raise Exception(f"login_fail: email-otp/validate code={err}")
+    _log(f"Step 4 OK: HTTP {r4.status_code} cookies={len(session.cookies)}")
+
+    raise Exception("not_implemented: step 5 待 Task 5")
 
 
 def main():
