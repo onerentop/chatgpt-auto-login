@@ -191,16 +191,25 @@ def login(email, password, login_type, client_id, refresh_token, totp_secret, pr
 
     _log("Step 1B: POST chatgpt.com/api/auth/signin/openai")
     import urllib.parse as _urlparse
+    # v2.43.4: 关键参数 screen_hint=login_or_signup + login_hint=email 让 OpenAI
+    # 直接 redirect 到 /email-verification (OTP path)，避免默认走 /log-in/password
+    # (login_password page → DB 密码不匹配 → login_fail 死局)。
+    # 参考 protocol_register.py:590 signin_params 实测有效 (Authorize -> /email-verification)。
+    signin_params = _urlparse.urlencode({
+        "prompt": "login",
+        "screen_hint": "login_or_signup",
+        "login_hint": email,
+        "ext-oai-did": device_id,
+        "auth_session_logging_id": str(uuid.uuid4()),
+    })
     signin_form = _urlparse.urlencode({
         "callbackUrl": f"{_BASE}/",
         "csrfToken": csrf_token,
         "json": "true",
-        "prompt": "login",
-        "screen_hint": "login",
     })
     try:
         r_signin = session.post(
-            f"{_BASE}/api/auth/signin/openai",
+            f"{_BASE}/api/auth/signin/openai?{signin_params}",
             headers={
                 "Content-Type": "application/x-www-form-urlencoded",
                 "Accept": "*/*",
@@ -259,118 +268,130 @@ def login(email, password, login_type, client_id, refresh_token, totp_secret, pr
         raise Exception(f"unexpected: oai-client-auth-session cookie missing (HTTP {r_auth.status_code}, cookies={cookie_names[:10]})")
     _log(f"Step 1 OK: status={r_auth.status_code} cookies={len(session.cookies)} final_url={str(r_auth.url)[:80]}")
 
-    # Step 2: POST /api/accounts/authorize/continue → 触发 OTP 邮件
-    #   关键 headers：
-    #     openai-sentinel-token = QuickJS 跑 OpenAI sdk.js 生成的 token，没这个 OpenAI 会
-    #       silent-drop OTP 邮件下发（200 OK 假成功但邮件根本不发）
-    #     oai-device-id = 第一行 session.cookies.set 的同一个 uuid
-    #     ext-passkey-client-capabilities = passkey 能力声明，protocol_register.py 也带
-    _log("Step 2: POST authorize/continue")
-    try:
-        sentinel = get_sentinel_token(session, device_id, flow="authorize_continue",
-                                     user_agent=session.headers.get("User-Agent", "")) or ""
-    except Exception as _e:
-        _log(f"sentinel token fail (continue 用空): {str(_e)[:50]}")
-        sentinel = ""
-    try:
-        r2 = session.post(
-            f"{_AUTH}/api/accounts/authorize/continue",
-            headers={
-                "Accept": "application/json",
-                "Content-Type": "application/json",
-                "Origin": _AUTH,
-                "Referer": str(r_auth.url),  # step 1 final URL（chatgpt.com → auth.openai.com chain 后的 /log-in）
-                "oai-device-id": device_id,
-                "openai-sentinel-token": sentinel,
-                "ext-passkey-client-capabilities": "conditional-create,conditional-get",
-            },
-            json={"username": {"kind": "email", "value": email}},
-            timeout=30,
-        )
-    except Exception as e:
-        msg = str(e)
-        if 'ECONNRESET' in msg or 'reset' in msg.lower():
-            report_bad_node('connection_reset', 'main')  # v2.42 Task 11
-            raise Exception("proxy reset (login)")
-        raise Exception(f"unexpected: authorize/continue {msg[:40]}")
+    # v2.43.4: 检测 step 1 final_url — screen_hint=login_or_signup 让 OpenAI 直接 redirect 到
+    # /email-verification (OTP path)。这种情况下 OpenAI session-state 已就绪等 OTP 验证，
+    # 不需要 POST authorize/continue（再调反而把 state 切回 login_password 触发 user/register 死局）。
+    # 参考 protocol_register.py:618-620: elif "/email-verification" in final_path: need_otp = True
+    from urllib.parse import urlparse as _urlparse_step1
+    _final_path_step1 = _urlparse_step1(str(r_auth.url)).path
+    sentinel = ""
 
-    if r2.status_code in (429,) or r2.status_code >= 500:
-        if r2.status_code == 429:
-            report_bad_node('rate_limited', 'main')  # v2.42 Task 11
-        else:
-            report_bad_node('connection_reset', 'main')  # v2.42 Task 11: 5xx 视作上游不稳
-        raise Exception(f"proxy reset (login): HTTP {r2.status_code}")
+    if "/email-verification" in _final_path_step1:
+        _log("Step 1 final_path /email-verification — 跳过 step 2 (OpenAI session 已就绪 OTP path)")
+        page_type = "email_otp_verification"
+    else:
+        # Step 2: POST /api/accounts/authorize/continue → 触发 OTP 邮件
+        #   关键 headers：
+        #     openai-sentinel-token = QuickJS 跑 OpenAI sdk.js 生成的 token，没这个 OpenAI 会
+        #       silent-drop OTP 邮件下发（200 OK 假成功但邮件根本不发）
+        #     oai-device-id = 第一行 session.cookies.set 的同一个 uuid
+        #     ext-passkey-client-capabilities = passkey 能力声明
+        _log("Step 2: POST authorize/continue")
+        try:
+            sentinel = get_sentinel_token(session, device_id, flow="authorize_continue",
+                                         user_agent=session.headers.get("User-Agent", "")) or ""
+        except Exception as _e:
+            _log(f"sentinel token fail (continue 用空): {str(_e)[:50]}")
+            sentinel = ""
+        try:
+            r2 = session.post(
+                f"{_AUTH}/api/accounts/authorize/continue",
+                headers={
+                    "Accept": "application/json",
+                    "Content-Type": "application/json",
+                    "Origin": _AUTH,
+                    "Referer": str(r_auth.url),
+                    "oai-device-id": device_id,
+                    "openai-sentinel-token": sentinel,
+                    "ext-passkey-client-capabilities": "conditional-create,conditional-get",
+                },
+                json={"username": {"kind": "email", "value": email}},
+                timeout=30,
+            )
+        except Exception as e:
+            msg = str(e)
+            if 'ECONNRESET' in msg or 'reset' in msg.lower():
+                report_bad_node('connection_reset', 'main')
+                raise Exception("proxy reset (login)")
+            raise Exception(f"unexpected: authorize/continue {msg[:40]}")
 
-    body_text = r2.text or ""
-    # protocol_register.py line 646: deactivated 在 authorize/continue response body
-    # 就能识别（不需要走到 step 4）。OpenAI 给 deactivated 账号返回 HTTP 200 但 body
-    # 含 account_deactivated / account_disabled，这是 short-circuit 信号。
-    if "account_deactivated" in body_text or "account_disabled" in body_text:
-        _log("Step 2: account_deactivated detected (short-circuit, no OTP needed)")
-        raise Exception("deactivated: account_deactivated")
+        if r2.status_code in (429,) or r2.status_code >= 500:
+            if r2.status_code == 429:
+                report_bad_node('rate_limited', 'main')
+            else:
+                report_bad_node('connection_reset', 'main')
+            raise Exception(f"proxy reset (login): HTTP {r2.status_code}")
 
-    if r2.status_code in (403,):
-        # 排除 Cloudflare 模板
-        _body_lower = body_text.lower()
-        if any(kw in _body_lower for kw in ('cloudflare', 'just a moment', 'challenge-platform')):
-            report_bad_node('cloudflare_403', 'main')  # v2.42 Task 11
-            raise Exception(f"proxy reset (login): Cloudflare HTTP {r2.status_code}")
-        # 其他 403 视作 login_fail
-        raise Exception(f"login_fail: authorize/continue HTTP 403 body={body_text[:80]}")
+        body_text = r2.text or ""
+        if "account_deactivated" in body_text or "account_disabled" in body_text:
+            _log("Step 2: account_deactivated detected (short-circuit, no OTP needed)")
+            raise Exception("deactivated: account_deactivated")
 
-    try:
-        j2 = r2.json()
-    except Exception:
-        raise Exception(f"unexpected: authorize/continue body not json (HTTP {r2.status_code})")
+        if r2.status_code in (403,):
+            _body_lower = body_text.lower()
+            if any(kw in _body_lower for kw in ('cloudflare', 'just a moment', 'challenge-platform')):
+                report_bad_node('cloudflare_403', 'main')
+                raise Exception(f"proxy reset (login): Cloudflare HTTP {r2.status_code}")
+            raise Exception(f"login_fail: authorize/continue HTTP 403 body={body_text[:80]}")
 
-    if r2.status_code >= 400:
-        err = (j2.get("error") or {}).get("code") or "unknown"
-        if err == "unknown_user" or err == "invalid_email":
-            raise Exception(f"login_fail: authorize/continue {err}")
-        if err == "invalid_state":
-            # invalid_state 应该被 step 1 修复后不再出现；如果还出现说明 sentinel/headers
-            # 仍有缺失，归 login_fail 不要静默吞
-            raise Exception(f"login_fail: invalid_state (sentinel/header missing?)")
-        raise Exception(f"login_fail: authorize/continue HTTP {r2.status_code} code={err}")
+        try:
+            j2 = r2.json()
+        except Exception:
+            raise Exception(f"unexpected: authorize/continue body not json (HTTP {r2.status_code})")
 
-    page_type = (j2.get("page") or {}).get("type")
-    _log(f"Step 2 OK: page.type={page_type} sentinel={'yes' if sentinel else 'NO'}")
+        if r2.status_code >= 400:
+            err = (j2.get("error") or {}).get("code") or "unknown"
+            if err == "unknown_user" or err == "invalid_email":
+                raise Exception(f"login_fail: authorize/continue {err}")
+            if err == "invalid_state":
+                raise Exception(f"login_fail: invalid_state (sentinel/header missing?)")
+            raise Exception(f"login_fail: authorize/continue HTTP {r2.status_code} code={err}")
+
+        page_type = (j2.get("page") or {}).get("type")
+        _log(f"Step 2 OK: page.type={page_type} sentinel={'yes' if sentinel else 'NO'}")
 
     # v2.43: 强制 passwordless 路径 — 即使 OpenAI 返回 login_password 也切回 OTP。
-    # v2.43.2: 密码登录路径 — 参考 Gpt-Agreement-Payment/CTF-reg/auth_flow.py 实现。
-    # 实测 ~55% outlook 账号 step 2 返回 page.type=login_password。OpenAI 设计：
-    # POST /api/accounts/password/verify 输密码 → 成功后强制跳 email_otp_verification (2FA)
-    # → step 3 IMAP 拿 OTP → step 4 validate。force-passwordless (POST send-otp) 被 OpenAI 拒
-    # (return 409 invalid_state)，实测不可行。
+    # v2.43.3: page.type=login_password 路径 — 参考 protocol_register.py:647 的处理。
+    # OpenAI 对已注册账号的 login_password page 接受 user/register 调用重设密码，
+    # 然后强制跳 email_otp_verification (2FA) → step 3 IMAP 拿 OTP → step 4 validate。
+    # 这等同于"重新注册"路径，实测协议流程注册新账号也走这条。
+    # 替换密码 — 因为账号本来就是验证码注册的，DB password 不是真密码；用 user/register 重设。
     if page_type == "login_password":
-        if not password:
-            raise Exception("login_fail: page.type=login_password but DB has no password")
-        _log("Step 2.5: page.type=login_password, POST password/verify")
+        _log("Step 2.5: page.type=login_password, re-register via user/register")
+        # OpenAI user/register 对已注册账号接受新密码（等同 password reset）。
+        # 实测 DB 密码 (随机 10 字符) 被 OpenAI 拒为 string_below_min_length —
+        # 改用 _default_password_from_email 规则 (参考 Gpt-Agreement-Payment line 1591)：
+        # email去@ (一般 20+ 字符)，不够 8 字符补 2026OpenAI。
+        register_pw = (email or "").replace("@", "")
+        if len(register_pw) < 8:
+            register_pw = f"{register_pw}2026OpenAI"
+        _log(f"Reset password to default rule ({len(register_pw)} chars)")
         try:
-            sentinel25 = get_sentinel_token(session, device_id, flow="authorize_continue",
+            sentinel25 = get_sentinel_token(session, device_id, flow="username_password_create",
                                            user_agent=session.headers.get("User-Agent", "")) or sentinel
         except Exception as _e:
             _log(f"sentinel25 fail (复用 step 2 sentinel): {str(_e)[:40]}")
             sentinel25 = sentinel
         try:
             r25 = session.post(
-                f"{_AUTH}/api/accounts/password/verify",
+                f"{_AUTH}/api/accounts/user/register",
                 headers={
                     "Accept": "application/json",
                     "Content-Type": "application/json",
                     "Origin": _AUTH,
-                    "Referer": f"{_AUTH}/log-in/password",
+                    "Referer": f"{_AUTH}/create-account/password",
                     "oai-device-id": device_id,
                     "openai-sentinel-token": sentinel25,
+                    "ext-passkey-client-capabilities": "conditional-create,conditional-get",
                 },
-                json={"password": password},
+                json={"username": email, "password": register_pw},
                 timeout=30,
             )
         except Exception as e:
             msg = str(e)
             if 'reset' in msg.lower() or 'ECONNRESET' in msg:
                 raise Exception("proxy reset (login)")
-            raise Exception(f"unexpected: password/verify {msg[:40]}")
+            raise Exception(f"unexpected: user/register {msg[:40]}")
 
         if r25.status_code in (429,) or r25.status_code >= 500:
             raise Exception(f"proxy reset (login): HTTP {r25.status_code}")
@@ -384,32 +405,25 @@ def login(email, password, login_type, client_id, refresh_token, totp_secret, pr
                 err = (r25.json().get('error') or {}).get('code') or 'unknown'
             except Exception:
                 err = 'parse_error'
-            if err in ("invalid_credentials", "bad_password", "invalid_password", "invalid_username_or_password"):
-                raise Exception("login_fail: bad password")
-            if err == "invalid_state":
-                raise Exception("login_fail: password/verify invalid_state (session expired)")
-            raise Exception(f"login_fail: password/verify HTTP {r25.status_code} code={err}")
+            raise Exception(f"login_fail: user/register HTTP {r25.status_code} code={err}")
 
+        _log(f"Step 2.5 OK: re-registered, OTP email will be triggered")
+
+        # 触发 OTP 邮件 (参考 protocol_register.py:676-680)
         try:
-            j25 = r25.json()
-        except Exception:
-            j25 = {}
-        new_page_type = (j25.get('page') or {}).get('type', '')
-        new_continue = j25.get('continue_url') or ''
-        _log(f"Step 2.5 OK: password verified, next page.type={new_page_type} continue={new_continue[:50]}")
-
-        # 密码 verify 成功后通常跳 email_otp_verification（OpenAI 强制 2FA）→ 继续 step 3
-        if new_page_type == "email_otp_verification" or "/email-verification" in new_continue:
-            pass  # 流程继续走 step 3 IMAP
-        elif new_continue and "/login-web" in new_continue:
-            # 罕见：密码 verify 直接给 callback URL 不需要 OTP → step 5 应能拿到 session
-            _log("Step 2.5: post-password skip OTP (rare), proceeding to step 5")
-            # 跳过 step 3+4，flag 让下面走 step 5
-            # 简化：仍跑 step 3 但 timeout 短 — 真没邮件时直接走 step 5。
-            # 当前简化：raise login_fail，后续 spec 完善（YAGNI）
-            raise Exception(f"login_fail: post-password no_otp_required (TODO: step 5 直接拿 session)")
-        else:
-            raise Exception(f"login_fail: post-password unexpected page.type={new_page_type}")
+            session.get(
+                f"{_AUTH}/api/accounts/email-otp/send",
+                headers={
+                    "Accept": "text/html",
+                    "Referer": f"{_AUTH}/create-account/password",
+                    "oai-device-id": device_id,
+                    "Upgrade-Insecure-Requests": "1",
+                },
+                timeout=10,
+                allow_redirects=True,
+            )
+        except Exception as _e:
+            _log(f"OTP send trigger fail (继续，authorize/continue 也会自动触发): {str(_e)[:40]}")
 
     elif page_type != "email_otp_verification":
         # 其他未知页面类型 —— 归 login_fail
