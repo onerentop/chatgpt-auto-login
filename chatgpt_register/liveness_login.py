@@ -14,8 +14,15 @@ Reason strings MUST contain one of (matched case-insensitively by runner.js):
    bad password / no password / outlook oauth missing / otp timeout /
    otp fail / captcha / no session / proxy reset / unexpected:<...>
 """
-import sys, json, uuid, random
+import sys, json, uuid, random, os
 from datetime import datetime, timedelta, timezone
+
+# 让 chatgpt_register 包能被找到 —— 直接 spawn `py -3 chatgpt_register/liveness_login.py`
+# 时 sys.path[0] 是脚本所在目录 chatgpt_register/，导致下面 `from chatgpt_register.*`
+# 抛 ModuleNotFoundError 被静默吞，fetch_imap_otp 落成 None，step 3 误报 deps missing。
+_PROJ_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _PROJ_ROOT not in sys.path:
+    sys.path.insert(0, _PROJ_ROOT)
 
 # Redirect side-effect prints from chatgpt_register/* imports to stderr —
 # JSON-lines stdout protocol cannot tolerate any stray text.
@@ -24,7 +31,11 @@ sys.stdout = sys.stderr
 try:
     from chatgpt_register.sentinel import get_sentinel_token
     from chatgpt_register.otp import fetch_imap_otp, get_imap_baseline, gen_totp
-except Exception:
+except Exception as _import_err:
+    # 不再静默 swallow —— 把错误信息记下来便于诊断（但 stdout 仍走 stderr 避免污染
+    # JSON-lines protocol）。如果 fetch_imap_otp/get_imap_baseline 仍可能为 None
+    # （比如 pyotp 没装），保留 None 兜底；但顶层 sys.path 修复后正常 import 不该走到这里。
+    print(f"[liveness_login.py import fallback] {_import_err}", file=sys.stderr)
     def get_sentinel_token(*a, **k): return ""
     fetch_imap_otp = get_imap_baseline = gen_totp = None
 finally:
