@@ -1,5 +1,24 @@
 # Changelog
 
+## v2.42.2 — 2026-05-27
+
+### 修 sing-box reload 端口冲突 bug
+
+v2.42.0 已知问题：`reloadSingbox = stop + start` 时 stop 在子进程 exit 立即 resolve，但 Windows TCP_TIME_WAIT / OS socket cleanup 慢，port 7890/7891 未真正释放 → start 立刻 spawn 新 sing-box 抢 port 失败 → 抛 `address already in use` → ban-node API 偶发 broken。
+
+**修复** (`server/proxy/singbox.js` `stop()`)：
+
+进程 exit 后用 `net.createServer().listen()` 主动 probe 每个 mixed/http/socks inbound port 能 bind（= OS 已释放），50ms 间隔轮询最多 2s。超时仅 `console.warn` 不阻塞（避免 deadlock，start 自己会抛 EADDRINUSE 比 stop 卡死好）。
+
+`cfgPathSnapshot` 在 `_proc=null` 之前 snapshot 防止并发 `start(newCfg)` 改 `_configPath` 导致 stop 读到新 config 的 port 的 race。
+
+**测试**：
+
+- 304 Node test pass (302 baseline + 2 新单测)
+- 实测：连续 2 次 bad-node API 触发 reload → 都成功无 EADDRINUSE
+
+**改动量**：+42 行 stop 函数体 + 20 行单测 = 净 +50 行。
+
 ## v2.42.1 — 2026-05-27
 
 ### 代理配置清理 + 黑名单 UI 升级
