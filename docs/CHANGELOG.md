@@ -1,5 +1,40 @@
 # Changelog
 
+## v2.41.10 — 2026-05-26
+
+### Liveness `/email-verification` 和 `/api/accounts/*` path 归 token_expired
+
+v2.41.9 修了 `/error` path 归 `login_fail`。实测 `liabhzo717818@outlook.com` 又遇到新场景：3 次 attempt 跳 `/email-verification` 和 `/api/accounts/authorize`，都拿不到 state → raise `authorize page structure changed` → runner 仍归 `network_error` retry 3 次。
+
+**真因**：OpenAI 给该账号 OAuth `/email-verification` 表示"已部分认证，需要 OTP reverify"；`/api/accounts/authorize` 是中间 redirect 失败。**两者都属于 `token_expired`** 语义（账号还活，需要重新认证），不是 `network_error`。
+
+**修复 A** — `chatgpt_register/liveness_login.py`：`_parse_state` 缺失时按 final_path 细分：
+
+```python
+if _final_path == '/error' or _final_path.endswith('/error'):
+    raise Exception("login_fail: OAuth /error redirect")        # v2.41.9
+
+state, _csrf = _parse_state_from_authorize_page(r)
+if not state:
+    if _final_path.startswith('/email-verification'):
+        raise Exception("token_expired: OAuth jumped to /email-verification (needs OTP reverify)")
+    if _final_path.startswith('/api/accounts/'):
+        raise Exception("token_expired: OAuth stuck at <path> (needs reverify)")
+    raise Exception("unexpected: authorize page structure changed (...)")  # fallback
+```
+
+**修复 B** — `server/liveness/runner.js`：catch 关键词分支加 `token_expired` 识别，位置 OAuth case 之后、proxy reset 之前：
+
+```js
+else if (/token[_ ]?expired|needs.*OTP|needs.*reverify|jumped to \/email-verification|stuck at \/api\/accounts/i.test(msg)) {
+  result = { alive_status: 'token_expired', alive_reason: 'OAuth needs OTP reverify' };
+}
+```
+
+runner dispatchOne retry loop `if (result.alive_status !== 'network_error') break` — `token_expired` 立刻跳出，不再 3 次无意义 retry。
+
+**测试**：218 Node + 17 Python pass。
+
 ## v2.41.9 — 2026-05-26
 
 ### Liveness 测活 OAuth /error 页归 login_fail（不再误报 network_error retry）
