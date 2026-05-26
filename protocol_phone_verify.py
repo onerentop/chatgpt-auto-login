@@ -2,9 +2,17 @@
 # v2.40.0：与浏览器模式 utils.js v2.39.4 功能等价。
 # 此脚本只跑一次 attempt，retry / phone-pool 操作全在 Node。
 import json
+import os
 import re
 import sys
 import time
+
+# v2.42 Task 2: 系统级透明代理。在 import _pkce_common（其内部 import curl_cffi）
+# 之前设置 env，让 curl_cffi/requests 自动走 sing-box 7890。
+_DEFAULT_PROXY = os.environ.get('HTTPS_PROXY') or 'http://127.0.0.1:7890'
+os.environ['HTTPS_PROXY'] = _DEFAULT_PROXY
+os.environ['HTTP_PROXY'] = _DEFAULT_PROXY
+os.environ.setdefault('NO_PROXY', '127.0.0.1,localhost')
 
 from _pkce_common import (
     AUTH, _log,
@@ -70,15 +78,17 @@ def has_sms_prompt(resp):
         return False
 
 
-def poll_sms(sms_cfg, max_attempts=30, interval=3, proxy_url=None):
-    """轮询 SMS provider 拿 6 位验证码。local 用 GET URL，zhusms 用 GET /api/order/status。"""
+def poll_sms(sms_cfg, max_attempts=30, interval=3):
+    """轮询 SMS provider 拿 6 位验证码。local 用 GET URL，zhusms 用 GET /api/order/status。
+
+    v2.42 Task 2: 删 proxy_url 参数 + proxies dict。requests 自动读 HTTPS_PROXY env。
+    """
     import requests  # stdlib-friendly
     provider = sms_cfg.get("provider", "local")
-    proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
     for _ in range(max_attempts):
         try:
             if provider == "local":
-                r = requests.get(sms_cfg["url"], proxies=proxies, timeout=10)
+                r = requests.get(sms_cfg["url"], timeout=10)
                 if r.ok:
                     m = re.search(r"\b(\d{6})\b", r.text)
                     if m:
@@ -92,7 +102,6 @@ def poll_sms(sms_cfg, max_attempts=30, interval=3, proxy_url=None):
                 r = requests.get(
                     f"{sms_cfg['base_url']}/api/order/status?order_no={sms_cfg['order_no']}",
                     headers=headers,
-                    proxies=proxies,
                     timeout=10,
                 )
                 if r.ok:
@@ -118,13 +127,13 @@ def main():
     ss = inp.get("session_state") or {}
     phone = inp.get("phone", "")
     sms_cfg = inp.get("sms") or {}
-    proxy_url = inp.get("proxy_url")
+    # v2.42 Task 2: 不再读 stdin proxy_url —— curl_cffi/requests 自动用 HTTPS_PROXY env
     _ua = ss.get('user_agent', '')
     _m = re.search(r'Chrome/(\d+)', _ua)
-    _log(f"verify: phone={phone} provider={sms_cfg.get('provider')} cookies={len(ss.get('cookies', []))} ua_chrome={_m.group(1) if _m else '?'} proxy={'yes' if proxy_url else 'no'}")
+    _log(f"verify: phone={phone} provider={sms_cfg.get('provider')} cookies={len(ss.get('cookies', []))} ua_chrome={_m.group(1) if _m else '?'}")
 
     _log("verify: rebuilding session...")
-    s = rebuild_session(ss, proxy_url)
+    s = rebuild_session(ss)
     _log("verify: session rebuilt OK")
 
     # Step 1: phone-start
@@ -167,7 +176,7 @@ def main():
 
     # Step 2: poll SMS
     _log(f"verify: polling SMS (provider={sms_cfg.get('provider')})")
-    code = poll_sms(sms_cfg, max_attempts=30, interval=3, proxy_url=proxy_url)
+    code = poll_sms(sms_cfg, max_attempts=30, interval=3)
     if not code:
         print(json.dumps({"status": "sms-timeout"}), flush=True)
         return

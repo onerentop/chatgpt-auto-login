@@ -17,6 +17,14 @@ Reason strings MUST contain one of (matched case-insensitively by runner.js):
 import sys, json, uuid, random, os
 from datetime import datetime, timedelta, timezone
 
+# v2.42 Task 2: 系统级透明代理。必须在 curl_cffi import 之前设 env。
+# Node 父进程（server/liveness/runner.js spawn）已通过 ...process.env 继承注入
+# HTTPS_PROXY=http://127.0.0.1:7890；此处兜底默认值。
+_DEFAULT_PROXY = os.environ.get('HTTPS_PROXY') or 'http://127.0.0.1:7890'
+os.environ['HTTPS_PROXY'] = _DEFAULT_PROXY
+os.environ['HTTP_PROXY'] = _DEFAULT_PROXY
+os.environ.setdefault('NO_PROXY', '127.0.0.1,localhost')
+
 # 让 chatgpt_register 包能被找到 —— 直接 spawn `py -3 chatgpt_register/liveness_login.py`
 # 时 sys.path[0] 是脚本所在目录 chatgpt_register/，导致下面 `from chatgpt_register.*`
 # 抛 ModuleNotFoundError 被静默吞，fetch_imap_otp 落成 None，step 3 误报 deps missing。
@@ -81,8 +89,11 @@ def _to_cst_iso(dt_str_or_obj):
     return cst.isoformat()
 
 
-def _build_session(proxy_url):
+def _build_session():
     """Mirror protocol_register.py session setup — Chrome JA3 + rotating impersonate.
+
+    v2.42 Task 2: 删 proxy_url 参数。curl_cffi 自动读 HTTPS_PROXY env（模块顶部
+    已设）。Node 父进程通过 ...process.env 继承同样的 env 值。
 
     Note: protocol_register.py explicitly sets User-Agent, Accept-Language and
     sec-ch-ua headers after Session() because it builds a full sec-ch-ua string
@@ -91,42 +102,38 @@ def _build_session(proxy_url):
     needs the exact UA string it can read session.headers.get("User-Agent", "").
     """
     from curl_cffi import requests as curl_requests
-    if proxy_url and proxy_url.startswith('http://'):
-        proxy_url = 'socks5h://' + proxy_url[len('http://'):]
-    proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
     session = None
     impersonate_name = None
     for _ in range(5):
         impersonate_name, _major = random.choice(_CHROME)
         try:
             session = curl_requests.Session(impersonate=impersonate_name)
-            if proxies:
-                session.proxies = proxies
             break
         except Exception:
             session = None
     if not session:
         session = curl_requests.Session()
-        if proxies:
-            session.proxies = proxies
-    _log(f"Profile: {impersonate_name}, proxy: {'on' if proxy_url else 'direct'}")
+    _log(f"Profile: {impersonate_name}, proxy: env-based")
     return session, impersonate_name
 
 
-def login(email, password, login_type, client_id, refresh_token, totp_secret, proxy_url):
+def login(email, password, login_type, client_id, refresh_token, totp_secret, proxy_url=None):
     """新 SPA OAuth flow:
     1. GET /authorize → 拿 cookies (oai-did, __cf_bm 等)
     2. POST /api/accounts/authorize/continue → 触发 OTP 邮件
     3. IMAP 拉 OTP
     4. POST /api/accounts/email-otp/validate → 拿 chatgpt.com session cookies
     5. GET chatgpt.com/api/auth/session → 拿 access_token + user.id
+
+    v2.42 Task 2: proxy_url 参数保留向后兼容（旧测试 + Node spawn 入口仍传），
+    但已 NO-OP — curl_cffi 自动用 HTTPS_PROXY env（模块顶部 + Node 父进程注入）。
     """
     if not password and login_type != "outlook":
         raise Exception("no password")  # gmail 走旧 flow（暂不支持），出错
     if login_type == "outlook" and (not client_id or not refresh_token):
         raise Exception("outlook oauth missing")
 
-    session, impersonate_name = _build_session(proxy_url)
+    session, impersonate_name = _build_session()
     device_id = str(uuid.uuid4())
     session.cookies.set("oai-did", device_id, domain="chatgpt.com")
     session.cookies.set("oai-did", device_id, domain="auth.openai.com")
@@ -412,11 +419,11 @@ def main():
     client_id = input_data.get("client_id", "")
     refresh_token = input_data.get("refresh_token", "")
     totp_secret = input_data.get("totp_secret", "")
-    proxy_url = input_data.get("proxy", "")
+    # v2.42 Task 2: 不再读 stdin proxy 字段 —— curl_cffi 自动用 HTTPS_PROXY env
 
     try:
         result = login(email, password, login_type, client_id, refresh_token,
-                      totp_secret, proxy_url)
+                      totp_secret)
         _emit({"status": "ok", **result})
     except Exception as e:
         _err(str(e))

@@ -222,6 +222,10 @@ def rebuild_session(session_state, proxy_url=None):
     v2.40.2: curl_cffi 只支持有限 Chrome impersonate profile（实测最新 chrome146）。
     UA 是 Chrome/148 时 `chrome148` profile 不存在 → ImpersonateError。
     fallback 用一组已知 curl_cffi 普遍支持的 profile 逐个 try，全失败才 raise。
+
+    v2.42 Task 2: proxy_url 参数保留向后兼容但已 NO-OP — curl_cffi 自动尊重
+    HTTPS_PROXY env（由 protocol_phone_verify.py 顶部 + Node 父进程注入）。
+    旧调用者传值不会报错，但参数被忽略。
     """
     from curl_cffi import requests as curl_requests
     ua = session_state.get("user_agent", "")
@@ -242,15 +246,8 @@ def rebuild_session(session_state, proxy_url=None):
     for k in KNOWN_GOOD:
         if k not in candidates:
             candidates.append(k)
-    proxies = None
-    if proxy_url:
-        if proxy_url.startswith("http://"):
-            proxy_url = "socks5h://" + proxy_url[len("http://"):]
-        proxies = {"http": proxy_url, "https": proxy_url}
     # 第一个白名单内的 profile 一定能用（不构造 invalid Session）
     s = curl_requests.Session(impersonate=candidates[0])
-    if proxies:
-        s.proxies.update(proxies)
     if ua:
         s.headers.update({"User-Agent": ua})
     for c in session_state.get("cookies", []):

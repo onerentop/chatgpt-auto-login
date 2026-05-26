@@ -13,7 +13,16 @@ Single-step protocol:
     -> JSON containing invoice.amount_due / currency / total_discount_amounts,
        payment_method_types
 """
-import sys, json, random, re
+import sys, os, json, random, re
+
+# v2.42 Task 2: 系统级透明代理。必须在 curl_cffi import 之前设 env，让
+# Session() 构造时读到正确 HTTPS_PROXY。Node 父进程已通过 server/proxy/global.js
+# 注入；这里只兜底默认值。
+_DEFAULT_PROXY = os.environ.get('HTTPS_PROXY') or 'http://127.0.0.1:7890'
+os.environ['HTTPS_PROXY'] = _DEFAULT_PROXY
+os.environ['HTTP_PROXY'] = _DEFAULT_PROXY
+os.environ.setdefault('NO_PROXY', '127.0.0.1,localhost')
+
 from curl_cffi import requests as cr
 
 _CHROME = ['chrome146', 'chrome142', 'chrome136', 'chrome133a', 'chrome131', 'chrome124']
@@ -28,8 +37,7 @@ def main():
     inp = json.loads(sys.stdin.read())
     cs_id = inp.get('cs_id', '')
     pk = inp.get('pk', '')
-    proxy = inp.get('proxy') or None
-    proxies = {'http': proxy, 'https': proxy} if proxy else None
+    # v2.42 Task 2: 不再读 stdin proxy —— curl_cffi 自动用 HTTPS_PROXY env
 
     if not re.match(r'^cs_live_[A-Za-z0-9]+$', cs_id):
         _emit({"status": "error", "reason": "invalid_cs_id"})
@@ -39,7 +47,7 @@ def main():
         return
 
     imp = random.choice(_CHROME)
-    _log(f"impersonate={imp}, cs={cs_id[:25]}..., pk={pk[:15]}..., proxy={'(set)' if proxy else '(direct)'}")
+    _log(f"impersonate={imp}, cs={cs_id[:25]}..., pk={pk[:15]}...")
 
     init_url = f"https://api.stripe.com/v1/payment_pages/{cs_id}/init"
     try:
@@ -47,7 +55,6 @@ def main():
             init_url,
             data={"key": pk, "browser_locale": "en-US"},
             impersonate=imp,
-            proxies=proxies,
             timeout=15,
         )
     except Exception as e:

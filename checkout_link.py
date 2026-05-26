@@ -3,7 +3,16 @@
 Input: JSON on stdin  { access_token, country, currency, promo_id, proxy }
 Output: JSON lines on stdout — log lines as {"log":"..."}, final as {"status":...}
 """
-import sys, json, random, re
+import sys, os, json, random, re
+
+# v2.42 Task 2: 系统级透明代理。必须在 curl_cffi import 之前设 env，让
+# Session() 构造时读到正确 HTTPS_PROXY。Node 父进程已通过 server/proxy/global.js
+# 注入（JP-only 通道通过 jpUrl 单独 spawn 这个脚本时也会带正确 env）。
+_DEFAULT_PROXY = os.environ.get('HTTPS_PROXY') or 'http://127.0.0.1:7890'
+os.environ['HTTPS_PROXY'] = _DEFAULT_PROXY
+os.environ['HTTP_PROXY'] = _DEFAULT_PROXY
+os.environ.setdefault('NO_PROXY', '127.0.0.1,localhost')
+
 from curl_cffi import requests as cr
 
 _CHROME = ['chrome146', 'chrome142', 'chrome136', 'chrome133a', 'chrome131', 'chrome124']
@@ -28,7 +37,7 @@ def main():
             "is_coupon_from_query_param": False,
         },
     }
-    proxies = {'http': inp['proxy'], 'https': inp['proxy']} if inp.get('proxy') else None
+    # v2.42 Task 2: 不再读 stdin proxy —— curl_cffi 自动用 HTTPS_PROXY env
 
     for attempt in range(3):
         imp = random.choice(_CHROME)
@@ -39,7 +48,6 @@ def main():
                 json=body,
                 headers={'Authorization': f'Bearer {token}', 'Accept': 'application/json'},
                 impersonate=imp,
-                proxies=proxies,
                 timeout=20,
             )
             text = r.text

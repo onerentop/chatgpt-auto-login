@@ -19,7 +19,15 @@ Mirrors the multi-impersonate retry pattern from checkout_link.py — Cloudflare
 periodically blacklists specific JA3 fingerprints, so rotating is the only way
 to keep success rates near 100%.
 """
-import sys, json, random
+import sys, os, json, random
+
+# v2.42 Task 2: 系统级透明代理。必须在 curl_cffi import 之前设 env。
+# Node 父进程通过 spawn 时 ...process.env 继承注入 HTTPS_PROXY=http://127.0.0.1:7890。
+_DEFAULT_PROXY = os.environ.get('HTTPS_PROXY') or 'http://127.0.0.1:7890'
+os.environ['HTTPS_PROXY'] = _DEFAULT_PROXY
+os.environ['HTTP_PROXY'] = _DEFAULT_PROXY
+os.environ.setdefault('NO_PROXY', '127.0.0.1,localhost')
+
 from curl_cffi import requests as cr
 
 CHECK_URL = 'https://chatgpt.com/backend-api/accounts/check/v4-2023-04-27'
@@ -68,8 +76,10 @@ def _extract_plan_type(body):
     )
 
 
-def _probe_once(access_token, proxies, impersonate, timeout_s):
+def _probe_once(access_token, impersonate, timeout_s):
     """Single attempt. Returns (action, payload_dict).
+
+    v2.42 Task 2: 删 proxies 参数 —— curl_cffi 自动读 HTTPS_PROXY env。
 
     action one of:
         'success'  → terminal ok response
@@ -81,7 +91,6 @@ def _probe_once(access_token, proxies, impersonate, timeout_s):
         res = cr.get(
             CHECK_URL,
             headers={'Authorization': f'Bearer {access_token}'},
-            proxies=proxies,
             impersonate=impersonate,
             timeout=timeout_s,
         )
@@ -128,7 +137,7 @@ def main():
         return
 
     access_token = inp.get('access_token', '')
-    proxy_url = inp.get('proxy_url') or None
+    # v2.42 Task 2: 不再读 stdin proxy_url —— curl_cffi 自动用 HTTPS_PROXY env
     fixed_impersonate = inp.get('impersonate')  # None → rotate _CHROME on retry
     timeout_s = (inp.get('timeout_ms', 10000)) / 1000.0
 
@@ -136,16 +145,14 @@ def main():
         _emit({"status": "error", "http": 0, "plan_type": None, "reason": "no access_token"})
         return
 
-    proxies = {'http': proxy_url, 'https': proxy_url} if proxy_url else None
-
     # 3 attempts; each Cloudflare-403 retry picks a different impersonate.
     last_payload = None
     used_imps = []
     for attempt in range(3):
         imp = fixed_impersonate or random.choice([c for c in _CHROME if c not in used_imps] or _CHROME)
         used_imps.append(imp)
-        _log(f"GET /accounts/check attempt {attempt+1}/3 via {imp}, proxy={'on' if proxy_url else 'off'}")
-        action, payload = _probe_once(access_token, proxies, imp, timeout_s)
+        _log(f"GET /accounts/check attempt {attempt+1}/3 via {imp}")
+        action, payload = _probe_once(access_token, imp, timeout_s)
         last_payload = payload
         if action in ('success', 'fail', 'network'):
             _emit(payload)

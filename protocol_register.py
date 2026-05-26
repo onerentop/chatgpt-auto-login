@@ -7,6 +7,15 @@ import sys, os, json, uuid, time, random, re, string, hashlib, base64, secrets, 
 import email as email_lib
 from urllib.parse import urlparse, parse_qs, urlencode, quote
 
+# v2.42 Task 2: 系统级透明代理。curl_cffi/requests/urllib3 都尊重 HTTPS_PROXY env,
+# 由 Node 父进程（server/proxy/global.js）注入；这里只兜底默认值，并强制
+# 127.0.0.1 / localhost 走 NO_PROXY 直连（避免 Stripe/PayPal 健康检查走代理）。
+# 必须在 curl_cffi import 之前生效，确保 Session() 构造时读到正确 env。
+_DEFAULT_PROXY = os.environ.get('HTTPS_PROXY') or 'http://127.0.0.1:7890'
+os.environ['HTTPS_PROXY'] = _DEFAULT_PROXY
+os.environ['HTTP_PROXY'] = _DEFAULT_PROXY
+os.environ.setdefault('NO_PROXY', '127.0.0.1,localhost')
+
 # HTTP/1.1 constant for HTTP/2 fallback retries (curl_cffi >= 0.5.9). Module-level
 # so _post_with_h1_fallback (defined below) and protocol_login can both use it.
 # Falls back to None if curl_cffi missing / older version — fallback then no-ops.
@@ -483,22 +492,12 @@ def main():
     client_id = input_data.get("client_id", "")
     refresh_token = input_data.get("refresh_token", "")
     do_pkce = input_data.get("pkce", False)
-    proxy_url = input_data.get("proxy", "")  # e.g. http://127.0.0.1:7890
+    # v2.42 Task 2: 不再从 stdin 读 proxy；curl_cffi 自动用 HTTPS_PROXY env
+    # （模块顶部已设）。Node 父进程已通过 server/proxy/global.js setGlobalDispatcher
+    # 把 7890 sing-box 设成全进程出口，子进程通过继承 env 拿到同一个值。
 
     try:
         from curl_cffi import requests as curl_requests
-
-        # Convert http://... → socks5h://... since sing-box's mixed inbound serves
-        # both HTTP CONNECT and SOCKS5 on the same port. SOCKS5 has less framing
-        # overhead than HTTP CONNECT and avoids HTTP/2-over-CONNECT-tunnel issues
-        # with sing-box mixed inbound (SagerNet/sing-box#3945). 'socks5h' offloads
-        # DNS to the proxy, matching TUN-mode behavior so hostname and IP origin
-        # stay consistent (no IP/DNS mismatch as a risk-control signal).
-        if proxy_url and proxy_url.startswith('http://'):
-            proxy_url = 'socks5h://' + proxy_url[len('http://'):]
-        proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
-        if proxy_url:
-            _log(f"Using proxy: {proxy_url}")
 
         # Pick a supported profile (retry if impersonate fails)
         session = None
@@ -506,16 +505,12 @@ def main():
             impersonate, chrome_major, chrome_full, ua, sec_ch_ua = _random_chrome_version()
             try:
                 session = curl_requests.Session(impersonate=impersonate)
-                if proxies:
-                    session.proxies = proxies
                 break
             except Exception as e:
                 _log(f"{impersonate} not supported, retrying... ({e})")
                 session = None
         if not session:
             session = curl_requests.Session()  # fallback: no impersonate
-            if proxies:
-                session.proxies = proxies
             _log("Using default session (no impersonate)")
         device_id = str(uuid.uuid4())
         _log(f"Profile: {impersonate}, Device: {device_id[:8]}...")
@@ -569,7 +564,7 @@ def main():
             device_id = str(uuid.uuid4())
             try: session = curl_requests.Session(impersonate=impersonate)
             except Exception: session = curl_requests.Session()
-            if proxies: session.proxies = proxies
+            # v2.42 Task 2: 不再 session.proxies = proxies，env-based 自动接管
             session.headers.update({"User-Agent": ua, "sec-ch-ua": sec_ch_ua, "sec-ch-ua-mobile": "?0", "sec-ch-ua-platform": '"Windows"', "Accept-Language": "en-US,en;q=0.9"})
             session.cookies.set("oai-did", device_id, domain="chatgpt.com")
             session.cookies.set("oai-did", device_id, domain="auth.openai.com")
