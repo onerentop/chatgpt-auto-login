@@ -1,5 +1,65 @@
 # Changelog
 
+## v2.42.0 — 2026-05-26
+
+### 系统级透明代理 + 自动 Failover
+
+业务代码不再传 `proxy_url` 参数。所有 fetch / spawn / launchChrome 通过 `HTTPS_PROXY` env 自动走 sing-box。sing-box 改用 `urltest` outbound 自动 latency-based 选最优节点 + dead 节点自动跳过。业务遇 Cloudflare / rate_limited 调 `POST /api/proxy/bad-node` API → server 临时 ban 当前 active 节点 → urltest 自动避开。
+
+#### 应用层 100% 透明（§spec 2）
+
+- **新 `server/proxy/global.js`** — server/index.js 第一行 require，强制覆盖继承的 `HTTPS_PROXY` env（避免 Clash 7897 / V2Ray 10808 / 系统代理污染）+ `setGlobalDispatcher(new EnvHttpProxyAgent())`。`NO_PROXY=127.0.0.1,localhost,.local` 防止 server↔Clash API 死循环
+- **删 Node 19 处 `getProxyUrl()` 调用**：protocol-engine / server/engine / discord-gateway / stripe-verify / liveness/{checker,runner,light-login} / verify-t3-account
+- **Python 6 脚本顶部 4 行 env setup** + 删 stdin proxy 字段 + 删 `proxies={}` 字典：protocol_register / protocol_phone_verify / stripe_init / checkout_link / liveness_login / liveness_probe
+- **Chrome `launchChrome` 默认从 `process.env.HTTPS_PROXY` 读**
+- **`chatgpt-checkout.js` 改用 `jpDispatcher`**（唯一显式 dispatcher 注入，1 处例外）+ spawn checkout_link.py 时显式 env override `HTTPS_PROXY=7891`
+- **`chatgpt_register/otp.py` IMAP env 重命名** `LIVENESS_IMAP_PROXY` → `HTTPS_PROXY`（PySocks 上下文管理器保留）
+
+#### sing-box urltest（§spec 3）
+
+- **`buildSingboxConfig` main / jp outbound 改 urltest 类型**（interval 3m, tolerance 50ms, idle_timeout 30m）+ `excludeNodes` 参数支持 ban 节点
+- **删 `server/proxy/index.js` ~220 行** rotate / probe / markBad / recordBadAttempt / failCount 逻辑（urltest 取代）— 少数仍 stub 化保留 backwards-compat
+- **新增** `getActiveNode(channel)` (Clash API `/proxies/{tag}.now`) + `banFromUrltest(node, dur)` (regenerateAndReload sing-box) + `getJpNodeCount()` (JP fail-fast) + `unbanNode(node)`
+- **双端口保留**（7890 main / 7891 jp）— sing-box 不支持 path_regex 路由
+
+#### 双层风控（§spec 4）
+
+- **`POST /api/proxy/bad-node` API** 业务上报 — 不传节点名，server 自查 active 节点 ban N 分钟（默认 5）
+- **`server/proxy/with-retry.js` `fetchWithRetry` helper**（Node）— 自动检测 Cloudflare 403 / 429 / ECONNRESET 上报 + retry 1 次（500ms 给 urltest 切节点）
+- **`chatgpt_register/proxy_helpers.py` `report_bad_node(reason, channel)`**（Python）fire-and-forget 上报 3s timeout
+- **3 critical 业务强制改造**：chatgpt-checkout / stripe-verify / liveness_login.py / light-login.js 加 report_bad_node 调用
+- **runner.js 等 opt-in**：discord-gateway / phone-pool / zhusms 保留原生 fetch（未来视需求改）
+
+#### 前端
+
+- **`web/src/components/ProxyPanel.vue`** Dashboard 节点状态分区：main / jp 通道当前 active 节点 + 各节点 active/banned/idle 状态 + 解禁时间，10s 自动刷新
+- `GET /api/proxy/status` 补 `mainActiveNode` / `jpActiveNode` / `mainNodes` / `jpNodes` / `bannedNodes` 字段（路由层异步包装，不破坏 v2.30 旧字段向后兼容）
+
+#### 防御本地代理软件
+
+用户本地开 Clash 7897 / V2Ray 10808 / Windows 系统代理时，`server/proxy/global.js` 强制覆盖继承的 env，无论本地什么代理软件 server 都只走 sing-box 7890。
+
+#### 测试
+
+- **npm test 302 pass** （218 baseline + 67 liveness + 17 新 proxy = 302 / 22 v2.30 skip 标 TODO archeology）
+- **17 Python (3 skipped)** 一致
+- **集成测**：手动 ban 当前 active 节点 → urltest 自动切别的节点 ✓
+- **端到端**：liabhzo717818 不传 proxy 拿 `deactivated: account_deactivated` ✓（完整 5 步链路）
+
+#### Known limitations
+
+- **discord-gateway WebSocket** 仍用显式 `HttpsProxyAgent`（URL 改为读 `process.env.HTTPS_PROXY`）—— `ws` 库不识别 env，是已知限制
+- **`protocol_register.py` 注册流程 SPA 适配**（v2.41.14 spec §4.2 标的另一 TODO）本版本仍不动，需另起 spec
+- **sing-box reload 期间 ~500ms inflight 失败**：fetchWithRetry 自动 retry；ban 是低频事件可接受
+- **`undici` 不是 Node v22 内置可 require**（实测 Node 把 undici 打包成 internal/deps 仅供 fetch 内置使用），需 `npm install undici`。已加 `dependencies`（^8.3.0）
+- **22 个 v2.30 旧 rotate/probe 测试 skip**（行为已被 sing-box urltest 取代）— 留作 archeology，未删
+
+#### 代码量
+
+净减约 200 行（删 ~470 行旧 rotate/probe/markBad + getProxyUrl 调用 + Python proxy 链路；新增 ~270 行 global.js / with-retry / proxy_helpers / getActiveNode/banFromUrltest / ProxyPanel.vue / status routes）。
+
+详见 `docs/superpowers/specs/2026-05-26-system-wide-proxy-design.md` 和 `docs/superpowers/plans/2026-05-26-system-wide-proxy.md`。
+
 ## v2.41.14 — 2026-05-26
 
 ### SPA OAuth 协议侧重写（liveness 协议模式）
