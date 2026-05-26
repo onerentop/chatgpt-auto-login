@@ -372,6 +372,41 @@ const livenessLogsDB = {
   },
 };
 
+// v2.42 Task 9: proxyDB —— bad-node API 路由的薄包装层。
+// 复用既有 proxy_blacklist schema (tag, channel, expires_at, reason, source)。
+// 与 server/proxy/blacklist.js 同一张表，但提供 untilMs 直接传值的 API（routes 友好），
+// 而 blacklist 模块 add(ttlMs) 是从 now 起算的 TTL，语义不同。
+const proxyDB = {
+  /**
+   * 直接写入 expires_at（绝对时间戳）。channel 默认 'main'（bad-node API 主要给主通道用）。
+   */
+  banNode(tag, reason, untilMs, channel = 'main') {
+    if (!db) return;
+    db.run(
+      "INSERT OR REPLACE INTO proxy_blacklist (tag, channel, expires_at, reason, source, added_at) VALUES (?,?,?,?,?,datetime('now'))",
+      [tag, channel, untilMs, String(reason || '').slice(0, 60), 'auto'],
+    );
+    save();
+  },
+  /**
+   * 列出当前 channel 下未过期的 banned 节点。
+   */
+  listBanned(channel = 'main') {
+    if (!db) return [];
+    const stmt = db.prepare('SELECT tag, reason, expires_at FROM proxy_blacklist WHERE channel=? AND expires_at > ?');
+    stmt.bind([channel, Date.now()]);
+    const out = [];
+    while (stmt.step()) out.push(stmt.getAsObject());
+    stmt.free();
+    return out;
+  },
+  unbanNode(tag, channel = 'main') {
+    if (!db) return;
+    db.run('DELETE FROM proxy_blacklist WHERE tag=? AND channel=?', [tag, channel]);
+    save();
+  },
+};
+
 // Map a sql.js exec() result to an array of objects using column names.
 // Robust to schema changes (column reorder / new columns).
 function mapRows(result) {
@@ -384,4 +419,4 @@ function mapRows(result) {
   });
 }
 
-module.exports = { initDB, accountsDB, statusDB, logsDB, livenessLogsDB, save, getRawDb: () => db };
+module.exports = { initDB, accountsDB, statusDB, logsDB, livenessLogsDB, proxyDB, save, getRawDb: () => db };

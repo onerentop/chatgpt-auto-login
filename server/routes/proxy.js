@@ -136,4 +136,50 @@ router.post('/blacklist/clear', (req, res) => {
   res.json(buildBlacklistView(proxy.getState()));
 });
 
+// =========================================================================
+// v2.42 Task 9: POST /api/proxy/bad-node
+//
+// 业务遇 Cloudflare 403 / rate_limited / OpenAI 403 等显式失败时 fire-and-forget
+// 调这个 API（不传节点名，server 自己查 getActiveNode(channel) 然后 ban）。
+// durationMinutes 默认 5，到期 setTimeout 自动 unban（见 server/proxy/index.js 的
+// banFromUrltest）。
+// =========================================================================
+
+const VALID_REASONS = ['cloudflare_403', 'rate_limited', 'connection_reset', 'openai_403', 'captcha', 'custom'];
+
+router.post('/bad-node', async (req, res) => {
+  const { reason, channel = 'main', durationMinutes = 5 } = req.body || {};
+  if (!VALID_REASONS.includes(reason)) {
+    return res.status(400).json({ error: 'unknown reason', valid: VALID_REASONS });
+  }
+  if (!['main', 'jp'].includes(channel)) {
+    return res.status(400).json({ error: 'channel must be main or jp' });
+  }
+  try {
+    const activeNode = await proxy.getActiveNode(channel);
+    if (!activeNode) return res.json({ ok: true, banned: null, note: 'no active node' });
+    const until = Date.now() + durationMinutes * 60_000;
+    const { proxyDB } = require('../db');
+    proxyDB.banNode(activeNode, reason, until, channel);
+    await proxy.banFromUrltest(activeNode, durationMinutes);
+    console.log(`[Proxy] Banned ${activeNode} (channel=${channel}) for ${durationMinutes}min (${reason})`);
+    res.json({ ok: true, banned: activeNode, until: new Date(until).toISOString() });
+  } catch (e) {
+    res.status(500).json({ error: String(e.message || e) });
+  }
+});
+
+router.post('/unban-node', async (req, res) => {
+  const { node, channel = 'main' } = req.body || {};
+  if (!node || typeof node !== 'string') return res.status(400).json({ error: 'node required' });
+  try {
+    await proxy.unbanNode(node);
+    const { proxyDB } = require('../db');
+    proxyDB.unbanNode(node, channel);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: String(e.message || e) });
+  }
+});
+
 module.exports = router;
