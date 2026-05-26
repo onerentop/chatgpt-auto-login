@@ -1,5 +1,29 @@
 # Changelog
 
+## v2.43.3 — 2026-05-27
+
+### ProtocolEngine 同步 PipelineEngine：每账号重读 config.json 拿 phoneSlots
+
+Diff 协议模式 (PE) vs 浏览器模式 (PipelineEngine) payment 段，绝大部分行为已同步（`server/engine.js` 注释明说 "Mirrors protocol-engine.js"）。唯一一处差异：
+
+| | 旧 PE | PipelineEngine |
+|---|------|------|
+| phoneSlots 来源 | `runtimeCfg.phoneSlots?.[0]` (startup snapshot) | `JSON.parse(fs.readFileSync(config.json))` (每账号重读) |
+
+**修复** (`protocol-engine.js` line 737-739)：
+
+```js
+// v2.43.3: 同步 PipelineEngine 行为
+const freshCfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf-8'));
+const slot = freshCfg.phoneSlots?.[0] || { phone: freshCfg.phone, smsApiUrl: freshCfg.smsApiUrl };
+```
+
+**效果**：用户运行时改 `config.json`（切手机号池 / 改 SMS API URL）**不用重启 batch**，下个账号 payment 阶段自动用新 config。
+
+公共改动（v2.43.1 clickSubmit + v2.43.2 Chrome --lang=en-US）已自动影响两个引擎（共用 `payment.js` + `server/chrome.js`）。
+
+**测试**：304 Node test pass，无 regression。
+
 ## v2.43.2 — 2026-05-27
 
 ### Chrome 强制 en-US locale 省 PayPal 切国家 4s
