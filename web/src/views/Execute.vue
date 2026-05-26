@@ -137,8 +137,8 @@ const running = ref(false)
 const accounts = ref([])
 const autoExpandedEmail = ref('')
 const expandedKeys = ref([...DEFAULT_EXPANDED_STATUSES])
-// v2.34.0: 分组视图开关，默认 true（沿用分组语义）
-const groupingEnabled = ref(true)
+// v2.34.0: 分组视图开关；v2.43.4: 默认 false（进页面平铺，用户手动开分组）
+const groupingEnabled = ref(false)
 const groupRefs = ref({})
 const globalSelectedSet = getSelectionSet('execute')
 const engineMode = ref({ protocolMode: false, paymentLinkSource: 'api' })
