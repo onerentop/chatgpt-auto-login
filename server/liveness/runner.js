@@ -119,6 +119,19 @@ function createRunner({ io, statusDB, accountsDB, checker, lightLogin, codexFile
           else if (/oauth.*\/error|oauth\s*error|OAuth.*redirect/i.test(msg)) {
             result = { alive_status: 'login_fail', alive_reason: 'OAuth /error page' };
           }
+          // v2.41.14: 新 SPA OAuth flow 错误码分类。account_deactivated 在 step 4
+          //   email-otp/validate 返回，liveness_login.py raise "deactivated: account_deactivated"。
+          else if (/deactivated|account_deactivated|account_disabled/i.test(msg)) {
+            result = { alive_status: 'deactivated', alive_reason: 'account_deactivated' };
+          }
+          // v2.41.14: invalid_code → login_fail（OTP 错或邮件被用过）
+          else if (/invalid[_ ]?code/i.test(msg)) {
+            result = { alive_status: 'login_fail', alive_reason: 'invalid OTP' };
+          }
+          // v2.41.14: unknown_user / invalid_email → login_fail
+          else if (/unknown[_ ]?user|invalid[_ ]?email/i.test(msg)) {
+            result = { alive_status: 'login_fail', alive_reason: 'unknown user / invalid email' };
+          }
           // v2.41.10: /email-verification 或 /api/accounts/* 路径 → token_expired（需 OTP reverify）。
           // 不归 network_error，避免触发 3 次无意义 retry（实测 liabhzo717818 案例）。
           // v2.41.12: 扩展正则也匹 fallback message 里 `path=/email-verification` / `path=/api/accounts`
@@ -129,10 +142,13 @@ function createRunner({ io, statusDB, accountsDB, checker, lightLogin, codexFile
           }
           // v2.41.13: OpenAI authorize page 结构改了 _parse_state regex 跟不上 →
           // 归 unknown 立即 break。跟账号 / 代理无关，需要人工排查 regex。
+          // v2.41.14: 新 SPA flow 不再触发这个 case（删旧 _parse_state），保留兜底以防回归。
           else if (/page structure|page format/i.test(msg)) {
             result = { alive_status: 'unknown', alive_reason: 'authorize page structure changed (needs regex update)' };
           }
           else if (/proxy reset|ECONNRESET/i.test(msg)) result = { alive_status: 'proxy_error', alive_reason: 'proxy reset (login)' };
+          // v2.41.14: login_fail 通用兜底（liveness_login.py 任何 raise "login_fail: ..." 都归这里）
+          else if (/login[_ ]?fail/i.test(msg)) result = { alive_status: 'login_fail', alive_reason: msg.slice(0, 80) };
           // v2.41.12: slice 40 → 80，让 path 信息能保留进 DB 便于诊断（仍受 REASON_MAX=60 终裁）。
           else result = { alive_status: 'network_error', alive_reason: `unexpected: ${msg.slice(0, 80)}` };
         }
