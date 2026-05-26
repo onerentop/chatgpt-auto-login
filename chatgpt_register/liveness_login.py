@@ -167,14 +167,28 @@ def login(email, password, login_type, client_id, refresh_token, totp_secret, pr
     body_len = len(r.text or "")
     if body_len < 500:
         raise Exception(f"proxy reset (login): HTTP {r.status_code} body_len={body_len}")
+    # v2.41.9 / v2.41.10: 按 final_path 分类（state 缺失时）
+    from urllib.parse import urlparse as _urlparse_lv
+    _final_path = _urlparse_lv(str(r.url)).path
+
     # v2.41.9: OpenAI OAuth /error 页（账号问题，非 deactivated 但 OAuth flow 错）→ 直接 login_fail，不要 retry
-    from urllib.parse import urlparse as _urlparse_v2419
-    _final_path = _urlparse_v2419(str(r.url)).path
     if _final_path == '/error' or _final_path.endswith('/error'):
         raise Exception(f"login_fail: OAuth /error redirect (url={str(r.url)[:80]})")
+
     state, _csrf = _parse_state_from_authorize_page(r)
     if not state:
-        raise Exception(f"unexpected: authorize page structure changed (HTTP {r.status_code}, body_len={body_len}, url={str(r.url)[:80]})")
+        # v2.41.10: state 拿不到时按 path 细分。实测 liabhzo717818 出现：
+        # OpenAI OAuth flow 跳到 /email-verification 或 /api/accounts/authorize，
+        # 都拿不到 state — 语义是"账号已部分认证，需要 OTP reverify"，
+        # 归 token_expired 而非 network_error（后者会触发 3 次无意义 retry）。
+        if _final_path.startswith('/email-verification'):
+            # OpenAI 当账号已部分认证，跳过 login form 让 OTP reverify
+            raise Exception(f"token_expired: OAuth jumped to /email-verification (needs OTP reverify, url={str(r.url)[:80]})")
+        if _final_path.startswith('/api/accounts/'):
+            # 中间 redirect 失败（应该 302 到 /log-in 但停在 /api/accounts/*）
+            raise Exception(f"token_expired: OAuth stuck at {_final_path} (needs reverify, url={str(r.url)[:80]})")
+        # 真未知 path 或 page 结构变化 → fallback network_error retry
+        raise Exception(f"unexpected: authorize page structure changed (HTTP {r.status_code}, body_len={body_len}, path={_final_path})")
 
     # Step 2: submit username
     _log("Step 2: submit username")

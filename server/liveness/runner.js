@@ -119,6 +119,11 @@ function createRunner({ io, statusDB, accountsDB, checker, lightLogin, codexFile
           else if (/oauth.*\/error|oauth\s*error|OAuth.*redirect/i.test(msg)) {
             result = { alive_status: 'login_fail', alive_reason: 'OAuth /error page' };
           }
+          // v2.41.10: /email-verification 或 /api/accounts/* 路径 → token_expired（需 OTP reverify）。
+          // 不归 network_error，避免触发 3 次无意义 retry（实测 liabhzo717818 案例）。
+          else if (/token[_ ]?expired|needs.*OTP|needs.*reverify|jumped to \/email-verification|stuck at \/api\/accounts/i.test(msg)) {
+            result = { alive_status: 'token_expired', alive_reason: 'OAuth needs OTP reverify' };
+          }
           else if (/proxy reset|ECONNRESET/i.test(msg)) result = { alive_status: 'proxy_error', alive_reason: 'proxy reset (login)' };
           else result = { alive_status: 'network_error', alive_reason: `unexpected: ${msg.slice(0, 40)}` };
         }
