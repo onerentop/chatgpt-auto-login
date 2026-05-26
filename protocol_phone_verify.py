@@ -85,6 +85,32 @@ def poll_sms(sms_cfg, max_attempts=30, interval=3):
     """
     import requests  # stdlib-friendly
     provider = sms_cfg.get("provider", "local")
+    if provider == 'smscloud':
+        order_no = sms_cfg.get('order_no')
+        api_key = sms_cfg.get('api_key')
+        base_url = sms_cfg.get('base_url', 'https://smscloud.sbs/api/system')
+        if not order_no or not api_key:
+            _log('smscloud poll: missing order_no or api_key')
+            return None
+        from curl_cffi import requests as curl_requests
+        for attempt in range(max_attempts):
+            try:
+                r = curl_requests.get(
+                    f"{base_url}/public/sms/orders/sync/{order_no}",
+                    headers={"apiKey": api_key, "Accept": "application/json"},
+                    timeout=15,
+                )
+                j = r.json()
+                if j.get('code') == 0 and j.get('data'):
+                    code = j['data'].get('code')
+                    if code:
+                        _log(f"smscloud OTP received: {code}")
+                        return str(code)
+            except Exception as e:
+                if attempt == 0:
+                    _log(f"smscloud poll error: {str(e)[:60]}")
+            time.sleep(interval)
+        return None
     for _ in range(max_attempts):
         try:
             if provider == "local":
