@@ -1,5 +1,30 @@
 # Changelog
 
+## v2.41.8 — 2026-05-26
+
+### Accounts 活性列 plus 区分有RT / 无RT（主 tag + 副 tag）
+
+`AccountsTable.vue` 活性列原本 `plus` 统一显示 "Plus"。用户诉求：区分有 refresh_token / 无 refresh_token。
+
+**改动**：
+
+- **`server/routes/results.js`** 加 `hasRefreshTokenInCPA(email)` helper + `/api/results` 返回字段 `hasRefreshToken`：parse `cpa-auth/codex-{email}.json` 的 `refresh_token` 字段非空且长度 > 10
+- **`Accounts.vue#load()`** 注入 `_hasRefreshToken` 视图字段
+- **`AccountsTable.vue` 活性列**：
+  - 主 tag 仍是 `aliveStatusLabel`（`Plus` / `已取消` / ...），外层 `<el-tooltip :content="row._aliveReason">` hover 看 alive_reason（v2.41.8 followup 补回，主 v2.41.8 commit 时丢失）
+  - **新增副 tag**：`row._aliveStatus === 'plus'` 时显示 `RT`（success / plain）或 `无RT`（warning / plain）
+  - 列宽 120 → 160（容纳副 tag）
+- **`sortHelpers.js byAliveStatus`** 拆 plus tier：有RT = 0，无RT = 0.5，均在 unknown (tier 1) 之前。配合 v2.41.6 / v2.41.7 "能用优先" 排序
+
+**不变**：
+
+- `Accounts.vue#visibleGroups` 分组维度不细分（plus 仍单一组，内部排序用户点表头）
+- 后端 statusDB schema 不动
+- liveness 测活流程 / chatgpt_register 不动
+- Execute 侧 `AccountTableRows.vue` 不动（Execute `_status` 已经有 `plus` / `plus_no_rt` 之分）
+
+**测试**：218 Node + 17 Python pass。web build 成功。
+
 ## v2.41.7 — 2026-05-26
 
 ### 账户列表表头加可排序（Accounts 和 Execute 两侧）
