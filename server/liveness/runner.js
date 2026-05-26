@@ -127,6 +127,11 @@ function createRunner({ io, statusDB, accountsDB, checker, lightLogin, codexFile
           else if (/token[_ ]?expired|needs.*OTP|needs.*reverify|jumped to \/email-verification|stuck at \/api\/accounts|path=\/email-verification|path=\/api\/accounts/i.test(msg)) {
             result = { alive_status: 'token_expired', alive_reason: 'OAuth needs OTP reverify' };
           }
+          // v2.41.13: OpenAI authorize page 结构改了 _parse_state regex 跟不上 →
+          // 归 unknown 立即 break。跟账号 / 代理无关，需要人工排查 regex。
+          else if (/page structure|page format/i.test(msg)) {
+            result = { alive_status: 'unknown', alive_reason: 'authorize page structure changed (needs regex update)' };
+          }
           else if (/proxy reset|ECONNRESET/i.test(msg)) result = { alive_status: 'proxy_error', alive_reason: 'proxy reset (login)' };
           // v2.41.12: slice 40 → 80，让 path 信息能保留进 DB 便于诊断（仍受 REASON_MAX=60 终裁）。
           else result = { alive_status: 'network_error', alive_reason: `unexpected: ${msg.slice(0, 80)}` };
