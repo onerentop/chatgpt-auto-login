@@ -8,7 +8,7 @@
     "web": "node server/index.js",
     "web:dev": "cd web && npm run dev",
     "web:build": "cd web && npm run build",
-    "test": "node --test \"__tests__/*.test.js\" \"server/__tests__/*.test.js\" \"server/proxy/__tests__/*.test.js\"",
+    "test": "node --test \"__tests__/*.test.js\" \"server/__tests__/*.test.js\" \"server/proxy/__tests__/*.test.js\" \"server/liveness/__tests__/*.test.js\"",
     "test:py": "py -3 -m unittest discover tests"
   },
   "dependencies": {

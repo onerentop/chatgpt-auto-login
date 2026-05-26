@@ -417,6 +417,64 @@ test('runner: alive=network_error 不同步 status', async () => {
   assert.strictEqual(c, undefined, 'statusDB.set must NOT be called for network_error');
 });
 
+// v2.41.14: 新 SPA OAuth flow 错误码分类
+test('runner v2.41.14: lightLogin throws "deactivated: account_deactivated" → alive_status=deactivated', async () => {
+  const env = mkEnv({
+    accounts: [{ email: 'dead@x.com', password: 'p', client_id: 'c', refresh_token: 'r' }],
+    checker: {
+      probe: async () => ({ alive_status: 'token_expired', alive_reason: 'check 401' }),
+      verifyDeactivated: async () => ({ status: 'active', reason: null }),
+    },
+    lightLogin: async () => { throw new Error('deactivated: account_deactivated'); },
+    codexFile: { read: async () => ({ access_token: 'tok' }), write: async () => {} },
+  });
+  const runner = createRunner(env);
+  runner.start(['dead@x.com']);
+  await new Promise(r => setTimeout(r, 2000));
+  const final = env.dbCalls.find(c => c.email === 'dead@x.com' && c.alive_status !== 'checking');
+  assert.ok(final, 'terminal setAlive was called');
+  assert.strictEqual(final.alive_status, 'deactivated');
+  assert.match(final.alive_reason, /account_deactivated/);
+});
+
+test('runner v2.41.14: lightLogin throws "login_fail: invalid_code" → alive_status=login_fail', async () => {
+  const env = mkEnv({
+    accounts: [{ email: 'badotp@x.com', password: 'p', client_id: 'c', refresh_token: 'r' }],
+    checker: {
+      probe: async () => ({ alive_status: 'token_expired', alive_reason: 'check 401' }),
+      verifyDeactivated: async () => ({ status: 'active', reason: null }),
+    },
+    lightLogin: async () => { throw new Error('login_fail: invalid_code'); },
+    codexFile: { read: async () => ({ access_token: 'tok' }), write: async () => {} },
+  });
+  const runner = createRunner(env);
+  runner.start(['badotp@x.com']);
+  await new Promise(r => setTimeout(r, 2000));
+  const final = env.dbCalls.find(c => c.email === 'badotp@x.com' && c.alive_status !== 'checking');
+  assert.ok(final, 'terminal setAlive was called');
+  assert.strictEqual(final.alive_status, 'login_fail');
+  assert.match(final.alive_reason, /invalid OTP/i);
+});
+
+test('runner v2.41.14: lightLogin throws "login_fail: authorize/continue unknown_user" → alive_status=login_fail', async () => {
+  const env = mkEnv({
+    accounts: [{ email: 'noexist@x.com', password: 'p', client_id: 'c', refresh_token: 'r' }],
+    checker: {
+      probe: async () => ({ alive_status: 'token_expired', alive_reason: 'check 401' }),
+      verifyDeactivated: async () => ({ status: 'active', reason: null }),
+    },
+    lightLogin: async () => { throw new Error('login_fail: authorize/continue unknown_user'); },
+    codexFile: { read: async () => ({ access_token: 'tok' }), write: async () => {} },
+  });
+  const runner = createRunner(env);
+  runner.start(['noexist@x.com']);
+  await new Promise(r => setTimeout(r, 2000));
+  const final = env.dbCalls.find(c => c.email === 'noexist@x.com' && c.alive_status !== 'checking');
+  assert.ok(final, 'terminal setAlive was called');
+  assert.strictEqual(final.alive_status, 'login_fail');
+  assert.match(final.alive_reason, /unknown user/i);
+});
+
 test('runner: alive=plus 不降级 plus_no_rt', async () => {
   const setCalls = [];
   const env = mkEnv({
