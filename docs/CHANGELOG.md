@@ -1,5 +1,28 @@
 # Changelog
 
+## v2.41.9 — 2026-05-26
+
+### Liveness 测活 OAuth /error 页归 login_fail（不再误报 network_error retry）
+
+实测某账号测活日志：
+
+```
+[Deactivated] Authorize -> /error
+[Deactivated] Step 2: Authorize -> /error (not deactivated)
+network_error: unexpected: unexpected: authorize page structure cha — retrying 1/3 in 2s
+```
+
+**根因**：`deactivated_check.py` 跳到 `/error` 路径时 emit `active`（runner 只关心 `deactivated` 值），runner 继续 lightLogin → `liveness_login.py` GET authorize 也跳 `/error` 页（HTML body 完整含 OAuth error 提示但没 `state` query / 没 `<input name="state">`）→ `_parse_state_from_authorize_page` 返 None → raise `authorize page structure changed` → runner 关键词匹不中归 `network_error` retry 3 次都同样结果。
+
+**真因**：OpenAI 给该账号 OAuth `/error`（账号问题，非 deactivated 但 OAuth flow 错）。应归 `login_fail` 不重试。
+
+**修复**：
+
+- **A. `chatgpt_register/liveness_login.py`** — Step 1 GET authorize 后，`_parse_state` 之前检测 `final_path == '/error'` → raise 含 `OAuth /error redirect` message
+- **B. `server/liveness/runner.js`** — catch 关键词分支加 case `/oauth.*\/error|oauth\s*error|OAuth.*redirect/i` → `alive_status='login_fail'`，插在 `proxy reset` case 之前防 message 含 'proxy' 误匹
+
+**测试**：218 Node + 17 Python pass。
+
 ## v2.41.8 — 2026-05-26
 
 ### Accounts 活性列 plus 区分有RT / 无RT（主 tag + 副 tag）
