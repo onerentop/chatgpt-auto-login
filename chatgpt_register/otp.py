@@ -26,14 +26,16 @@ def _imap_socket_proxy():
     """Monkey-patch socket.socket 路由 IMAP 流量到 sing-box HTTP CONNECT（或
     SOCKS5）代理，with 块结束后还原，避免污染 curl_cffi 等其他模块的 socket。
 
-    通过 env LIVENESS_IMAP_PROXY 控制：
+    通过 env HTTPS_PROXY 控制（v2.42 系统级透明代理统一入口）：
       - unset / 空 → 直连（保留旧行为）
       - http://host:port → HTTP CONNECT tunnel
       - socks5://host:port → SOCKS5
       - socks4://host:port → SOCKS4
     默认 http://127.0.0.1:7890（sing-box mixed 端口）。
+    IMAP 不是 HTTP，必须显式 socket monkey-patch（urllib/curl_cffi 的 HTTPS_PROXY
+    自动识别对 IMAP 协议无效）。
     """
-    proxy_url = os.environ.get("LIVENESS_IMAP_PROXY", "http://127.0.0.1:7890")
+    proxy_url = os.environ.get('HTTPS_PROXY', 'http://127.0.0.1:7890')
     if not proxy_url or not _HAS_SOCKS:
         yield
         return
