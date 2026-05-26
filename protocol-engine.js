@@ -204,6 +204,42 @@ class ProtocolEngine extends EventEmitter {
         return {};
       }
     }
+    if (provider === 'smscloud') {
+      const s = cfg.phonePool.smscloud || {};
+      if (!s.apiKey || !s.serviceCode || !s.countryCode) {
+        console.log(`[protocol] smscloud config incomplete (apiKey/serviceCode/countryCode 任一为空)`);
+        return {};
+      }
+      try {
+        const smscloud = require('./server/smscloud-provider');
+        const order = await smscloud.takeOrder(
+          s.apiKey,
+          s.baseUrl || 'https://smscloud.sbs/api/system',
+          s.serviceCode,
+          s.countryCode,
+        );
+        if (!order || !order.phone) return {};
+        return {
+          phone: order.phone,
+          smsConfig: {
+            provider: 'smscloud',
+            order_no: order.order_no,
+            api_key: s.apiKey,
+            base_url: s.baseUrl || 'https://smscloud.sbs/api/system',
+          },
+          releaseFn: async () => {
+            try {
+              await smscloud.cancelOrder(order.order_no, s.apiKey, s.baseUrl || 'https://smscloud.sbs/api/system');
+            } catch (e) {
+              console.log(`[protocol] smscloud cancelOrder failed: ${e?.message?.slice(0, 60)}`);
+            }
+          },
+        };
+      } catch (e) {
+        console.log(`[protocol] smscloud takeOrder failed: ${e?.message?.slice(0, 60)} (code=${e?._smscloudCode || 'n/a'})`);
+        return {};
+      }
+    }
     // local
     const max = cfg.phonePool.maxBindingsPerPhone || 3;
     const allotted = phonePool.acquirePhone(getRawDb(), email, max, excludePhones);
