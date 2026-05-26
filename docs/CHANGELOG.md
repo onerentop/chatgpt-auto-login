@@ -1,5 +1,22 @@
 # Changelog
 
+## v2.43.2 — 2026-05-27
+
+### Chrome 强制 en-US locale 省 PayPal 切国家 4s
+
+实测：每账号 PayPal checkout 进入时 `Country: C2 → US`，等 billing schema 重渲染 4120ms。1000 账号 batch 浪费 ~1 小时。
+
+**根因**：`server/chrome.js` `launchChrome` 没传 locale 参数 → Chrome 用 Windows 系统 locale (zh-CN) → 发 `Accept-Language: zh-CN` → PayPal 看 Accept-Language 优先于 IP geo → 给中文 + C2 国家 fallback。
+
+**修复** (`server/chrome.js launchChrome` args)：
+
+```js
+'--lang=en-US',                  // Chrome UI 语言 + Accept-Language seed
+'--accept-lang=en-US,en;q=0.9',  // HTTP header Accept-Language (权威源)
+```
+
+预期 PayPal 直接 `initial === 'US'` 跳过 4s 切换分支。不影响 OpenAI/Stripe（多数 `data-testid`/`id` selector）。**304 Node test pass**。
+
 ## v2.43.1 — 2026-05-27
 
 ### 修偶发 PayPal not reached：clickSubmit 验证 submit 真触发
