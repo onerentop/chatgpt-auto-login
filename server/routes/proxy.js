@@ -3,8 +3,53 @@ const proxy = require('../proxy');
 
 const router = express.Router();
 
-router.get('/status', (req, res) => {
-  res.json(proxy.getState());
+router.get('/status', async (req, res) => {
+  // v2.30 字段：proxy.getState() 同步返回（保持向后兼容：enabled / currentNode /
+  // nodeTags / whitelist / badNodes / jp.* 等老路径仍能读）。
+  const state = proxy.getState();
+
+  // v2.42 字段：appended on top of v2.30 shape。
+  // - mainActiveNode / jpActiveNode：异步从 Clash API /proxies/{tag}.now 拿。
+  //   sing-box urltest 自做 latency 选最优，所以 _state.currentNode 不一定准。
+  // - bannedHistory：从 proxyDB.listBanned() 拿（DB 持久层，含 ttl 未过期记录）。
+  // 任何字段查询失败都降级为 null / 空数组，不影响整体 status response。
+  try {
+    state.mainActiveNode = state.enabled ? (await proxy.getActiveNode('main')) : null;
+  } catch { state.mainActiveNode = null; }
+  try {
+    state.jpActiveNode = state.jp?.enabled ? (await proxy.getActiveNode('jp')) : null;
+  } catch { state.jpActiveNode = null; }
+
+  // bannedNodes Map 已经在 state.bannedNodes (projectBanned 投影成 {tag: {expiresAt, ttlRemainingMs}})。
+  // 这里构造前端友好的 mainNodes/jpNodes 数组：合并 nodeTags + active flag + banned 时间。
+  const bannedMap = state.bannedNodes || {};
+  const buildNodeRows = (tags, activeNode) => (tags || []).map(name => ({
+    name,
+    delay: null,  // v2.42: 不在 status 轮询里 N+1 query Clash delay；前端如需可单独 endpoint
+    alive: !bannedMap[name],
+    banned: bannedMap[name] ? new Date(bannedMap[name].expiresAt).toISOString() : null,
+    active: name === (activeNode || ''),
+  }));
+  state.mainNodes = buildNodeRows(state.nodeTags, state.mainActiveNode);
+  state.jpNodes = buildNodeRows(state.jp?.nodeTags, state.jpActiveNode);
+
+  // bannedHistory：DB 层 listBanned (主 + JP)，spec §3.5 "最近 N 条"。
+  try {
+    const { proxyDB } = require('../db');
+    const mainBanned = (proxyDB.listBanned('main') || []).map(r => ({ ...r, channel: 'main' }));
+    const jpBanned = (proxyDB.listBanned('jp') || []).map(r => ({ ...r, channel: 'jp' }));
+    state.bannedHistory = [...mainBanned, ...jpBanned]
+      .sort((a, b) => (b.expires_at || 0) - (a.expires_at || 0))
+      .slice(0, 50)
+      .map(r => ({
+        tag: r.tag,
+        channel: r.channel,
+        reason: r.reason || '',
+        until: new Date(r.expires_at).toISOString(),
+      }));
+  } catch { state.bannedHistory = []; }
+
+  res.json(state);
 });
 
 router.post('/refresh', async (req, res) => {

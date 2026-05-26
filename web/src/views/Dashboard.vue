@@ -125,6 +125,9 @@
         <el-table-column prop="updated_at" label="更新" width="180" />
       </el-table>
     </SectionCard>
+
+    <!-- v2.42 Task 13: 代理节点状态面板（main / jp 通道 active 节点 + ban 列表） -->
+    <ProxyPanel />
   </div>
 </template>
 
@@ -140,6 +143,7 @@ import { socketState } from '../socket'
 import PageHeader from '../components/ui/PageHeader.vue'
 import SectionCard from '../components/ui/SectionCard.vue'
 import EmptyState from '../components/ui/EmptyState.vue'
+import ProxyPanel from '../components/ProxyPanel.vue'
 
 const router = useRouter()
 const stats = reactive({
