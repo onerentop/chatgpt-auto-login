@@ -247,7 +247,31 @@ def login(email, password, login_type, client_id, refresh_token, totp_secret, pr
         raise Exception(f"login_fail: email-otp/validate code={err}")
     _log(f"Step 4 OK: HTTP {r4.status_code} cookies={len(session.cookies)}")
 
-    raise Exception("not_implemented: step 5 待 Task 5")
+    # Step 5: GET chatgpt.com/api/auth/session → 拿 access_token
+    _log("Step 5: GET chatgpt.com/api/auth/session")
+    try:
+        r5 = session.get(f"{_BASE}/api/auth/session",
+                        headers={"Accept": "application/json"}, timeout=30)
+    except Exception as e:
+        raise Exception(f"unexpected: /api/auth/session {str(e)[:40]}")
+    if r5.status_code != 200:
+        raise Exception(f"no session after login: HTTP {r5.status_code}")
+    try:
+        sj = r5.json()
+    except Exception:
+        raise Exception("no session after login: body not json")
+    access_token = sj.get("accessToken")
+    if not access_token:
+        raise Exception("no session after login: missing accessToken")
+    account_id = (sj.get("user") or {}).get("id", "")
+    expires = sj.get("expires") or ""
+    _log(f"Step 5 OK: account_id={account_id}, expires={expires}")
+
+    return {
+        "accessToken": access_token,
+        "accountId": account_id,
+        "expiresAtIso": _to_cst_iso(expires),
+    }
 
 
 def main():
