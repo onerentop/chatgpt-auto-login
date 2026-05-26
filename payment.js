@@ -148,7 +148,43 @@ async function selectOption(page, selector, text) {
   }
 }
 
+// Click subscribe/submit and verify side-effect (v2.43.1: 业界 best practice).
+// Old behavior: click() and return true immediately — failed when React re-renders
+// swallowed the click event, leaving page on pay.openai.com (no redirect).
+// New behavior: setup Promise.race listener BEFORE click for Stripe submit API
+// response / URL change / error toast. If 6s passes without effect → click didn't
+// trigger submit → retry.
 async function clickSubmit(page, signal) {
+  // Inner helper: setup race promise BEFORE click — listener attach must precede event
+  function setupSubmitEffectRace() {
+    return Promise.race([
+      // (1) Stripe checkout submit API endpoints (most reliable signal)
+      page.waitForResponse(
+        (r) => {
+          const u = r.url();
+          if (/\/v1\/payment_pages\/[^/]+\/(confirm|init|finalize)/i.test(u)) return true;
+          if (/\/v1\/(sources|payment_methods|setup_intents|customer_portal)/i.test(u)) return true;
+          if (u.includes('paypal.com') && r.request().method() === 'POST') return true;
+          return false;
+        },
+        { timeout: 6000 }
+      ).then((r) => ({ kind: 'api', status: r.status(), url: r.url() })).catch(() => null),
+      // (2) URL leaves pay.openai.com / checkout.stripe.com (definitive nav)
+      page.waitForURL(
+        (u) => {
+          const s = String(u);
+          return !s.includes('pay.openai.com') && !s.includes('checkout.stripe.com');
+        },
+        { timeout: 6000 }
+      ).then(() => ({ kind: 'nav' })).catch(() => null),
+      // (3) Stripe error toast — fail-fast (don't retry, real backend error)
+      page.waitForSelector(
+        '.SubmitButton-Error, [class*="ErrorMessage"]:not(:empty), [role="alert"]:not(:empty)',
+        { timeout: 6000 }
+      ).then(() => ({ kind: 'error' })).catch(() => null),
+    ]);
+  }
+
   for (let retry = 0; retry < 10; retry++) {
     if (signal?.aborted) throw _abortError();
     const selectors = [
@@ -157,24 +193,51 @@ async function clickSubmit(page, signal) {
       'button[data-atomic-wait-intent="Submit_Email"]',
       'button.SubmitButton--complete',
     ];
+    let btn = null;
     for (const sel of selectors) {
       try {
-        const btn = page.locator(sel).first();
-        if (await btn.isVisible({ timeout: 1000 }).catch(() => false)) {
-          if (await btn.isEnabled()) { await btn.click(); return true; }
+        const b = page.locator(sel).first();
+        if (await b.isVisible({ timeout: 1000 }).catch(() => false)) {
+          if (await b.isEnabled()) { btn = b; break; }
         }
       } catch (e) { console.log(`    [Pay] Submit btn: ${e.message?.slice(0, 60)}`); }
     }
-    const texts = ['訂閱', '订阅', '下一页', 'Next', 'Subscribe', 'Pay', 'Continue', 'Agree', '同意'];
-    for (const t of texts) {
-      try {
-        const btn = page.locator(`button:has-text("${t}")`).first();
-        if (await btn.isVisible({ timeout: 500 }).catch(() => false)) {
-          if (await btn.isEnabled()) { await btn.click(); return true; }
-        }
-      } catch (e) { console.log(`    [Pay] Submit text btn: ${e.message?.slice(0, 60)}`); }
+    if (!btn) {
+      const texts = ['訂閱', '订阅', '下一页', 'Next', 'Subscribe', 'Pay', 'Continue', 'Agree', '同意'];
+      for (const t of texts) {
+        try {
+          const b = page.locator(`button:has-text("${t}")`).first();
+          if (await b.isVisible({ timeout: 500 }).catch(() => false)) {
+            if (await b.isEnabled()) { btn = b; break; }
+          }
+        } catch (e) { console.log(`    [Pay] Submit text btn: ${e.message?.slice(0, 60)}`); }
+      }
     }
-    await abortableSleep(1000, signal);
+    if (!btn) {
+      await abortableSleep(1000, signal);
+      continue;
+    }
+
+    // Setup listener BEFORE click (Playwright pattern: attach race promise first)
+    const effectPromise = setupSubmitEffectRace();
+    try { await btn.click(); } catch (e) { console.log(`    [Pay] Submit click err: ${e.message?.slice(0, 60)}`); continue; }
+    const effect = await effectPromise;
+
+    if (effect?.kind === 'api') {
+      if (effect.status >= 400) {
+        console.log(`    [Pay] Submit API error ${effect.status}: ${effect.url.slice(0, 80)}`);
+        return false;  // backend rejection — let outer runner retry
+      }
+      return true;  // ✓ Stripe API response received — submit triggered
+    }
+    if (effect?.kind === 'nav') return true;  // ✓ URL changed — redirect happened
+    if (effect?.kind === 'error') {
+      console.log('    [Pay] Stripe error toast detected, fail-fast');
+      return false;  // visible error — let outer retry with fresh state
+    }
+    // No effect within 6s → click 没触发 submit (React re-render race / stale handler)
+    console.log(`    [Pay] Submit click 无副作用 (retry ${retry + 1}/10)，重试`);
+    // continue → next iteration will re-find button + re-click
   }
   return false;
 }
