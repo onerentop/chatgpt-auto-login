@@ -73,7 +73,9 @@ test('R2 refresh 后节点列表变短：rotationIndex 取模到合法范围', {
   assert.strictEqual(p.getState().currentNode, 'us-1');
 });
 
-test('R3 refresh 后节点列表为空：rotationIndex 安全 reset 为 0', async () => {
+test('R3 refresh 后主通道节点列表为空：currentNode 为空字符串', async () => {
+  // v2.42.1: rotationIndex 字段已从 _state / getState() 删除（urltest 自选 + dead 自跳）。
+  // 测试改为验证 main currentNode（主通道 disabled → 空）+ getState 不再含 rotationIndex。
   const mocks = defaultMocks([]);
   mocks.configJson.proxy.enabled = false;
   mocks.configJson.proxy.jpCheckout.enabled = true;
@@ -82,8 +84,11 @@ test('R3 refresh 后节点列表为空：rotationIndex 安全 reset 为 0', asyn
   mocks.configJson.proxy.jpCheckout.keyword = 'jp';
   const p = freshProxyWithMocks(mocks);
   await p.refresh();
-  assert.strictEqual(p.getState().rotationIndex, 0);
-  assert.strictEqual(p.getState().currentNode, '');
+  const s = p.getState();
+  assert.strictEqual(s.currentNode, '', 'main currentNode 应为空（主通道 disabled）');
+  assert.strictEqual('rotationIndex' in s, false, 'getState 不再暴露 rotationIndex');
+  assert.strictEqual('rotationStrategy' in s, false, 'getState 不再暴露 rotationStrategy');
+  assert.strictEqual('rotationKeyword' in s, false, 'getState 不再暴露 rotationKeyword');
 });
 
 test('R4 refresh 后 currentNode 跟随 rotationIndex 而非 filtered[0]', { skip: 'v2.42 Task 8: rotate() 已 stub' }, async () => {

@@ -2,7 +2,17 @@ const test = require('node:test');
 const assert = require('node:assert');
 const Module = require('module');
 
-function freshApp({ proxyMock }) {
+function freshApp({ proxyMock, dbMock }) {
+  // db.js 在 routes/proxy.js 里是 lazy-require（handler 内），所以 Module.prototype.require hook
+  // 在 freshApp 退出后已恢复，无法拦截 lazy 调用。改用 require.cache pinning。
+  const dbPath = require.resolve('../db');
+  delete require.cache[dbPath];
+  require.cache[dbPath] = {
+    id: dbPath,
+    filename: dbPath,
+    loaded: true,
+    exports: dbMock || { proxyDB: { listBanned: () => [], unbanNode: () => {}, banNode: () => {} } },
+  };
   const origRequire = Module.prototype.require;
   Module.prototype.require = function (id) {
     if (id === '../proxy') return proxyMock;
@@ -50,23 +60,38 @@ function mkProxyMock(state) {
   };
 }
 
-test('GET /blacklist 返回 main + jp 两数组，含 ttlRemainingMs', async () => {
+test('GET /blacklist 返回 main + jp 两数组 (v2.42.1: DB-backed superset schema)', async () => {
   const expiresAt = Date.now() + 60000;
-  const state = {
-    badNodes: { 'us-1': { expiresAt, reason: 'tls', source: 'auto' } },
-    jp: { badNodes: { 'jp-1': { expiresAt: expiresAt + 1000, reason: 'empty', source: 'manual' } } },
+  // v2.42.1: GET /blacklist 已改为从 proxyDB.listBanned(channel) 读，不再读 proxy.getState().badNodes。
+  const dbMock = {
+    proxyDB: {
+      listBanned: (channel) => {
+        if (channel === 'main') return [{ tag: 'us-1', reason: 'tls', expires_at: expiresAt }];
+        if (channel === 'jp') return [{ tag: 'jp-1', reason: 'empty', expires_at: expiresAt + 1000 }];
+        return [];
+      },
+      unbanNode: () => {},
+      banNode: () => {},
+    },
   };
-  const proxyMock = mkProxyMock(state);
-  const app = freshApp({ proxyMock });
+  const proxyMock = mkProxyMock({ badNodes: {}, jp: { badNodes: {} } });
+  const app = freshApp({ proxyMock, dbMock });
   const r = await request(app, 'GET', '/api/proxy/blacklist');
   assert.strictEqual(r.status, 200);
   assert.strictEqual(r.body.main.length, 1);
-  assert.strictEqual(r.body.main[0].tag, 'us-1');
+  // 新 schema 字段
+  assert.strictEqual(r.body.main[0].node, 'us-1');
   assert.strictEqual(r.body.main[0].reason, 'tls');
+  assert.ok(typeof r.body.main[0].bannedUntil === 'string' && r.body.main[0].bannedUntil.includes('T'));
+  assert.ok(typeof r.body.main[0].addedAt === 'number');
+  // v2.30 向后兼容字段（部分老前端 / 测试仍读）
+  assert.strictEqual(r.body.main[0].tag, 'us-1');
   assert.strictEqual(r.body.main[0].source, 'auto');
   assert.ok(r.body.main[0].ttlRemainingMs > 0 && r.body.main[0].ttlRemainingMs <= 60000);
+  // JP channel
   assert.strictEqual(r.body.jp.length, 1);
-  assert.strictEqual(r.body.jp[0].source, 'manual');
+  assert.strictEqual(r.body.jp[0].node, 'jp-1');
+  assert.strictEqual(r.body.jp[0].reason, 'empty');
 });
 
 test('POST /blacklist/add 校验 + 透传到 proxy.blacklistManually', async () => {

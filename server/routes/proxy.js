@@ -150,8 +150,33 @@ function buildBlacklistView(state) {
   return { main: toRows(state.badNodes), jp: toRows(state.jp?.badNodes) };
 }
 
+// v2.42.1: GET /blacklist 升级为 DB-backed superset schema。返回结构含 node / reason /
+// bannedUntil / addedAt。同时保留 v2.30 旧字段（tag / expiresAt / ttlRemainingMs / source）
+// 用于向后兼容（部分老前端 / 测试可能仍读）。
+// 数据源：proxyDB.listBanned(channel) — 与 POST /bad-node 写入的同一张表（持久层），
+// 而非 _state.badNodes（manual blacklist 内存映射）。这样 server 重启后 banned 节点也能看见。
 router.get('/blacklist', (req, res) => {
-  res.json(buildBlacklistView(proxy.getState()));
+  try {
+    const { proxyDB } = require('../db');
+    const buildEntries = (channel) => (proxyDB.listBanned(channel) || []).map(r => {
+      const bannedUntilMs = Number(r.expires_at);
+      return {
+        // 新 schema
+        node: r.tag,
+        reason: r.reason || 'custom',
+        bannedUntil: bannedUntilMs ? new Date(bannedUntilMs).toISOString() : null,
+        addedAt: bannedUntilMs ? bannedUntilMs - 5 * 60_000 : null,
+        // v2.30 向后兼容字段（部分老前端仍读）
+        tag: r.tag,
+        expiresAt: bannedUntilMs,
+        ttlRemainingMs: Math.max(0, bannedUntilMs - Date.now()),
+        source: 'auto',
+      };
+    });
+    res.json({ main: buildEntries('main'), jp: buildEntries('jp') });
+  } catch (e) {
+    res.status(500).json({ error: String(e.message || e) });
+  }
 });
 
 router.post('/blacklist/add', (req, res) => {
@@ -222,6 +247,28 @@ router.post('/unban-node', async (req, res) => {
     const { proxyDB } = require('../db');
     proxyDB.unbanNode(node, channel);
     res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: String(e.message || e) });
+  }
+});
+
+// v2.42.1: POST /clear-blacklist — 按 channel 批量 unban。
+// 用户在 Config 黑名单 tab "清空" 时调，避免逐条 POST /unban-node。
+// 实现：listBanned(channel) → 对每个 node 调 proxyDB.unbanNode + proxy.unbanNode
+// (后者 fire regenerateAndReload；多个 node 串行 await，避免并发 reload sing-box)。
+router.post('/clear-blacklist', async (req, res) => {
+  const { channel } = req.body || {};
+  if (!['main', 'jp'].includes(channel)) {
+    return res.status(400).json({ error: 'channel must be main or jp' });
+  }
+  try {
+    const { proxyDB } = require('../db');
+    const targets = (proxyDB.listBanned(channel) || []).map(r => r.tag);
+    for (const node of targets) {
+      try { proxyDB.unbanNode(node, channel); } catch {}
+      try { await proxy.unbanNode(node); } catch {}
+    }
+    res.json({ ok: true, cleared: targets.length });
   } catch (e) {
     res.status(500).json({ error: String(e.message || e) });
   }

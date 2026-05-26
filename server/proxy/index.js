@@ -57,9 +57,7 @@ let _state = {
   outbounds: [],         // parsed nodes (filtered by region)
   nodeTags: [],          // names of available nodes
   currentNode: '',       // v2.42: kept for backwards-compat (Clash API /proxies/main.now 也可查)
-  rotationStrategy: 'sequential',
-  rotationIndex: 0,
-  rotationKeyword: 'US', // region filter
+  regionFilter: 'US',    // v2.42.1: 区域过滤（原 rotationKeyword，纯展示用，不参与 rotate）
   lastError: '',
   exitIp: '',
   badNodes: new Map(),   // tag → { expiresAt, reason, source }. Manual blacklist (用户在 UI 手 pin)。
@@ -78,8 +76,6 @@ let _state = {
     outbounds: [],
     nodeTags: [],
     currentNode: '',
-    rotationStrategy: 'sequential',
-    rotationIndex: 0,
     badNodes: new Map(),
     exitIp: '',
     lastError: '',
@@ -176,9 +172,7 @@ function getState() {
     subscriptionHost,
     nodeTags: _state.nodeTags,
     currentNode: _state.currentNode,
-    rotationStrategy: _state.rotationStrategy,
-    rotationIndex: _state.rotationIndex,
-    rotationKeyword: _state.rotationKeyword,
+    regionFilter: _state.regionFilter,
     exitIp: _state.exitIp,
     lastError: _state.lastError,
     whitelist: _state.whitelist,
@@ -194,8 +188,6 @@ function getState() {
       whitelistMisses: _state.jp.whitelistMisses,
       nodeTags: _state.jp.nodeTags,
       currentNode: _state.jp.currentNode,
-      rotationStrategy: _state.jp.rotationStrategy,
-      rotationIndex: _state.jp.rotationIndex,
       exitIp: _state.jp.exitIp,
       lastError: _state.jp.lastError,
       available: _state.jp.nodeTags.length,
@@ -329,8 +321,7 @@ function buildSingboxConfig(usOrOpts /* nullable | opts */, jpArg /* nullable */
 async function refresh() {
   const cfg = readCfg().proxy || {};
   _state.subscriptionUrl = cfg.subscriptionUrl || '';
-  _state.rotationKeyword = cfg.regionFilter ?? 'US';
-  _state.rotationStrategy = cfg.rotationStrategy || 'sequential';
+  _state.regionFilter = cfg.regionFilter ?? 'US';
   _state.whitelist = Array.isArray(cfg.whitelist) ? cfg.whitelist : [];
 
   const mainEnabledByConfig = cfg.enabled !== false;
@@ -338,7 +329,6 @@ async function refresh() {
   const jpCfg = cfg.jpCheckout || {};
   const jpEnabledByConfig = jpCfg.enabled !== false;
   _state.jp.keyword = jpCfg.keyword || JP_DEFAULT_KEYWORD;
-  _state.jp.rotationStrategy = jpCfg.rotationStrategy || 'sequential';
   _state.jp.whitelist = Array.isArray(jpCfg.whitelist) ? jpCfg.whitelist : [];
 
   if (!mainEnabledByConfig && !jpEnabledByConfig) {
@@ -359,13 +349,13 @@ async function refresh() {
     if (mainPick.usedWhitelist) {
       console.log(`[Proxy] Main whitelist: ${filtered.length}/${_state.whitelist.length} matched (${mainPick.misses.length} missing${mainPick.misses.length > 0 ? ': ' + mainPick.misses.join(', ') : ''})`);
     } else {
-      console.log(`[Proxy] After region filter (${_state.rotationKeyword}): ${filtered.length}`);
+      console.log(`[Proxy] After region filter (${_state.regionFilter}): ${filtered.length}`);
     }
     if (mainPick.usedWhitelist && filtered.length === 0) {
       throw new Error(`主代理白名单 [${_state.whitelist.filter(t => typeof t === 'string' && t).join(', ')}] 在订阅中无任何匹配`);
     }
     if (!mainPick.usedWhitelist && filtered.length === 0) {
-      throw new Error(`没有匹配地区 "${_state.rotationKeyword}" 的节点`);
+      throw new Error(`没有匹配地区 "${_state.regionFilter}" 的节点`);
     }
   } else {
     console.log(`[Proxy] Main channel disabled by config`);
@@ -395,21 +385,13 @@ async function refresh() {
 
   _state.outbounds = filtered;
   _state.nodeTags = filtered.map(o => o.tag);
-  if (filtered.length === 0) {
-    _state.rotationIndex = 0;
-  } else if (_state.rotationIndex >= filtered.length) {
-    _state.rotationIndex = _state.rotationIndex % filtered.length;
-  }
-  _state.currentNode = filtered[_state.rotationIndex]?.tag || '';
+  // v2.42.1: rotationIndex 已删；urltest 自做 latency 选最优。currentNode 仅作为 fallback display
+  // (实际 active 走 Clash API /proxies/main.now)，取 filtered[0]。
+  _state.currentNode = filtered[0]?.tag || '';
 
   _state.jp.outbounds = jpFiltered;
   _state.jp.nodeTags = jpFiltered.map(o => o.tag);
-  if (jpFiltered.length === 0) {
-    _state.jp.rotationIndex = 0;
-  } else if (_state.jp.rotationIndex >= jpFiltered.length) {
-    _state.jp.rotationIndex = _state.jp.rotationIndex % jpFiltered.length;
-  }
-  _state.jp.currentNode = jpFiltered[_state.jp.rotationIndex]?.tag || '';
+  _state.jp.currentNode = jpFiltered[0]?.tag || '';
   _state.jp.lastError = '';
 
   // v2.42 Task 8: refresh 用新 opts 签名（excludeNodes 含 banned）。
