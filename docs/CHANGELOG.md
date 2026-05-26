@@ -1,5 +1,49 @@
 # Changelog
 
+## v2.41.4 — 2026-05-26
+
+### Liveness 测活错误分类细化 + 并发降到 1（避免触发 OpenAI/Cloudflare 限速）
+
+实测 5 账号并发测活：5 个代理节点全部被 bad attempt 拉黑（`liveness_net_error`），sing-box 报 `unexpected EOF` + `forcibly closed by remote host`。Python `liveness_login.py` 拿到 partial/empty response，`_parse_state_from_authorize_page` 返 None → raise `"unexpected: no state in authorize page"` → runner 归 `network_error`（掩盖了真因是 connection close）。
+
+**真因**：OpenAI/Cloudflare 对并发 5 账号测活的所有出口 IP 速率限制。
+
+**修复 A — 错误分类细化** (`chatgpt_register/liveness_login.py`)：
+
+Step 1 GET authorize 后，在 `_parse_state` 之前先判 HTTP/body 状态：
+
+```python
+if r.status_code >= 500:
+    raise Exception(f"proxy reset (login): HTTP {r.status_code}")
+body_len = len(r.text or "")
+if body_len < 500:
+    raise Exception(f"proxy reset (login): HTTP {r.status_code} body_len={body_len}")
+state, _csrf = _parse_state_from_authorize_page(r)
+if not state:
+    raise Exception(f"unexpected: authorize page structure changed (HTTP {r.status_code}, body_len={body_len}, url={str(r.url)[:80]})")
+```
+
+runner 已识别 `proxy reset` 关键词 → 归 `proxy_error`（而非 `network_error`），用户能区分真因。HTTP 200 + body 完整但 state 缺失才算 `authorize page structure changed`。
+
+**body_len=500 阈值**：经验值。实际 authorize page HTML 含 Auth0 form + scripts 远超 5KB，短期安全。OpenAI 改 page 骨架低于 500 字节才会误报。
+
+**修复 B — 并发降到 1** (`server/liveness/runner.js`)：
+
+```js
+const CONCURRENCY = 1;        // 旧 3
+const THROTTLE_MS = 3_000;    // 旧 1000
+```
+
+顺序跑 + 账号间 3s 间隔。**牺牲速度换稳定**：N 账号耗时近似 N×3s + N×登录耗时。大批量需要并发可手动改这两个常量或后续做 env 配置。
+
+**测试**：218 Node + 17 Python pass。`tests/test_liveness_login.py` mock 加 600 字符 body 反映真实 authorize page（修复 A 的连带改动 — 旧 mock text='' 会走新 guard）。
+
+**文件**：
+
+- `chatgpt_register/liveness_login.py` (+8/-1)
+- `server/liveness/runner.js` (+4/-2)
+- `tests/test_liveness_login.py` (+7/-2)
+
 ## v2.41.3 — 2026-05-26
 
 ### selection store 引用替换 bug 修复（选中数累加不清空）
