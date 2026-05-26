@@ -1,5 +1,30 @@
 # Changelog
 
+## v2.41.11 — 2026-05-26
+
+### Liveness HTTP 403 Cloudflare challenge 归 proxy_error（不再 retry 3 次浪费）
+
+实测 `liabhzo717818@outlook.com` 测活：直接 spawn `liveness_login.py` 拿到 `unexpected: authorize page structure changed (HTTP 403, body_len=6966, path=/authorize)`。
+
+**真因**：`/authorize` HTTP 403 + body 6966 字节是 **Cloudflare "Just a moment..." challenge**（不是 OpenAI flow 错误）。v2.41.4 只检 `r.status_code >= 500` 触发 proxy reset，403 漏了 → 走到 `_parse_state` 拿不到 state → 归 `network_error` retry 3 次。
+
+**修复**（`chatgpt_register/liveness_login.py`，5xx + body<500 检测之后加）：
+
+```python
+if r.status_code in (403, 429):
+    _body_lower = (r.text or "").lower()
+    if any(kw in _body_lower for kw in
+           ('cloudflare', 'just a moment', 'challenge-platform', 'cf-mitigated', 'attention required')):
+        raise Exception(f"proxy reset (login): Cloudflare HTTP {r.status_code}")
+    # 非 Cloudflare 的 403/429 继续走 fallback
+```
+
+runner.js 既有 `/proxy reset|ECONNRESET/i` 识别（v2.41.4 加）→ `alive_status='proxy_error'`，runner dispatchOne retry loop `if (result.alive_status !== 'network_error') break` 立即跳出，不再 3 次无意义 retry。
+
+**runner.js 零改动**。
+
+**测试**：218 Node + 17 Python pass。
+
 ## v2.41.10 — 2026-05-26
 
 ### Liveness `/email-verification` 和 `/api/accounts/*` path 归 token_expired
