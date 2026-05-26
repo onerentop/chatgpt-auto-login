@@ -1,5 +1,32 @@
 # Changelog
 
+## v2.43.1 — 2026-05-27
+
+### 修偶发 PayPal not reached：clickSubmit 验证 submit 真触发
+
+实测日志：`[Pay] OpenAI page submitted` → `Waiting for PayPal redirect... ×5` → `PayPal not reached`（~40s 主 loop timeout）。约 1/10 偶发。
+
+**根因**：`payment.js` `clickSubmit` 找到按钮 + `btn.click()` 后**立即 `return true`**，没验证 submit 真触发。偶发 React 重渲染时 click event 被吞 / button stale → 外表"click 成功"但 Stripe 后端没收到 submit → 页面停留在 `pay.openai.com` → 主 loop 15 轮 timeout 归 PayPal not reached。
+
+**修复（Playwright 业界 best practice）**：
+
+`clickSubmit` 改 `Promise.race`，在 click **之前** setup 3 个 listener：
+
+1. `page.waitForResponse(matcher)` 监听 Stripe submit API 响应：
+   - `/v1/payment_pages/.../confirm|init|finalize`
+   - `/v1/(sources|payment_methods|setup_intents)`
+   - paypal.com POST（直跳）
+2. `page.waitForURL` 检测 URL 离开 `pay.openai.com` / `checkout.stripe.com`
+3. `page.waitForSelector` 检测 Stripe error toast（`.SubmitButton-Error` / `[role="alert"]`）— **fail-fast**
+
+6s 内任意 listener resolve → submit 触发（return true）或 fail-fast（return false 让外层 retry）。**6s timeout 无副作用** → click 没触发 → 内层 retry（最多 10 次自动重新找按钮重 click）。
+
+参考：[Playwright Navigations docs](https://playwright.dev/docs/navigations) listener-before-event 模式 + [BrowserStack Playwright waitForResponse guide](https://www.browserstack.com/guide/playwright-waitforresponse)。
+
+**预期效果**：偶发 1/10 → 1/30+（click race 自动 retry 消化）。runner 外层 3 次 retry 兜底不变。
+
+**测试**：304 Node test pass，无 regression。payment.js 行数 +67（30 → 97）。
+
 ## v2.43.0 — 2026-05-27
 
 ### login_password 死局修复：step 1B 加 screen_hint=login_or_signup
