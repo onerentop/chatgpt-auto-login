@@ -334,11 +334,66 @@ def login(email, password, login_type, client_id, refresh_token, totp_secret, pr
         raise Exception(f"login_fail: authorize/continue HTTP {r2.status_code} code={err}")
 
     page_type = (j2.get("page") or {}).get("type")
-    if page_type != "email_otp_verification":
-        # 可能是 password_login（账号还没切到 passwordless）—— 这种情况下 protocol 侧
-        # 暂不支持（YAGNI），归 login_fail
-        raise Exception(f"login_fail: unexpected page.type={page_type}")
     _log(f"Step 2 OK: page.type={page_type} sentinel={'yes' if sentinel else 'NO'}")
+
+    # v2.43: 强制 passwordless 路径 — 即使 OpenAI 返回 login_password 也切回 OTP。
+    # 实测 ~55% outlook 账号 step 2 返回 page.type=login_password 而非 email_otp_verification，
+    # 但 payload.passwordless_disabled=false 说明可调 /api/accounts/passwordless/send-otp
+    # 强制切 OTP flow。reconnaissance: 空 body + 同 step 2 headers (sentinel/oai-device-id)。
+    if page_type == "login_password":
+        page_payload = (j2.get("page") or {}).get("payload") or {}
+        if page_payload.get("passwordless_disabled"):
+            # OpenAI 明确不允许这账号走 OTP（罕见）
+            raise Exception("login_fail: passwordless_disabled by OpenAI")
+        _log("Step 2.5: page.type=login_password, force passwordless via send-otp")
+        try:
+            sentinel25 = get_sentinel_token(session, device_id, flow="authorize_continue",
+                                           user_agent=session.headers.get("User-Agent", "")) or ""
+        except Exception as _e:
+            _log(f"sentinel25 fail (复用 step 2 sentinel): {str(_e)[:40]}")
+            sentinel25 = sentinel
+        try:
+            r25 = session.post(
+                f"{_AUTH}/api/accounts/passwordless/send-otp",
+                headers={
+                    "Accept": "application/json",
+                    "Content-Type": "application/json",
+                    "Origin": _AUTH,
+                    "Referer": f"{_AUTH}/log-in/password",
+                    "oai-device-id": device_id,
+                    "openai-sentinel-token": sentinel25,
+                },
+                json={},  # 实测 reqBody 为空
+                timeout=30,
+            )
+        except Exception as e:
+            msg = str(e)
+            if 'reset' in msg.lower() or 'ECONNRESET' in msg:
+                raise Exception("proxy reset (login)")
+            raise Exception(f"unexpected: send-otp {msg[:40]}")
+
+        if r25.status_code in (429,):
+            raise Exception(f"proxy reset (login): HTTP {r25.status_code} send-otp rate_limited")
+        if r25.status_code >= 500:
+            raise Exception(f"proxy reset (login): HTTP {r25.status_code}")
+
+        if r25.status_code >= 400:
+            try:
+                j25 = r25.json()
+                err = (j25.get("error") or {}).get("code") or "unknown"
+            except Exception:
+                err = "parse_error"
+            if err == "invalid_state":
+                raise Exception("login_fail: send-otp invalid_state (session expired)")
+            if err == "account_deactivated":
+                raise Exception("deactivated: send-otp account_deactivated")
+            raise Exception(f"login_fail: send-otp HTTP {r25.status_code} code={err}")
+
+        _log("Step 2.5 OK: forced passwordless, OTP email sent")
+        # page_type 概念上现在已变 email_otp_verification，继续走 step 3 IMAP
+    elif page_type != "email_otp_verification":
+        # 可能是其他未知页面类型 —— 这种情况下 protocol 侧暂不支持（YAGNI），归 login_fail
+        raise Exception(f"login_fail: unexpected page.type={page_type}")
 
     # Step 3: IMAP 取 OTP（Outlook 路径；Gmail TOTP 不在本 flow 范围）
     if login_type != "outlook":
