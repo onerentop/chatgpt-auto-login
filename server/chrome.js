@@ -36,6 +36,12 @@ function launchChrome(port, tempDir, options = {}) {
     `--remote-debugging-port=${port}`,
     '--incognito',
     `--user-data-dir=${tempDir}`,
+    // v2.43.2: 强制 en-US locale 让 PayPal 给 US 国家默认，跳过 payment.js 4s 切 country。
+    //   Chrome 默认用 Windows 系统 locale (zh-CN) → Accept-Language: zh-CN →
+    //   PayPal 给中文 + C2 国家 fallback。strict en-US 让所有页面 (OpenAI/Stripe/
+    //   PayPal) 默认英文，selectors 多数是 data-testid / id 不受影响。
+    '--lang=en-US',
+    '--accept-lang=en-US,en;q=0.9',
     '--no-first-run',
     '--no-default-browser-check',
     '--disable-default-apps',
