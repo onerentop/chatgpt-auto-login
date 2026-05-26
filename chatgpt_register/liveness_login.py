@@ -178,6 +178,9 @@ def login(email, password, login_type, client_id, refresh_token, totp_secret, pr
     # v2.41.9 / v2.41.10: 按 final_path 分类（state 缺失时）
     from urllib.parse import urlparse as _urlparse_lv
     _final_path = _urlparse_lv(str(r.url)).path
+    # v2.41.12: debug log 输出 final_path，让 livenessLogsDB 能记录实际跳转路径，
+    #   便于诊断未来类似 path-based 分类问题（path=/email-verification 等）。
+    _log(f"Step 1 GET response: status={r.status_code} body_len={body_len} path={_final_path}")
 
     # v2.41.9: OpenAI OAuth /error 页（账号问题，非 deactivated 但 OAuth flow 错）→ 直接 login_fail，不要 retry
     if _final_path == '/error' or _final_path.endswith('/error'):

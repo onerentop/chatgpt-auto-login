@@ -121,11 +121,15 @@ function createRunner({ io, statusDB, accountsDB, checker, lightLogin, codexFile
           }
           // v2.41.10: /email-verification 或 /api/accounts/* 路径 → token_expired（需 OTP reverify）。
           // 不归 network_error，避免触发 3 次无意义 retry（实测 liabhzo717818 案例）。
-          else if (/token[_ ]?expired|needs.*OTP|needs.*reverify|jumped to \/email-verification|stuck at \/api\/accounts/i.test(msg)) {
+          // v2.41.12: 扩展正则也匹 fallback message 里 `path=/email-verification` / `path=/api/accounts`
+          //   字面 — _parse_state 返非空但无效 state 时会绕过 startswith 分支走到 fallback，
+          //   raise message 形如 "unexpected: authorize page structure changed (..., path=/email-verification)"。
+          else if (/token[_ ]?expired|needs.*OTP|needs.*reverify|jumped to \/email-verification|stuck at \/api\/accounts|path=\/email-verification|path=\/api\/accounts/i.test(msg)) {
             result = { alive_status: 'token_expired', alive_reason: 'OAuth needs OTP reverify' };
           }
           else if (/proxy reset|ECONNRESET/i.test(msg)) result = { alive_status: 'proxy_error', alive_reason: 'proxy reset (login)' };
-          else result = { alive_status: 'network_error', alive_reason: `unexpected: ${msg.slice(0, 40)}` };
+          // v2.41.12: slice 40 → 80，让 path 信息能保留进 DB 便于诊断（仍受 REASON_MAX=60 终裁）。
+          else result = { alive_status: 'network_error', alive_reason: `unexpected: ${msg.slice(0, 80)}` };
         }
       }
       if (!result) result = probeRes || { alive_status: 'network_error', alive_reason: 'no probe result' };
