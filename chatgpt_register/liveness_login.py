@@ -121,31 +121,102 @@ def login(email, password, login_type, client_id, refresh_token, totp_secret, pr
     session.cookies.set("oai-did", device_id, domain="auth.openai.com")
     session.cookies.set("oai-did", device_id, domain=".auth.openai.com")
 
-    # Step 1: GET /authorize → SPA shell（无需 parse HTML，只为拿 Cloudflare cookies）
-    auth_url = (
-        f"{_AUTH}/authorize?client_id={_CODEX_CLIENT_ID}"
-        "&scope=openid%20email%20profile%20offline_access%20model.request"
-        "%20model.read%20organization.read%20organization.write"
-        "&response_type=code"
-        "&redirect_uri=https%3A%2F%2Fchatgpt.com%2Fapi%2Fauth%2Fcallback%2Flogin-web"
-    )
-    _log("Step 1: GET /authorize (拿 cookies)")
+    # Step 1: 走 chatgpt.com next-auth signin 流程拿 oai-client-auth-session cookie。
+    #   实测发现 chatgpt.com /auth/login_with 是纯 SPA shell（不会服务端 302），
+    #   reconnaissance 描述的"chatgpt.com → auth.openai.com 跳转"实际由 React app
+    #   client-side 触发 next-auth signIn() —— 即 POST /api/auth/signin/openai。
+    #   protocol 模式直访 auth.openai.com/authorize 会跳过 chatgpt.com 这段，
+    #   拿不到 server set 的 oai-client-auth-session cookie → POST authorize/continue
+    #   返回 409 invalid_state。
+    #
+    #   正确链路（实测）:
+    #   A. GET  chatgpt.com/api/auth/csrf            → __Host-next-auth.csrf-token
+    #   B. POST chatgpt.com/api/auth/signin/openai   → {url: auth.openai.com/api/accounts/authorize?...}
+    #                                                 （server 生成 client_id + state，
+    #                                                  set __Secure-next-auth.state）
+    #   C. GET  auth.openai.com/api/accounts/authorize?... → 302 → auth.openai.com/log-in
+    #                                                 （set oai-client-auth-session 等）
+    _log("Step 1A: GET chatgpt.com/api/auth/csrf")
     try:
-        r = session.get(auth_url, headers={"Accept": "text/html"},
-                       allow_redirects=True, timeout=30)
+        r_csrf = session.get(f"{_BASE}/api/auth/csrf",
+                            headers={"Accept": "application/json"}, timeout=30)
     except Exception as e:
         msg = str(e)
         if 'ECONNRESET' in msg or 'CONNECTION_RESET' in msg or 'reset' in msg.lower():
             raise Exception("proxy reset (login)")
-        raise Exception(f"unexpected: GET /authorize {msg[:40]}")
-
-    if r.status_code >= 500:
-        raise Exception(f"proxy reset (login): HTTP {r.status_code}")
-    if r.status_code in (403, 429):
-        _body_lower = (r.text or "").lower()
+        raise Exception(f"unexpected: GET csrf {msg[:40]}")
+    if r_csrf.status_code >= 500:
+        raise Exception(f"proxy reset (login): HTTP {r_csrf.status_code}")
+    if r_csrf.status_code in (403, 429):
+        _body_lower = (r_csrf.text or "").lower()
         if any(kw in _body_lower for kw in ('cloudflare', 'just a moment', 'challenge-platform', 'cf-mitigated', 'attention required')):
-            raise Exception(f"proxy reset (login): Cloudflare HTTP {r.status_code}")
-    _log(f"Step 1 OK: status={r.status_code} cookies={len(session.cookies)}")
+            raise Exception(f"proxy reset (login): Cloudflare HTTP {r_csrf.status_code}")
+        raise Exception(f"unexpected: csrf HTTP {r_csrf.status_code}")
+    try:
+        csrf_token = r_csrf.json().get("csrfToken")
+    except Exception:
+        raise Exception(f"unexpected: csrf body not json (HTTP {r_csrf.status_code})")
+    if not csrf_token:
+        raise Exception("unexpected: csrf missing csrfToken")
+
+    _log("Step 1B: POST chatgpt.com/api/auth/signin/openai")
+    import urllib.parse as _urlparse
+    signin_form = _urlparse.urlencode({
+        "callbackUrl": f"{_BASE}/",
+        "csrfToken": csrf_token,
+        "json": "true",
+        "prompt": "login",
+        "screen_hint": "login",
+    })
+    try:
+        r_signin = session.post(
+            f"{_BASE}/api/auth/signin/openai",
+            headers={
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Accept": "*/*",
+                "Origin": _BASE,
+                "Referer": f"{_BASE}/auth/login_with?callback_path=/",
+            },
+            data=signin_form, allow_redirects=False, timeout=30,
+        )
+    except Exception as e:
+        msg = str(e)
+        if 'ECONNRESET' in msg or 'reset' in msg.lower():
+            raise Exception("proxy reset (login)")
+        raise Exception(f"unexpected: signin/openai {msg[:40]}")
+    if r_signin.status_code >= 500:
+        raise Exception(f"proxy reset (login): HTTP {r_signin.status_code}")
+    if r_signin.status_code in (403, 429):
+        raise Exception(f"proxy reset (login): HTTP {r_signin.status_code}")
+    try:
+        authorize_url = r_signin.json().get("url")
+    except Exception:
+        raise Exception(f"unexpected: signin body not json (HTTP {r_signin.status_code})")
+    if not authorize_url or "auth.openai.com" not in authorize_url:
+        raise Exception(f"unexpected: signin url invalid={str(authorize_url)[:80]}")
+
+    _log("Step 1C: GET auth.openai.com/api/accounts/authorize → 302 log-in")
+    try:
+        r_auth = session.get(authorize_url, headers={"Accept": "text/html"},
+                            allow_redirects=True, timeout=30)
+    except Exception as e:
+        msg = str(e)
+        if 'ECONNRESET' in msg or 'CONNECTION_RESET' in msg or 'reset' in msg.lower():
+            raise Exception("proxy reset (login)")
+        raise Exception(f"unexpected: GET authorize {msg[:40]}")
+    if r_auth.status_code >= 500:
+        raise Exception(f"proxy reset (login): HTTP {r_auth.status_code}")
+    if r_auth.status_code in (403, 429):
+        _body_lower = (r_auth.text or "").lower()
+        if any(kw in _body_lower for kw in ('cloudflare', 'just a moment', 'challenge-platform', 'cf-mitigated', 'attention required')):
+            raise Exception(f"proxy reset (login): Cloudflare HTTP {r_auth.status_code}")
+
+    # 校验拿到了关键 session cookie
+    # curl_cffi 的 session.cookies 直接迭代返回 cookie name 字符串
+    cookie_names = list(session.cookies)
+    if 'oai-client-auth-session' not in cookie_names:
+        raise Exception(f"unexpected: oai-client-auth-session cookie missing (HTTP {r_auth.status_code}, cookies={cookie_names[:10]})")
+    _log(f"Step 1 OK: status={r_auth.status_code} cookies={len(session.cookies)} final_url={str(r_auth.url)[:80]}")
 
     # Step 2: POST /api/accounts/authorize/continue → 触发 OTP 邮件
     _log("Step 2: POST authorize/continue")
