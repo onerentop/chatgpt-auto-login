@@ -2,18 +2,24 @@ const test = require('node:test');
 const assert = require('node:assert');
 const proxy = require('../index');
 
+// v2.42 Task 7: outbound 从 selector 改成 urltest, tag 重命名为 main/jp,
+// inbound tag 重命名为 mixed-7890/mixed-7891。下面这批测试保留场景覆盖，
+// 但断言都迁移到了新模型。urltest 特定参数（interval/tolerance/excludeNodes）
+// 的细节测试在 build-singbox-urltest.test.js。
+
 test('buildSingboxConfig: 仅 US 池时只有一个 inbound', () => {
   const us = [{ type: 'shadowsocks', tag: 'us-1' }, { type: 'shadowsocks', tag: 'us-2' }];
   const cfg = proxy.buildSingboxConfig(us, null);
   assert.strictEqual(cfg.inbounds.length, 1);
   assert.strictEqual(cfg.inbounds[0].listen_port, 7890);
+  assert.strictEqual(cfg.inbounds[0].tag, 'mixed-7890');
   assert.strictEqual(cfg.inbounds[0].sniff, undefined, 'legacy inbound sniff field removed');
-  // rules[0] is the global sniff action; no other rules when JP is off
-  assert.strictEqual(cfg.route.rules.length, 1);
-  assert.deepStrictEqual(cfg.route.rules[0], { action: 'sniff' });
-  assert.strictEqual(cfg.route.final, 'auto-rotate');
-  const selectorTags = cfg.outbounds.filter(o => o.type === 'selector').map(o => o.tag);
-  assert.deepStrictEqual(selectorTags, ['auto-rotate']);
+  // 规则：全局 sniff action + 主通道 inbound→main 路由（无 JP 时只有这两条）
+  const inboundRoutes = cfg.route.rules.filter(r => r.inbound);
+  assert.deepStrictEqual(inboundRoutes, [{ inbound: 'mixed-7890', outbound: 'main' }]);
+  assert.strictEqual(cfg.route.final, 'main');
+  const urltestTags = cfg.outbounds.filter(o => o.type === 'urltest').map(o => o.tag);
+  assert.deepStrictEqual(urltestTags, ['main']);
 });
 
 test('buildSingboxConfig: us + jp 池有两个 inbound + 路由规则', () => {
@@ -21,27 +27,29 @@ test('buildSingboxConfig: us + jp 池有两个 inbound + 路由规则', () => {
   const jp = [{ type: 'shadowsocks', tag: 'jp-KDDI-01' }];
   const cfg = proxy.buildSingboxConfig(us, jp);
   assert.strictEqual(cfg.inbounds.length, 2);
-  assert.strictEqual(cfg.inbounds[1].tag, 'in-jp');
-  assert.strictEqual(cfg.inbounds[1].listen_port, 7891);
-  assert.strictEqual(cfg.inbounds[1].sniff, undefined, 'legacy inbound sniff field removed');
-  // rules[0] is the global sniff action; rules[1] is the JP route
-  assert.strictEqual(cfg.route.rules.length, 2);
-  assert.deepStrictEqual(cfg.route.rules[0], { action: 'sniff' });
-  assert.deepStrictEqual(cfg.route.rules[1], { inbound: 'in-jp', outbound: 'jp-checkout' });
-  const selectorTags = cfg.outbounds.filter(o => o.type === 'selector').map(o => o.tag);
-  assert.deepStrictEqual(selectorTags, ['auto-rotate', 'jp-checkout']);
-  const jpSelector = cfg.outbounds.find(o => o.tag === 'jp-checkout');
-  assert.deepStrictEqual(jpSelector.outbounds, ['jp-KDDI-01']);
-  assert.strictEqual(jpSelector.default, 'jp-KDDI-01');
+  // JP inbound 是 mixed-7891
+  const jpInbound = cfg.inbounds.find(i => i.listen_port === 7891);
+  assert.strictEqual(jpInbound.tag, 'mixed-7891');
+  assert.strictEqual(jpInbound.sniff, undefined, 'legacy inbound sniff field removed');
+  // 两条 inbound 路由都在（main 和 jp）
+  const inboundRoutes = cfg.route.rules.filter(r => r.inbound);
+  assert.strictEqual(inboundRoutes.length, 2);
+  assert.ok(inboundRoutes.find(r => r.inbound === 'mixed-7890' && r.outbound === 'main'));
+  assert.ok(inboundRoutes.find(r => r.inbound === 'mixed-7891' && r.outbound === 'jp'));
+  const urltestTags = cfg.outbounds.filter(o => o.type === 'urltest').map(o => o.tag).sort();
+  assert.deepStrictEqual(urltestTags, ['jp', 'main']);
+  const jpGroup = cfg.outbounds.find(o => o.tag === 'jp');
+  assert.deepStrictEqual(jpGroup.outbounds, ['jp-KDDI-01']);
+  // urltest 不需要 `default` 字段（selector 才有）
+  assert.strictEqual(jpGroup.default, undefined);
 });
 
 test('buildSingboxConfig: jp 数组为空数组时视为无 JP（不加 inbound）', () => {
   const us = [{ type: 'shadowsocks', tag: 'us-1' }];
   const cfg = proxy.buildSingboxConfig(us, []);
   assert.strictEqual(cfg.inbounds.length, 1);
-  // Only the global sniff rule remains; no JP-specific routing
-  assert.strictEqual(cfg.route.rules.length, 1);
-  assert.deepStrictEqual(cfg.route.rules[0], { action: 'sniff' });
+  const inboundRoutes = cfg.route.rules.filter(r => r.inbound);
+  assert.deepStrictEqual(inboundRoutes, [{ inbound: 'mixed-7890', outbound: 'main' }]);
 });
 
 test('buildSingboxConfig: outbounds 含 direct + block 兜底', () => {
@@ -51,19 +59,17 @@ test('buildSingboxConfig: outbounds 含 direct + block 兜底', () => {
   assert.ok(tags.includes('block'));
 });
 
-test('buildSingboxConfig: 仅 JP 池（主代理 off）不监听 7890，final 切到 jp-checkout', () => {
+test('buildSingboxConfig: 仅 JP 池（主代理 off）不监听 7890，final 切到 jp', () => {
   const jp = [{ type: 'shadowsocks', tag: 'jp-KDDI-01' }, { type: 'shadowsocks', tag: 'jp-KDDI-02' }];
   const cfg = proxy.buildSingboxConfig(null, jp);
   assert.strictEqual(cfg.inbounds.length, 1);
-  assert.strictEqual(cfg.inbounds[0].tag, 'in-jp');
+  assert.strictEqual(cfg.inbounds[0].tag, 'mixed-7891');
   assert.strictEqual(cfg.inbounds[0].listen_port, 7891);
-  const selectorTags = cfg.outbounds.filter(o => o.type === 'selector').map(o => o.tag);
-  assert.deepStrictEqual(selectorTags, ['jp-checkout']);
-  assert.strictEqual(cfg.route.final, 'jp-checkout');
-  // rules[0] sniff action, rules[1] JP route
-  assert.strictEqual(cfg.route.rules.length, 2);
-  assert.deepStrictEqual(cfg.route.rules[0], { action: 'sniff' });
-  assert.deepStrictEqual(cfg.route.rules[1], { inbound: 'in-jp', outbound: 'jp-checkout' });
+  const urltestTags = cfg.outbounds.filter(o => o.type === 'urltest').map(o => o.tag);
+  assert.deepStrictEqual(urltestTags, ['jp']);
+  assert.strictEqual(cfg.route.final, 'jp');
+  const inboundRoutes = cfg.route.rules.filter(r => r.inbound);
+  assert.deepStrictEqual(inboundRoutes, [{ inbound: 'mixed-7891', outbound: 'jp' }]);
 });
 
 test('buildSingboxConfig: us=[] + jp=[] 抛错（无意义启动）', () => {

@@ -8,13 +8,22 @@ const clashApi = require('./clash-api');
 const ROOT = path.join(__dirname, '..', '..');
 const CONFIG_PATH = path.join(ROOT, 'config.json');
 
-const SELECTOR_TAG = 'auto-rotate';
+// v2.42 Task 7: outbound type 从 selector 改为 urltest。tag 也跟着改成 spec
+// §3.1 的简短命名（'main' / 'jp'），让 Clash API 路径 /proxies/main、
+// /proxies/jp/delay 和 spec 文档一致。Task 8 会删除所有 switchSelector 调用，
+// 那之后这两个常量主要给 Clash API 查询 (getActiveNode / testNodeDelay) 使用。
+const SELECTOR_TAG = 'main';
 const HTTP_PORT = 7890;
 const CLASH_API_PORT = 9090;
 
 const JP_HTTP_PORT = 7891;
-const JP_SELECTOR_TAG = 'jp-checkout';
+const JP_SELECTOR_TAG = 'jp';
 const JP_DEFAULT_KEYWORD = 'KDDI';
+
+// v2.42 Task 7: inbound tag 改名为 mixed-7890 / mixed-7891（与端口对应，
+// 便于看 sing-box log 直接定位入口）。route rules 用这两个 tag 做分流。
+const MAIN_INBOUND_TAG = 'mixed-7890';
+const JP_INBOUND_TAG = 'mixed-7891';
 
 const BAD_NODE_TTL_MS = 30 * 60 * 1000;  // 30 min — nodes recover eventually
 
@@ -285,9 +294,52 @@ function pickJpNodes(all, jpCfg) {
   return { filtered, misses: [], usedWhitelist: false };
 }
 
-function buildSingboxConfig(us /* nullable */, jp /* nullable */) {
-  const hasUs = Array.isArray(us) && us.length > 0;
-  const hasJp = Array.isArray(jp) && jp.length > 0;
+/**
+ * 生成 sing-box config。
+ *
+ * v2.42 Task 7: main / jp outbound 从 selector 改为 urltest，让 sing-box
+ * 自己做 latency-based 选最优 + dead-node 自动跳，业务层不再调
+ * rotate / switchSelector / runHealthProbe（Task 8 一并删除）。
+ *
+ * 新签名（spec §3.1，opts 对象形式）：
+ *   buildSingboxConfig({
+ *     mainNodes,                  // Array<outbound>，主代理节点池
+ *     jpNodes,                    // Array<outbound>，JP 通道节点池
+ *     mainPort = 7890,
+ *     jpPort = 7891,
+ *     excludeNodes = [],          // banFromUrltest 用：从 urltest.outbounds 排除
+ *   })
+ *
+ * 兼容旧位置签名 `buildSingboxConfig(us, jp)`：refresh() 仍这么调（Task 8 改）。
+ */
+function buildSingboxConfig(usOrOpts /* nullable | opts */, jpArg /* nullable */) {
+  // 解析两种签名 — opts 对象 vs 位置参数
+  let mainNodes, jpNodes, mainPort, jpPort, excludeNodes;
+  if (usOrOpts !== null && typeof usOrOpts === 'object' && !Array.isArray(usOrOpts)) {
+    // 新签名：buildSingboxConfig({ mainNodes, jpNodes, ... })
+    mainNodes = Array.isArray(usOrOpts.mainNodes) ? usOrOpts.mainNodes : [];
+    jpNodes = Array.isArray(usOrOpts.jpNodes) ? usOrOpts.jpNodes : [];
+    mainPort = usOrOpts.mainPort || HTTP_PORT;
+    jpPort = usOrOpts.jpPort || JP_HTTP_PORT;
+    excludeNodes = Array.isArray(usOrOpts.excludeNodes) ? usOrOpts.excludeNodes : [];
+  } else {
+    // 旧签名：buildSingboxConfig(us, jp)
+    mainNodes = Array.isArray(usOrOpts) ? usOrOpts : [];
+    jpNodes = Array.isArray(jpArg) ? jpArg : [];
+    mainPort = HTTP_PORT;
+    jpPort = JP_HTTP_PORT;
+    excludeNodes = [];
+  }
+
+  // 排除 banned 节点 —— 整体从节点池 filter，节点本身的 outbound 也不进
+  // cfg.outbounds（保持 outbound 列表与 urltest.outbounds 一致；sing-box
+  // 不允许 urltest.outbounds 引用不存在的 tag）。
+  const banned = new Set(excludeNodes);
+  const mainAvailable = mainNodes.filter(n => !banned.has(n.tag));
+  const jpAvailable = jpNodes.filter(n => !banned.has(n.tag));
+
+  const hasUs = mainAvailable.length > 0;
+  const hasJp = jpAvailable.length > 0;
   if (!hasUs && !hasJp) {
     throw new Error('buildSingboxConfig: 主代理与 JP 通道至少需要一个有节点');
   }
@@ -302,16 +354,36 @@ function buildSingboxConfig(us /* nullable */, jp /* nullable */) {
   const rules = [{ action: 'sniff' }];
 
   if (hasUs) {
-    inbounds.push({ type: 'mixed', tag: 'in-mixed', listen: '127.0.0.1', listen_port: HTTP_PORT });
-    outbounds.push({ type: 'selector', tag: SELECTOR_TAG, outbounds: us.map(o => o.tag), default: us[0].tag });
-    outbounds.push(...us);
+    inbounds.push({ type: 'mixed', tag: MAIN_INBOUND_TAG, listen: '127.0.0.1', listen_port: mainPort });
+    // urltest 自动选 latency 最低的节点；interval 每 3 分钟重新探活；
+    // tolerance 50ms 防抖（避免延迟抖动导致频繁切节点中断 inflight 流量）。
+    // idle_timeout 30m 控制空闲时 probe 频率。
+    outbounds.push({
+      type: 'urltest',
+      tag: SELECTOR_TAG,
+      outbounds: mainAvailable.map(o => o.tag),
+      url: 'https://www.gstatic.com/generate_204',
+      interval: '3m',
+      tolerance: 50,
+      idle_timeout: '30m',
+    });
+    outbounds.push(...mainAvailable);
+    rules.push({ inbound: MAIN_INBOUND_TAG, outbound: SELECTOR_TAG });
   }
 
   if (hasJp) {
-    inbounds.push({ type: 'mixed', tag: 'in-jp', listen: '127.0.0.1', listen_port: JP_HTTP_PORT });
-    outbounds.push({ type: 'selector', tag: JP_SELECTOR_TAG, outbounds: jp.map(o => o.tag), default: jp[0].tag });
-    outbounds.push(...jp);
-    rules.push({ inbound: 'in-jp', outbound: JP_SELECTOR_TAG });
+    inbounds.push({ type: 'mixed', tag: JP_INBOUND_TAG, listen: '127.0.0.1', listen_port: jpPort });
+    outbounds.push({
+      type: 'urltest',
+      tag: JP_SELECTOR_TAG,
+      outbounds: jpAvailable.map(o => o.tag),
+      url: 'https://www.gstatic.com/generate_204',
+      interval: '3m',
+      tolerance: 50,
+      idle_timeout: '30m',
+    });
+    outbounds.push(...jpAvailable);
+    rules.push({ inbound: JP_INBOUND_TAG, outbound: JP_SELECTOR_TAG });
   }
 
   outbounds.push({ type: 'direct', tag: 'direct' }, { type: 'block', tag: 'block' });
