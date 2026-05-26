@@ -147,33 +147,14 @@
             <span v-if="form.proxyWhitelist?.length > 0"
                   style="color:#909399;margin-left:8px;font-size:12px">已被白名单覆盖</span>
           </el-form-item>
-          <el-form-item label="轮换策略">
-            <el-radio-group v-model="form.proxyRotationStrategy">
-              <el-radio value="sequential">顺序</el-radio>
-              <el-radio value="random">随机</el-radio>
-            </el-radio-group>
-          </el-form-item>
           <el-form-item label="">
             <el-button :loading="refreshingProxy" @click="refreshProxy">应用并启动代理</el-button>
             <el-button @click="stopProxy">停止代理</el-button>
             <el-button @click="detectExit">检测出口 IP</el-button>
           </el-form-item>
-          <el-form-item label="代理状态" v-if="proxyStatus">
-            <div style="font-size:12px;color:#606266">
-              <div>状态：{{ proxyStatus.enabled ? '运行中' : '未运行' }}
-                   ({{ proxyStatus.nodeTags?.length || 0 }} 节点<span
-                      v-if="proxyStatus.whitelist?.length"> / 白名单 {{ proxyStatus.whitelist.length }} 个</span>)</div>
-              <div v-if="proxyStatus.currentNode">当前节点：{{ proxyStatus.currentNode }}</div>
-              <div v-if="proxyStatus.exitIp">出口 IP：{{ proxyStatus.exitIp }}</div>
-              <div v-if="proxyStatus.whitelistMisses?.length"
-                   style="color:#e6a23c;margin-top:4px">
-                ⚠ 白名单未命中：{{ proxyStatus.whitelistMisses.slice(0,3).join(', ') }}{{
-                  proxyStatus.whitelistMisses.length > 3 ? `... 共 ${proxyStatus.whitelistMisses.length} 个` : ''
-                }}
-              </div>
-              <div v-if="proxyStatus.lastError" style="color:#f56c6c">错误：{{ proxyStatus.lastError }}</div>
-            </div>
-          </el-form-item>
+          <div style="color: var(--el-text-color-secondary); font-size: 12px; padding: 8px 0 0 160px">
+            代理实时状态请到 <router-link to="/">仪表盘</router-link> 查看。
+          </div>
         </el-form>
       </el-tab-pane>
 
@@ -205,26 +186,9 @@
               含 KDDI 的节点已绿色高亮。空 = 关键字过滤模式（默认）。
             </div>
           </el-form-item>
-          <el-form-item label="JP 通道状态" v-if="proxyStatus?.jp">
-            <div style="font-size:12px;color:#606266">
-              <div>状态：{{ proxyStatus.jp.enabled ? '运行中' : '未启用' }}
-                   ({{ proxyStatus.jp.available || 0 }} 节点<span
-                      v-if="proxyStatus.jp.whitelist?.length"> / 白名单 {{ proxyStatus.jp.whitelist.length }} 个</span>)</div>
-              <div v-if="proxyStatus.jp.currentNode">当前节点：{{ proxyStatus.jp.currentNode }}</div>
-              <div v-if="proxyStatus.jp.exitIp">JP 出口 IP：{{ proxyStatus.jp.exitIp }}</div>
-              <div v-if="proxyStatus.jp.whitelistMisses?.length"
-                   style="color:#e6a23c;margin-top:4px">
-                ⚠ 白名单未命中：{{ proxyStatus.jp.whitelistMisses.slice(0,3).join(', ') }}{{
-                  proxyStatus.jp.whitelistMisses.length > 3 ? `... 共 ${proxyStatus.jp.whitelistMisses.length} 个` : ''
-                }}
-              </div>
-              <div v-if="proxyStatus.jp.lastError" style="color:#f56c6c">{{ proxyStatus.jp.lastError }}</div>
-              <div style="margin-top:6px">
-                <el-button size="small" @click="detectJpExit">检测 JP 出口 IP</el-button>
-                <el-button size="small" @click="rotateJp">切换 JP 节点</el-button>
-              </div>
-            </div>
-          </el-form-item>
+          <div style="color: var(--el-text-color-secondary); font-size: 12px; padding: 8px 0 0 160px">
+            JP 通道实时状态请到 <router-link to="/">仪表盘</router-link> 查看。
+          </div>
         </el-form>
       </el-tab-pane>
 
@@ -319,7 +283,6 @@ const saving = ref(false)
 const refreshingProxy = ref(false)
 const testingZhusms = ref(false)
 const zhusmsBalance = ref('')
-const proxyStatus = ref(null)
 const allNodeTags = ref([])
 const jpKddiTagSet = ref(new Set())
 const usTagSet = ref(new Set())
@@ -353,7 +316,6 @@ const form = reactive({
   proxyEnabled: false,
   proxySubscriptionUrl: '',
   proxyRegionFilter: 'US',
-  proxyRotationStrategy: 'sequential',
   proxyWhitelist: [],
   proxyJpEnabled: true,
   proxyJpKeyword: 'KDDI',
@@ -375,7 +337,6 @@ onMounted(async () => {
       if (cfg.proxy.enabled !== undefined) form.proxyEnabled = cfg.proxy.enabled
       if (cfg.proxy.subscriptionUrl !== undefined) form.proxySubscriptionUrl = cfg.proxy.subscriptionUrl
       if (cfg.proxy.regionFilter !== undefined) form.proxyRegionFilter = cfg.proxy.regionFilter
-      if (cfg.proxy.rotationStrategy !== undefined) form.proxyRotationStrategy = cfg.proxy.rotationStrategy
       if (Array.isArray(cfg.proxy.whitelist)) form.proxyWhitelist = cfg.proxy.whitelist
       if (cfg.proxy.jpCheckout) {
         if (cfg.proxy.jpCheckout.enabled !== undefined) form.proxyJpEnabled = cfg.proxy.jpCheckout.enabled
@@ -407,7 +368,6 @@ onMounted(async () => {
   } catch (err) {
     console.error('Failed to load config:', err)
   }
-  await loadProxyStatus()
   await loadAllNodes()
   await loadBlacklist()
   startBlacklistPolling()
@@ -463,15 +423,6 @@ function onVisibilityChange() {
   }
 }
 
-async function loadProxyStatus() {
-  try {
-    const { data } = await api.get('/proxy/status')
-    proxyStatus.value = data
-  } catch (err) {
-    proxyStatus.value = null
-  }
-}
-
 async function loadAllNodes() {
   try {
     const { data } = await api.get('/proxy/nodes')
@@ -492,7 +443,6 @@ async function handleSave() {
     delete payload.proxyEnabled
     delete payload.proxySubscriptionUrl
     delete payload.proxyRegionFilter
-    delete payload.proxyRotationStrategy
     delete payload.proxyWhitelist
     delete payload.proxyJpEnabled
     delete payload.proxyJpKeyword
@@ -501,7 +451,6 @@ async function handleSave() {
       enabled: form.proxyEnabled,
       subscriptionUrl: form.proxySubscriptionUrl,
       regionFilter: form.proxyRegionFilter,
-      rotationStrategy: form.proxyRotationStrategy,
       whitelist: form.proxyWhitelist || [],
       jpCheckout: {
         enabled: form.proxyJpEnabled,
@@ -525,7 +474,6 @@ async function refreshProxy() {
     await handleSave()
     await api.post('/proxy/refresh')
     ElMessage.success('代理已启动')
-    await loadProxyStatus()
     await loadAllNodes()
   } catch (err) {
     ElMessage.error(err.response?.data?.error || '启动失败')
@@ -545,7 +493,6 @@ async function stopProxy() {
   try {
     await api.post('/proxy/stop')
     ElMessage.success('代理已停止')
-    await loadProxyStatus()
   } catch (err) {
     ElMessage.error(err.response?.data?.error || '停止失败')
   }
@@ -555,29 +502,8 @@ async function detectExit() {
   try {
     const { data } = await api.post('/proxy/detect-exit')
     ElMessage.success(`出口 IP: ${data.exitIp || '未知'}`)
-    await loadProxyStatus()
   } catch (err) {
     ElMessage.error(err.response?.data?.error || '检测失败')
-  }
-}
-
-async function detectJpExit() {
-  try {
-    const { data } = await api.post('/proxy/jp/detect-exit')
-    ElMessage.success(`JP 出口 IP: ${data.exitIp || '未知'}`)
-    await loadProxyStatus()
-  } catch (err) {
-    ElMessage.error(err.response?.data?.error || 'JP 检测失败')
-  }
-}
-
-async function rotateJp() {
-  try {
-    const { data } = await api.post('/proxy/jp/rotate')
-    ElMessage.success(`已切换到: ${data.currentNode}`)
-    await loadProxyStatus()
-  } catch (err) {
-    ElMessage.error(err.response?.data?.error || '切换失败')
   }
 }
 
