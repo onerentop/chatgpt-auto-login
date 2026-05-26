@@ -75,4 +75,46 @@ router.post('/zhusms/balance', async (req, res) => {
   }
 })
 
+// v2.44.0: smscloud 余额查询（Config 页"测试余额"按钮调）
+router.post('/smscloud/balance', async (req, res) => {
+  try {
+    const cfg = req.body?.config || JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
+    const s = cfg?.phonePool?.smscloud;
+    if (!s?.apiKey) return res.status(400).json({ error: 'smscloud apiKey not configured' });
+    const smscloud = require('../smscloud-provider');
+    const balance = await smscloud.getBalance(s.apiKey, s.baseUrl || 'https://smscloud.sbs/api/system');
+    res.json({ balance });
+  } catch (e) {
+    res.status(500).json({ error: String(e.message || e), code: e?._smscloudCode });
+  }
+});
+
+router.post('/smscloud/services', async (req, res) => {
+  try {
+    const cfg = req.body?.config || JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
+    const apiKey = req.body?.apiKey || cfg?.phonePool?.smscloud?.apiKey;
+    const baseUrl = req.body?.baseUrl || cfg?.phonePool?.smscloud?.baseUrl || 'https://smscloud.sbs/api/system';
+    if (!apiKey) return res.status(400).json({ error: 'apiKey required' });
+    const smscloud = require('../smscloud-provider');
+    const services = await smscloud.listServices(apiKey, baseUrl);
+    res.json({ services });
+  } catch (e) {
+    res.status(500).json({ error: String(e.message || e), code: e?._smscloudCode });
+  }
+});
+
+router.post('/smscloud/countries', async (req, res) => {
+  try {
+    const cfg = req.body?.config || JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
+    const apiKey = req.body?.apiKey || cfg?.phonePool?.smscloud?.apiKey;
+    const baseUrl = req.body?.baseUrl || cfg?.phonePool?.smscloud?.baseUrl || 'https://smscloud.sbs/api/system';
+    if (!apiKey) return res.status(400).json({ error: 'apiKey required' });
+    const smscloud = require('../smscloud-provider');
+    const countries = await smscloud.listCountries(apiKey, baseUrl);
+    res.json({ countries });
+  } catch (e) {
+    res.status(500).json({ error: String(e.message || e), code: e?._smscloudCode });
+  }
+});
+
 module.exports = router
