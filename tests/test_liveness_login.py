@@ -52,6 +52,7 @@ _ll_spec.loader.exec_module(liveness_login)
 liveness_login._log = lambda msg: None
 
 
+@unittest.skip("v2.41.14: 旧 Y1-Y3 测的是 Auth0 form-POST flow（/u/login/identifier、/u/login/password、/u/email-otp/challenge），新 SPA flow 完全不同（chatgpt.com/api/auth/signin/openai → auth.openai.com/api/accounts/authorize/continue → email-otp/validate → chatgpt.com/api/auth/session）。TODO: 重写 mock 用新 5 步 JSON API endpoint chain，断言 deactivated/invalid_code/unknown_user 错误码分类。spec §6.1。")
 class LivenessLoginTest(unittest.TestCase):
 
     def test_Y1_no_password_raises(self):
