@@ -1,5 +1,21 @@
 # Changelog
 
+## v2.41.5 — 2026-05-26
+
+### Accounts 测活日志改每账号 expand row（删底部集中面板）
+
+参照 Execute.vue / AccountTableRows.vue 模式，账号管理页的测活日志从底部集中"测活日志"面板（旧日志 / 实时日志 两个混在一起的 collapse）改为**每行 expand row 展开看自己的日志**。
+
+**改动**：
+
+- **`AccountsTable.vue`** (+49) — 加 `<el-table-column type="expand">` 列 + 2 个 props (`getHistoryLogs` / `getRealtimeLogs`，默认 `() => () => []`)。expand template 渲染该账号 history (默认折叠 ▶) + realtime logs，格式 `[YYYY-MM-DD HH:mm:ss] [level] message`，不含 email（已在该账号 expand 内）
+- **`Accounts.vue`** (+25/-60) — 删 line 120-150 集中"测活日志"SectionCard；加 `getHistoryLogs(email) = oldLogs.filter(log => log.email === email)` 和 `getRealtimeLogs` 同款 filter；模板 `<AccountsTable>` 传 prop
+- **`socket.js` / 后端** 零改动 — 既有 `socketState.liveness.oldLogs` / `newLogs` 全账号混合数组保留，按 email filter 即可
+
+**附带 cleanup**：implementer 清掉只服务于已删集中面板的 dead code — `oldLogsExpanded` / `newLogsExpanded` / `newLogsContainer` ref + auto-scroll watch + auto-expand-on-running watch + `.liveness-log-list` / `.log-*` CSS。
+
+**测试**：218 Node + 17 Python pass。web build 成功（Accounts chunk 28.82 kB）。
+
 ## v2.41.4 — 2026-05-26
 
 ### Liveness 测活错误分类细化 + 并发降到 1（避免触发 OpenAI/Cloudflare 限速）
