@@ -86,7 +86,7 @@ test('loadAll 跳过已过期条目（防 hydrate 灌入坏数据）', () => {
   assert.strictEqual(rows[0].tag, 'alive');
 });
 
-test('B5 recordBadAttempt 达到 FAIL_THRESHOLD 触发 fire-and-forget rotate (main)', async () => {
+test('B5 recordBadAttempt 达到 FAIL_THRESHOLD 触发 fire-and-forget rotate (main)', { skip: 'v2.42 Task 8: recordBadAttempt 已 stub 化（sing-box urltest 取代投票逻辑）' }, async () => {
   const proxyMgr = require('../index');
   const calls = [];
   proxyMgr.__setAutoRotateForTest(
@@ -112,7 +112,7 @@ test('B5 recordBadAttempt 达到 FAIL_THRESHOLD 触发 fire-and-forget rotate (m
   }
 });
 
-test('B6 recordBadAttempt (jp 通道) 达到阈值触发 rotateJp', async () => {
+test('B6 recordBadAttempt (jp 通道) 达到阈值触发 rotateJp', { skip: 'v2.42 Task 8: recordBadAttempt 已 stub 化' }, async () => {
   const proxyMgr = require('../index');
   const calls = [];
   proxyMgr.__setAutoRotateForTest(

@@ -140,7 +140,7 @@ function freshProxy({ blacklistMock } = {}) {
   return p;
 }
 
-test('U1 recordBadAttempt 第 1、2 次不入黑名单', () => {
+test('U1 recordBadAttempt 第 1、2 次不入黑名单', { skip: 'v2.42 Task 8: recordBadAttempt 已 stub 化（urltest 取代投票）' }, () => {
   const p = freshProxy();
   const r1 = p.recordBadAttempt('us-1', 'main', 'tls');
   assert.strictEqual(r1.blacklisted, false);
@@ -151,7 +151,7 @@ test('U1 recordBadAttempt 第 1、2 次不入黑名单', () => {
   assert.strictEqual(p.isBad('us-1'), false);
 });
 
-test('U2 recordBadAttempt 连续 3 次：入黑名单，failCount 清零', () => {
+test('U2 recordBadAttempt 连续 3 次：入黑名单，failCount 清零', { skip: 'v2.42 Task 8: recordBadAttempt 已 stub 化' }, () => {
   const calls = [];
   const blMock = { add: (tag, ch, ttl, reason, src) => calls.push({ tag, ch, ttl, reason, src }), remove: () => {}, removeAll: () => {}, loadAll: () => [], pruneExpired: () => {}, __setDb: () => {} };
   const p = freshProxy({ blacklistMock: blMock });
@@ -167,7 +167,7 @@ test('U2 recordBadAttempt 连续 3 次：入黑名单，failCount 清零', () =>
   assert.strictEqual(r4.count, 1, '入黑名单后 failCount 已清零');
 });
 
-test('U3 2 次 bad + 1 次 good + 1 次 bad：不入黑名单', () => {
+test('U3 2 次 bad + 1 次 good + 1 次 bad：不入黑名单', { skip: 'v2.42 Task 8: recordBadAttempt 已 stub 化' }, () => {
   const p = freshProxy();
   p.recordBadAttempt('us-1', 'main', 'tls');
   p.recordBadAttempt('us-1', 'main', 'tls');
@@ -177,7 +177,7 @@ test('U3 2 次 bad + 1 次 good + 1 次 bad：不入黑名单', () => {
   assert.strictEqual(r.count, 1, 'good 之后 bad 计数从 1 重新开始');
 });
 
-test('U4 main 与 jp 通道独立计数（同 tag）', () => {
+test('U4 main 与 jp 通道独立计数（同 tag）', { skip: 'v2.42 Task 8: recordBadAttempt 已 stub 化' }, () => {
   const p = freshProxy();
   p.recordBadAttempt('node-X', 'main', 'a');
   p.recordBadAttempt('node-X', 'main', 'a');
@@ -189,7 +189,7 @@ test('U4 main 与 jp 通道独立计数（同 tag）', () => {
   assert.strictEqual(p.isJpBad('node-X'), false, 'jp 通道独立');
 });
 
-test('U5 blacklistManually 立即入黑名单且清掉计数器', () => {
+test('U5 blacklistManually 立即入黑名单且清掉计数器', { skip: 'v2.42 Task 8: failCount 已删（recordBadAttempt 是 stub）' }, () => {
   const calls = [];
   const blMock = { add: (tag, ch, ttl, reason, src) => calls.push({ tag, ch, ttl, reason, src }), remove: () => {}, removeAll: () => {}, loadAll: () => [], pruneExpired: () => {}, __setDb: () => {} };
   const p = freshProxy({ blacklistMock: blMock });

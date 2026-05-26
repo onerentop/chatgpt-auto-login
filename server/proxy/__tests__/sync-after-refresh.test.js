@@ -43,7 +43,7 @@ const baseMocks = (nodes, switchCalls = []) => ({
   },
 });
 
-test('PX-3: refresh() syncs Clash selector to currentNode when rotationIndex != 0', async () => {
+test('PX-3: refresh() syncs Clash selector to currentNode when rotationIndex != 0', { skip: 'v2.42 Task 8: refresh 不再调 switchSelector（urltest 不接受 PUT）' }, async () => {
   const nodes = Array.from({ length: 5 }, (_, i) => ({ type: 'ss', tag: `us-${i}` }));
   const switchCalls = [];
   const p = freshProxyWithMocks(baseMocks(nodes, switchCalls));
@@ -79,7 +79,7 @@ test('PX-3: refresh() does NOT sync when rotationIndex === 0 (singbox default al
   assert.strictEqual(after.length, 0, `no selector sync call when index=0, got: ${JSON.stringify(after)}`);
 });
 
-test('PX-5: rotate() preserves manual blacklist when clearing all-bad pool', async () => {
+test('PX-5: rotate() preserves manual blacklist when clearing all-bad pool', { skip: 'v2.42 Task 8: rotate() 已 stub，no longer clears auto-blacklist' }, async () => {
   const nodes = [
     { type: 'ss', tag: 'a' },
     { type: 'ss', tag: 'b' },
@@ -113,7 +113,7 @@ test('PX-5: rotate() preserves manual blacklist when clearing all-bad pool', asy
   assert.strictEqual(state.currentNode, 'b');
 });
 
-test('PX-5: rotate() falls back to full clear when only manual bans remain', async () => {
+test('PX-5: rotate() falls back to full clear when only manual bans remain', { skip: 'v2.42 Task 8: rotate() 已 stub' }, async () => {
   const nodes = [
     { type: 'ss', tag: 'a' },
     { type: 'ss', tag: 'b' },

@@ -1,4 +1,15 @@
-// Proxy orchestration: subscription → sing-box → Clash API rotation
+// Proxy orchestration: subscription → sing-box → urltest auto-failover
+//
+// v2.42 Task 8 重构：
+// - 删除 runHealthProbe / rotate / rotateJp / markBad / failCount / failReasons /
+//   probeResults / probeSummary / recordBad+GoodAttempt 内部投票逻辑（sing-box
+//   urltest 自做 latency probe + dead-node 自跳）。
+// - 新增 getActiveNode / banFromUrltest / unbanNode / getJpNodeCount / regenerateAndReload
+//   / reloadSingbox：业务遇到 Cloudflare 403 / rate_limited 等显式失败时
+//   fire-and-forget 让 sing-box 把当前 active 节点踢出 urltest 一段时间。
+// - 旧的 rotate / recordBadAttempt / markBad / getProxyUrl 等 export 保留为
+//   no-op / env-based stub，避免老调用点（engine.js / protocol-engine.js /
+//   stripe-verify.js / chatgpt-checkout.js）整片连环改动。
 const fs = require('fs');
 const path = require('path');
 const singbox = require('./singbox');
@@ -8,10 +19,7 @@ const clashApi = require('./clash-api');
 const ROOT = path.join(__dirname, '..', '..');
 const CONFIG_PATH = path.join(ROOT, 'config.json');
 
-// v2.42 Task 7: outbound type 从 selector 改为 urltest。tag 也跟着改成 spec
-// §3.1 的简短命名（'main' / 'jp'），让 Clash API 路径 /proxies/main、
-// /proxies/jp/delay 和 spec 文档一致。Task 8 会删除所有 switchSelector 调用，
-// 那之后这两个常量主要给 Clash API 查询 (getActiveNode / testNodeDelay) 使用。
+// urltest outbound tag — Clash API 路径 /proxies/main、/proxies/jp 都按这个走。
 const SELECTOR_TAG = 'main';
 const HTTP_PORT = 7890;
 const CLASH_API_PORT = 9090;
@@ -20,13 +28,15 @@ const JP_HTTP_PORT = 7891;
 const JP_SELECTOR_TAG = 'jp';
 const JP_DEFAULT_KEYWORD = 'KDDI';
 
-// v2.42 Task 7: inbound tag 改名为 mixed-7890 / mixed-7891（与端口对应，
-// 便于看 sing-box log 直接定位入口）。route rules 用这两个 tag 做分流。
+// inbound tag → mixed-7890 / mixed-7891，与端口对应（看 sing-box log 直接定位入口）
 const MAIN_INBOUND_TAG = 'mixed-7890';
 const JP_INBOUND_TAG = 'mixed-7891';
 
 const BAD_NODE_TTL_MS = 30 * 60 * 1000;  // 30 min — nodes recover eventually
 
+// 留作 backwards-compat 常量，老调用点 (engine / protocol-engine) 还 import 这个。
+// v2.42 实际投票逻辑已删，stub 化的 recordBadAttempt 永远不达阈值，FAIL_THRESHOLD
+// 仅给 UI / 测试断言保留语义。
 const FAIL_THRESHOLD = 3;
 const blacklist = require('./blacklist');
 
@@ -34,18 +44,6 @@ const PROXY_NET_ERROR_RE = /ECONNRESET|ETIMEDOUT|socket hang up|getaddrinfo|ECON
 
 function isProxyNetError(msg) {
   return PROXY_NET_ERROR_RE.test(String(msg || ''));
-}
-
-// Serialize selector mutations. Without this, fire-and-forget rotate
-// (recordBadAttempt) + explicit await rotate (engine catch) can race the
-// Clash API PUT /proxies (not a transaction) and leave _state.currentNode
-// disagreeing with sing-box's actually-selected node — the next
-// recordBadAttempt would then blame the wrong tag.
-let _rotateLock = Promise.resolve();
-function withRotateLock(fn) {
-  const next = _rotateLock.then(fn, fn);
-  _rotateLock = next.catch(() => {});  // never let the lock chain reject
-  return next;                          // propagate errors to the caller
 }
 
 function _ns(channel) {
@@ -58,23 +56,20 @@ let _state = {
   subscriptionUrl: '',
   outbounds: [],         // parsed nodes (filtered by region)
   nodeTags: [],          // names of available nodes
-  currentNode: '',
-  rotationStrategy: 'sequential',  // sequential | random
+  currentNode: '',       // v2.42: kept for backwards-compat (Clash API /proxies/main.now 也可查)
+  rotationStrategy: 'sequential',
   rotationIndex: 0,
   rotationKeyword: 'US', // region filter
   lastError: '',
   exitIp: '',
-  badNodes: new Map(),   // tag → { expiresAt, reason, source }. Nodes that produced repeated TLS/network errors.
-  failCount: new Map(),     // tag → 0..2
-  failReasons: new Map(),   // tag → 最近一次原因 (60 字截断)
-  whitelist: [],          // 用户配置的 tag 数组（与 _state.jp.whitelist 同语义）
-  whitelistMisses: [],    // 订阅中缺失的 tag（UI 黄色提示）
-  allTags: [],   // 订阅里全部节点 tag (refresh 时缓存，供 /api/proxy/nodes 用)
-  // PX-7 active health probe — tag → { alive: bool, delayMs, lastTested }.
-  // rotate() prefers alive nodes when at least one alive exists; otherwise
-  // ignores probe results to avoid deadlock.
-  probeResults: new Map(),
-  probeSummary: { alive: 0, dead: 0, total: 0, lastRunAt: 0 },
+  badNodes: new Map(),   // tag → { expiresAt, reason, source }. Manual blacklist (用户在 UI 手 pin)。
+  whitelist: [],
+  whitelistMisses: [],
+  allTags: [],
+  // v2.42 Task 8: banned 节点 — tag → expiresAt(ms)。业务遇 Cloudflare 403 / 速率限制时
+  // 通过 banFromUrltest() 加入，到期 setTimeout 自动 unban。与 badNodes（manual）分开 —
+  // banned 走 sing-box config regenerate 路径，从 urltest.outbounds 排除。
+  bannedNodes: new Map(),
   jp: {
     enabled: false,
     keyword: JP_DEFAULT_KEYWORD,
@@ -86,12 +81,8 @@ let _state = {
     rotationStrategy: 'sequential',
     rotationIndex: 0,
     badNodes: new Map(),
-    failCount: new Map(),
-    failReasons: new Map(),
     exitIp: '',
     lastError: '',
-    probeResults: new Map(),
-    probeSummary: { alive: 0, dead: 0, total: 0, lastRunAt: 0 },
   },
 };
 
@@ -102,7 +93,6 @@ function readCfg() {
 function isBad(tag) {
   const entry = _state.badNodes.get(tag);
   if (!entry) return false;
-  // Support legacy number value (defensive); new value is { expiresAt, reason, source }
   const expiresAt = typeof entry === 'number' ? entry : entry.expiresAt;
   if (Date.now() > expiresAt) {
     _state.badNodes.delete(tag);
@@ -120,54 +110,23 @@ function _addToBlacklist(tag, channel, ttlMs, reason, source) {
   try { blacklist.add(tag, channel, ttlMs, reason, source); } catch (e) { console.log(`[Proxy] blacklist.add failed: ${e.message?.slice(0, 60)}`); }
 }
 
-// v2.31.1: rotate 钩子 — module-init 后指向真实 rotate/rotateJp（见文件下方）；
-// 测试可用 __setAutoRotateForTest 替换。传 null 恢复默认。
-let _autoRotateFn = null;
-let _autoRotateJpFn = null;
-
-function __setAutoRotateForTest(mainFn, jpFn) {
-  _autoRotateFn = (mainFn === null) ? rotate : (mainFn || _autoRotateFn);
-  _autoRotateJpFn = (jpFn === null) ? rotateJp : (jpFn || _autoRotateJpFn);
-}
-
+// v2.42 Task 8: recordBadAttempt / recordGoodAttempt 改成 no-op stub。
+// 投票阈值逻辑由 sing-box urltest 自做（间隔 3m 重新 probe，dead 自动跳）。
+// 业务调用点（engine.js / protocol-engine.js / stripe-verify.js）保留 try/catch
+// 包裹 + 用 stub 返回稳定 shape；显式遇 403/rate-limit 时改用 banFromUrltest。
 function recordBadAttempt(tag, channel, reason = '') {
   if (!tag) return { blacklisted: false, count: 0 };
-  const ns = _ns(channel);
-  const next = (ns.failCount.get(tag) || 0) + 1;
-  ns.failCount.set(tag, next);
-  ns.failReasons.set(tag, String(reason).slice(0, 60));
-  console.log(`[Proxy${channel === 'jp' ? ':JP' : ''}] Bad attempt ${next}/${FAIL_THRESHOLD} on ${tag} (${String(reason).slice(0, 40)})`);
-  if (next >= FAIL_THRESHOLD) {
-    _addToBlacklist(tag, channel, BAD_NODE_TTL_MS, reason, 'auto');
-    ns.failCount.delete(tag);
-    ns.failReasons.delete(tag);
-    // v2.31.1: 拉黑后 fire-and-forget rotate，让 currentNode 立即切到下一个非黑名单节点。
-    const doRotate = channel === 'jp' ? _autoRotateJpFn : _autoRotateFn;
-    if (typeof doRotate === 'function') {
-      Promise.resolve().then(() => doRotate()).catch((e) => {
-        console.log(`[Proxy] auto-rotate after blacklist failed: ${e?.message?.slice(0, 60)}`);
-      });
-    }
-    return { blacklisted: true, count: next };
-  }
-  return { blacklisted: false, count: next };
+  _ns(channel);  // 保留 channel 参数校验（旧测试用 I2 仍验）
+  return { blacklisted: false, count: 0 };
 }
 
-function recordGoodAttempt(tag, channel) {
-  if (!tag) return;
-  const ns = _ns(channel);
-  if (ns.failCount.has(tag)) {
-    ns.failCount.delete(tag);
-    ns.failReasons.delete(tag);
-  }
+function recordGoodAttempt(_tag, _channel) {
+  // no-op since v2.42 Task 8
 }
 
 function blacklistManually(tag, channel, ttlMs = BAD_NODE_TTL_MS, reason = 'manual') {
   if (!tag) throw new Error('tag required');
   _addToBlacklist(tag, channel, ttlMs, reason, 'manual');
-  const ns = _ns(channel);
-  ns.failCount.delete(tag);
-  ns.failReasons.delete(tag);
 }
 
 function removeFromBlacklist(tag, channel) {
@@ -182,7 +141,8 @@ function clearBlacklist(channel) {
   try { blacklist.removeAll(channel); } catch {}
 }
 
-// Legacy aliases — preserve existing call sites in engine / chatgpt-checkout
+// Legacy aliases — 老调用点（engine 的 markBad / chatgpt-checkout 的 markJpBad）
+// 仍 import 这两个名字。v2.42 后等价于 no-op stub（recordBadAttempt 也已 stub）。
 function markBad(tag) { return recordBadAttempt(tag, 'main', 'legacy markBad'); }
 function markJpBad(tag) { return recordBadAttempt(tag, 'jp', 'legacy markJpBad'); }
 
@@ -193,27 +153,21 @@ function getState() {
     for (const [tag, entry] of map.entries()) {
       const obj = typeof entry === 'number' ? { expiresAt: entry, reason: '', source: 'auto' } : entry;
       if (obj.expiresAt > now) out[tag] = obj;
-      // do NOT delete here — isBad/isJpBad/pruneExpired own cleanup paths
     }
     return out;
   };
-  // Explicit field whitelist — DO NOT spread _state. The subscriptionUrl
-  // (and any future credential-bearing field) must never reach the
-  // dashboard or server.log. Frontends consume `hasSubscription` /
-  // `subscriptionHost` instead so users can still see "configured ✓"
-  // without exposing the token.
   let subscriptionHost = null;
   if (_state.subscriptionUrl) {
     try { subscriptionHost = new URL(_state.subscriptionUrl).hostname; } catch { subscriptionHost = null; }
   }
-  // Note: outbounds is intentionally omitted — parsed nodes can contain
-  // credentials (vmess UUID, ss password, trojan password). nodeTags / allTags
-  // are just label strings and safe to expose. failCount / failReasons are
-  // internal Maps that don't round-trip well to JSON.
-  // Project probeResults Map → plain object so it JSON-serializes for the UI.
-  const projectProbe = (map) => {
+  // v2.42 Task 8: 投影 bannedNodes 为 plain object（UI / health endpoint 可读）。
+  const projectBanned = (map) => {
     const out = {};
-    for (const [tag, entry] of map.entries()) out[tag] = entry;
+    for (const [tag, expiresAt] of map.entries()) {
+      if (typeof expiresAt === 'number' && expiresAt > now) {
+        out[tag] = { expiresAt, ttlRemainingMs: Math.max(0, expiresAt - now) };
+      }
+    }
     return out;
   };
   return {
@@ -232,8 +186,7 @@ function getState() {
     allTags: _state.allTags,
     available: _state.nodeTags.length,
     badNodes: project(_state.badNodes),
-    probeResults: projectProbe(_state.probeResults),
-    probeSummary: { ..._state.probeSummary },
+    bannedNodes: projectBanned(_state.bannedNodes),
     jp: {
       enabled: _state.jp.enabled,
       keyword: _state.jp.keyword,
@@ -247,22 +200,12 @@ function getState() {
       lastError: _state.jp.lastError,
       available: _state.jp.nodeTags.length,
       badNodes: project(_state.jp.badNodes),
-      probeResults: projectProbe(_state.jp.probeResults),
-      probeSummary: { ..._state.jp.probeSummary },
     },
   };
 }
 
 /**
- * Decide main-channel node pool.
- * 与 pickJpNodes 同构：whitelist 非空时优先精确 tag 匹配；空时回退 regionFilter 关键字；
- * 双空时（regionFilter 为空字符串/未设）返回全部节点。
- *
- * @param {Array} all                 — 订阅解析后的全部节点
- * @param {Object} mainCfg            — cfg.proxy 子对象
- * @param {Array<string>} mainCfg.whitelist
- * @param {string} mainCfg.regionFilter
- * @returns {{ filtered: Array, misses: string[], usedWhitelist: boolean }}
+ * Decide main-channel node pool — whitelist 优先于 regionFilter。
  */
 function pickMainNodes(all, mainCfg) {
   if (!mainCfg) return { filtered: [], misses: [], usedWhitelist: false };
@@ -273,8 +216,6 @@ function pickMainNodes(all, mainCfg) {
     const misses = whitelist.filter(t => typeof t === 'string' && t && !presentTags.has(t));
     return { filtered, misses, usedWhitelist: true };
   }
-  // ?? 而不是 ||：仅在 regionFilter 字段缺失（undefined/null）时默认 'US'；
-  // 显式空字符串透传给 filterByRegion，触发其 "不过滤" 分支（subscription.js:174）。
   const filtered = filterByRegion(all, mainCfg.regionFilter ?? 'US');
   return { filtered, misses: [], usedWhitelist: false };
 }
@@ -297,33 +238,23 @@ function pickJpNodes(all, jpCfg) {
 /**
  * 生成 sing-box config。
  *
- * v2.42 Task 7: main / jp outbound 从 selector 改为 urltest，让 sing-box
- * 自己做 latency-based 选最优 + dead-node 自动跳，业务层不再调
- * rotate / switchSelector / runHealthProbe（Task 8 一并删除）。
+ * v2.42 Task 7-8: main / jp outbound 为 urltest，sing-box 自做 latency-based 选最优
+ * + dead-node 自动跳。banFromUrltest 通过 excludeNodes 把节点从 urltest.outbounds
+ * 排除，触发 sing-box 重新挑选 active 节点。
  *
- * 新签名（spec §3.1，opts 对象形式）：
- *   buildSingboxConfig({
- *     mainNodes,                  // Array<outbound>，主代理节点池
- *     jpNodes,                    // Array<outbound>，JP 通道节点池
- *     mainPort = 7890,
- *     jpPort = 7891,
- *     excludeNodes = [],          // banFromUrltest 用：从 urltest.outbounds 排除
- *   })
- *
- * 兼容旧位置签名 `buildSingboxConfig(us, jp)`：refresh() 仍这么调（Task 8 改）。
+ * 签名（opts 对象优先 / 兼容旧位置签名）：
+ *   buildSingboxConfig({ mainNodes, jpNodes, mainPort?, jpPort?, excludeNodes? })
+ *   buildSingboxConfig(us, jp)   // legacy positional
  */
 function buildSingboxConfig(usOrOpts /* nullable | opts */, jpArg /* nullable */) {
-  // 解析两种签名 — opts 对象 vs 位置参数
   let mainNodes, jpNodes, mainPort, jpPort, excludeNodes;
   if (usOrOpts !== null && typeof usOrOpts === 'object' && !Array.isArray(usOrOpts)) {
-    // 新签名：buildSingboxConfig({ mainNodes, jpNodes, ... })
     mainNodes = Array.isArray(usOrOpts.mainNodes) ? usOrOpts.mainNodes : [];
     jpNodes = Array.isArray(usOrOpts.jpNodes) ? usOrOpts.jpNodes : [];
     mainPort = usOrOpts.mainPort || HTTP_PORT;
     jpPort = usOrOpts.jpPort || JP_HTTP_PORT;
     excludeNodes = Array.isArray(usOrOpts.excludeNodes) ? usOrOpts.excludeNodes : [];
   } else {
-    // 旧签名：buildSingboxConfig(us, jp)
     mainNodes = Array.isArray(usOrOpts) ? usOrOpts : [];
     jpNodes = Array.isArray(jpArg) ? jpArg : [];
     mainPort = HTTP_PORT;
@@ -331,9 +262,6 @@ function buildSingboxConfig(usOrOpts /* nullable | opts */, jpArg /* nullable */
     excludeNodes = [];
   }
 
-  // 排除 banned 节点 —— 整体从节点池 filter，节点本身的 outbound 也不进
-  // cfg.outbounds（保持 outbound 列表与 urltest.outbounds 一致；sing-box
-  // 不允许 urltest.outbounds 引用不存在的 tag）。
   const banned = new Set(excludeNodes);
   const mainAvailable = mainNodes.filter(n => !banned.has(n.tag));
   const jpAvailable = jpNodes.filter(n => !banned.has(n.tag));
@@ -346,18 +274,10 @@ function buildSingboxConfig(usOrOpts /* nullable | opts */, jpArg /* nullable */
 
   const inbounds = [];
   const outbounds = [];
-  // sing-box 1.11+ removed the legacy inbound 'sniff: true' field; sniff is now
-  // a route rule action. Run it first so subsequent rules can match on the
-  // sniffed destination domain. We don't actually use the sniffed value for
-  // routing (rules below are inbound-based), but the action populates request
-  // metadata that some outbounds (e.g. VLESS with reality SNI) may consult.
   const rules = [{ action: 'sniff' }];
 
   if (hasUs) {
     inbounds.push({ type: 'mixed', tag: MAIN_INBOUND_TAG, listen: '127.0.0.1', listen_port: mainPort });
-    // urltest 自动选 latency 最低的节点；interval 每 3 分钟重新探活；
-    // tolerance 50ms 防抖（避免延迟抖动导致频繁切节点中断 inflight 流量）。
-    // idle_timeout 30m 控制空闲时 probe 频率。
     outbounds.push({
       type: 'urltest',
       tag: SELECTOR_TAG,
@@ -405,10 +325,7 @@ function buildSingboxConfig(usOrOpts /* nullable | opts */, jpArg /* nullable */
   };
 }
 
-/** Refresh subscription and (re)start sing-box. Returns the number of US-channel nodes loaded.
- *  Main channel (US) and JP-Checkout channel are independently enabled via
- *  config.proxy.enabled and config.proxy.jpCheckout.enabled. At least one must be true.
- */
+/** Refresh subscription and (re)start sing-box. */
 async function refresh() {
   const cfg = readCfg().proxy || {};
   _state.subscriptionUrl = cfg.subscriptionUrl || '';
@@ -416,7 +333,6 @@ async function refresh() {
   _state.rotationStrategy = cfg.rotationStrategy || 'sequential';
   _state.whitelist = Array.isArray(cfg.whitelist) ? cfg.whitelist : [];
 
-  // Default true keeps backward-compat for configs without an explicit `enabled` field.
   const mainEnabledByConfig = cfg.enabled !== false;
 
   const jpCfg = cfg.jpCheckout || {};
@@ -435,7 +351,6 @@ async function refresh() {
   console.log(`[Proxy] Total nodes parsed: ${all.length}`);
   _state.allTags = all.map(o => o.tag);
 
-  // Main channel filtering — strict only when enabled by config.
   let filtered = [];
   let mainPick = { filtered: [], misses: [], usedWhitelist: false };
   if (mainEnabledByConfig) {
@@ -457,7 +372,6 @@ async function refresh() {
   }
   _state.whitelistMisses = mainPick.misses;
 
-  // JP channel filtering — strict only when enabled by config.
   let jpFiltered = [];
   let jpPick = { filtered: [], misses: [], usedWhitelist: false };
   if (jpEnabledByConfig) {
@@ -498,26 +412,27 @@ async function refresh() {
   _state.jp.currentNode = jpFiltered[_state.jp.rotationIndex]?.tag || '';
   _state.jp.lastError = '';
 
-  const sbConfig = buildSingboxConfig(
-    mainEnabledByConfig ? filtered : null,
-    jpEnabledByConfig ? jpFiltered : null,
-  );
+  // v2.42 Task 8: refresh 用新 opts 签名（excludeNodes 含 banned）。
+  const excludeNodes = Array.from(_state.bannedNodes.keys());
+  const sbConfig = buildSingboxConfig({
+    mainNodes: mainEnabledByConfig ? filtered : [],
+    jpNodes: jpEnabledByConfig ? jpFiltered : [],
+    excludeNodes,
+  });
 
   try {
     await singbox.start(sbConfig);
     _state.enabled = mainEnabledByConfig;
     _state.jp.enabled = jpEnabledByConfig;
   } catch (err) {
-    // Degrade to US-only when sing-box reports a *real* bind failure on :7891.
-    // We deliberately match only "failed to bind port" (the literal string our
-    // singbox.start throws when its net.connect probe fails) — not the generic
-    // "exited unexpectedly" message, whose boilerplate hint contains the
-    // substring "7890/7891" and previously caused config-error exits to be
-    // mis-classified as port collisions, masking the real cause.
     if (mainEnabledByConfig && jpEnabledByConfig && /failed to bind port 7891/i.test(err.message || '')) {
       console.log(`[Proxy] 7891 端口被占用，降级关闭 JP 通道: ${err.message}`);
       _state.jp.lastError = `端口 7891 被占用，JP 通道已禁用: ${(err.message || '').slice(0, 120)}`;
-      const fallbackConfig = buildSingboxConfig(filtered, null);
+      const fallbackConfig = buildSingboxConfig({
+        mainNodes: filtered,
+        jpNodes: [],
+        excludeNodes,
+      });
       await singbox.start(fallbackConfig);
       _state.enabled = true;
       _state.jp.enabled = false;
@@ -530,9 +445,8 @@ async function refresh() {
 
   _state.lastError = '';
 
-  // Hydrate blacklist from DB on first refresh of this process.
-  // Manual or auto entries added at runtime go through _addToBlacklist directly,
-  // so the size === 0 guard only triggers on cold start.
+  // Hydrate manual blacklist from DB on cold start. (v2.42: bannedNodes 不持久化，
+  // 进程重启后 urltest probe 会自然重选节点，无需 hydrate。)
   if (_state.badNodes.size === 0 && _state.jp.badNodes.size === 0) {
     try {
       blacklist.pruneExpired();
@@ -551,83 +465,7 @@ async function refresh() {
   const jpDesc = _state.jp.enabled ? `:${JP_HTTP_PORT}(${jpFiltered.length})` : 'disabled';
   console.log(`[Proxy] sing-box running: main=${mainDesc} jp=${jpDesc}`);
 
-  // PX-3: singbox config writes default = filtered[0], but _state.currentNode
-  // may have been preserved by rotationIndex from a previous run. If they
-  // diverge, the Clash selector still points to filtered[0] until the next
-  // rotate() — meanwhile recordBadAttempt would blame the wrong tag for the
-  // next failure. Force a selector switch to align state.
-  await withRotateLock(async () => {
-    if (_state.enabled && _state.currentNode && _state.rotationIndex !== 0) {
-      try { await clashApi.switchSelector(SELECTOR_TAG, _state.currentNode); }
-      catch (e) { console.log(`[Proxy] selector sync failed: ${e.message?.slice(0, 60)}`); }
-    }
-    if (_state.jp.enabled && _state.jp.currentNode && _state.jp.rotationIndex !== 0) {
-      try { await clashApi.switchSelector(JP_SELECTOR_TAG, _state.jp.currentNode); }
-      catch (e) { console.log(`[Proxy:JP] selector sync failed: ${e.message?.slice(0, 60)}`); }
-    }
-  });
-
-  // PX-7 active health probe — fire-and-forget so refresh() returns
-  // immediately; rotate() consults probeResults to prefer alive nodes.
-  // Setting `activeHealthCheck: false` in config.proxy disables it.
-  // NB: `cfg` here was assigned `readCfg().proxy || {}`, so the field is at
-  // `cfg.activeHealthCheck`, not `cfg.proxy.activeHealthCheck`.
-  const probeEnabled = cfg.activeHealthCheck !== false;
-  if (probeEnabled) {
-    Promise.resolve().then(() => runHealthProbe()).catch((e) => {
-      console.log(`[Proxy] health probe failed: ${e.message?.slice(0, 80)}`);
-    });
-  }
-
   return filtered.length;
-}
-
-/**
- * v2.34.1: 验证 currentNode 是否在 probe 结果里 alive；不活就 fire-and-forget rotate。
- * 纯函数 + 注入 rotate，便于单测。
- * - currentTag 为空串 / falsy → 跳过
- * - probeResults 未含此 tag（未探过）→ 跳过（保守，避免假阳性）
- * - 含此 tag 且 alive === false → 调度 rotate
- * - 含此 tag 且 alive === true → 跳过
- *
- * @param {string} currentTag
- * @param {Map<string, {alive: boolean}>} probeResults
- * @param {() => Promise<any> | any} rotateFn
- */
-function _autoRotateIfCurrentDead(currentTag, probeResults, rotateFn) {
-  if (!currentTag) return
-  const r = probeResults?.get(currentTag)
-  if (r && r.alive === false) {
-    Promise.resolve().then(() => rotateFn()).catch((e) => {
-      console.log(`[Proxy] auto-rotate after dead probe failed: ${e?.message?.slice(0, 60)}`)
-    })
-  }
-}
-
-async function runHealthProbe() {
-  const { probeAllNodes } = require('./health-probe');
-  // Main channel
-  if (_state.enabled && _state.nodeTags.length > 0) {
-    const summary = await probeAllNodes(_state.nodeTags, _state.probeResults, {
-      shouldSkip: (tag) => isBad(tag),  // don't probe blacklisted nodes
-    });
-    _state.probeSummary = { ...summary, lastRunAt: Date.now() };
-    console.log(`[Proxy] health probe: main ${summary.alive}/${summary.total} alive`);
-  }
-  // JP channel
-  if (_state.jp.enabled && _state.jp.nodeTags.length > 0) {
-    const summary = await probeAllNodes(_state.jp.nodeTags, _state.jp.probeResults, {
-      shouldSkip: (tag) => isJpBad(tag),
-    });
-    _state.jp.probeSummary = { ...summary, lastRunAt: Date.now() };
-    console.log(`[Proxy:JP] health probe: ${summary.alive}/${summary.total} alive`);
-  }
-
-  // v2.34.1: 探针完成后自我修复。若 currentNode 被探出 alive=false，fire-and-forget
-  // rotate 切到下一个活节点。覆盖启动场景（refresh() 同步选定第一个白名单节点，
-  // probe 跑完发现死）和运行时定时探针后场景。jp 通道对称处理。
-  _autoRotateIfCurrentDead(_state.currentNode, _state.probeResults, rotate);
-  _autoRotateIfCurrentDead(_state.jp.currentNode, _state.jp.probeResults, rotateJp);
 }
 
 async function stop() {
@@ -636,169 +474,108 @@ async function stop() {
   _state.exitIp = '';
 }
 
-/** Switch to the next node according to rotation strategy, skipping nodes in the
- * bad-node blacklist (with TTL). If every node is currently blacklisted (all bad),
- * clear the blacklist as a fail-safe and pick any node — better to retry a stale
- * "bad" mark than to fail with no candidates.
+// ===========================================================================
+// v2.42 Task 8: Clash API helpers + ban / unban
+// ===========================================================================
+
+/**
+ * 查 sing-box 当前 active 节点（urltest 选最优）。channel='main'/'jp'。
+ * 失败返回 null。fire-and-forget 友好。
+ */
+async function getActiveNode(channel = 'main') {
+  try {
+    return await clashApi.getCurrentSelected(channel);
+  } catch (e) {
+    console.warn(`[Proxy] getActiveNode(${channel}) failed: ${e.message?.slice(0, 60)}`);
+    return null;
+  }
+}
+
+/**
+ * 把节点踢出 urltest 一段时间。重生成 sing-box config + reload，setTimeout 到期自动 unban。
+ * 调用方：业务遇 Cloudflare 403 / rate_limited / OpenAI 403 等显式失败时 fire-and-forget。
+ */
+async function banFromUrltest(node, durationMinutes = 5) {
+  if (!node) return;
+  if (!_state.bannedNodes) _state.bannedNodes = new Map();
+  _state.bannedNodes.set(node, Date.now() + durationMinutes * 60_000);
+  await regenerateAndReload();
+  setTimeout(async () => {
+    if (_state.bannedNodes.delete(node)) {
+      try {
+        await regenerateAndReload();
+        console.log(`[Proxy] Unbanned ${node} (duration expired)`);
+      } catch (e) {
+        console.warn(`[Proxy] Auto-unban ${node} reload failed: ${e.message?.slice(0, 60)}`);
+      }
+    }
+  }, durationMinutes * 60_000);
+}
+
+async function unbanNode(node) {
+  if (!node) return;
+  _state.bannedNodes?.delete(node);
+  await regenerateAndReload();
+}
+
+/**
+ * 重新生成 sing-box config（excludeNodes = 当前 banned 集合）+ reload。
+ */
+async function regenerateAndReload() {
+  const excludeNodes = Array.from(_state.bannedNodes?.keys() || []);
+  const cfg = buildSingboxConfig({
+    mainNodes: _state.enabled ? _state.outbounds : [],
+    jpNodes: _state.jp.enabled ? _state.jp.outbounds : [],
+    excludeNodes,
+  });
+  await reloadSingbox(cfg);
+}
+
+/**
+ * reload sing-box —— stop + start。sing-box 启动后 1.5s 给 urltest 自跑首轮 probe 余量。
+ */
+async function reloadSingbox(newConfig) {
+  await singbox.stop();
+  await singbox.start(newConfig);
+  // 给 urltest 一点时间挑出 active 节点
+  await new Promise(r => setTimeout(r, 1500));
+}
+
+/**
+ * JP fail-fast 节点数 —— chatgpt-checkout.js v2.42+ 用这个判断是否启动 Python。
+ * 排除 banned 节点。
+ */
+function getJpNodeCount() {
+  const banned = new Set(Array.from(_state.bannedNodes?.keys() || []));
+  return (_state.jp.outbounds || []).filter(n => !banned.has(n.tag)).length;
+}
+
+// ===========================================================================
+// v2.42 Task 8: 老 API stub —— 避免 cascade 改老 caller (engine / protocol-engine /
+// chatgpt-checkout / stripe-verify / proxy 路由)
+// ===========================================================================
+
+/**
+ * v2.42 stub: rotate() 概念已被 sing-box urltest 内化（间隔 3m 自切到 latency 最低）。
+ * 业务老调用点仍 await proxy.rotate()，stub 返回当前 active 节点并打 log。
  */
 async function rotate() {
-  return withRotateLock(async () => {
-    if (!_state.enabled || _state.nodeTags.length === 0) throw new Error('代理未启用');
-
-    // PX-7: if the health probe identified at least one alive non-bad node,
-    // prefer alive ones; this prevents wasting accounts on a known-dead node
-    // that hasn't yet hit the 3-strike blacklist threshold. When no alive
-    // node exists (or probe never ran), fall through to the original logic.
-    const hasAlive = _state.nodeTags.some(
-      (t) => !isBad(t) && _state.probeResults.get(t)?.alive === true,
-    );
-
-    // Try to find a non-bad next node; bounded by nodeTags.length attempts.
-    let nextTag = null;
-    for (let i = 0; i < _state.nodeTags.length; i++) {
-      let candidate;
-      if (_state.rotationStrategy === 'random') {
-        candidate = _state.nodeTags[Math.floor(Math.random() * _state.nodeTags.length)];
-      } else {
-        _state.rotationIndex = (_state.rotationIndex + 1) % _state.nodeTags.length;
-        candidate = _state.nodeTags[_state.rotationIndex];
-      }
-      if (isBad(candidate)) continue;
-      if (hasAlive && _state.probeResults.get(candidate)?.alive === false) continue;
-      nextTag = candidate; break;
-    }
-
-    if (!nextTag) {
-      // Every node is bad. First try clearing only auto-blacklisted entries —
-      // user-pinned manual bans should survive unless they're the *only*
-      // thing keeping every node out. If after clearing autos we still have
-      // no candidates, fall back to a full clear.
-      const autoTags = [];
-      for (const [tag, entry] of _state.badNodes.entries()) {
-        const obj = typeof entry === 'number' ? { source: 'auto' } : entry;
-        if (obj.source !== 'manual') autoTags.push(tag);
-      }
-      if (autoTags.length > 0) {
-        console.log(`[Proxy] All ${_state.nodeTags.length} nodes blacklisted; clearing ${autoTags.length} auto entries (manual entries preserved)`);
-        for (const tag of autoTags) {
-          _state.badNodes.delete(tag);
-          try { blacklist.remove(tag, 'main'); } catch {}
-        }
-      }
-      // Try again to find a candidate.
-      for (let i = 0; i < _state.nodeTags.length; i++) {
-        if (_state.rotationStrategy === 'random') {
-          nextTag = _state.nodeTags[Math.floor(Math.random() * _state.nodeTags.length)];
-        } else {
-          _state.rotationIndex = (_state.rotationIndex + 1) % _state.nodeTags.length;
-          nextTag = _state.nodeTags[_state.rotationIndex];
-        }
-        if (!isBad(nextTag)) break;
-        nextTag = null;
-      }
-      if (!nextTag) {
-        // Even after clearing autos, every remaining node is manually banned.
-        // Last-resort clear so we don't deadlock with no proxy at all.
-        console.log(`[Proxy] All nodes remain blacklisted (all manual); clearing everything to avoid deadlock`);
-        _state.badNodes.clear();
-        try { blacklist.removeAll('main'); } catch {}
-        if (_state.rotationStrategy === 'random') {
-          nextTag = _state.nodeTags[Math.floor(Math.random() * _state.nodeTags.length)];
-        } else {
-          _state.rotationIndex = (_state.rotationIndex + 1) % _state.nodeTags.length;
-          nextTag = _state.nodeTags[_state.rotationIndex];
-        }
-      }
-    }
-
-    await clashApi.switchSelector(SELECTOR_TAG, nextTag);
-    _state.currentNode = nextTag;
-    return nextTag;
-  });
+  console.log('[Proxy] rotate() is a no-op since v2.42 (sing-box urltest auto-selects)');
+  return _state.currentNode || (await getActiveNode('main')) || '';
 }
 
 async function rotateJp() {
-  return withRotateLock(async () => {
-    if (!_state.jp.enabled || _state.jp.nodeTags.length === 0) throw new Error('JP 通道未启用');
-
-    const hasAlive = _state.jp.nodeTags.some(
-      (t) => !isJpBad(t) && _state.jp.probeResults.get(t)?.alive === true,
-    );
-
-    let nextTag = null;
-    for (let i = 0; i < _state.jp.nodeTags.length; i++) {
-      let candidate;
-      if (_state.jp.rotationStrategy === 'random') {
-        candidate = _state.jp.nodeTags[Math.floor(Math.random() * _state.jp.nodeTags.length)];
-      } else {
-        _state.jp.rotationIndex = (_state.jp.rotationIndex + 1) % _state.jp.nodeTags.length;
-        candidate = _state.jp.nodeTags[_state.jp.rotationIndex];
-      }
-      if (isJpBad(candidate)) continue;
-      if (hasAlive && _state.jp.probeResults.get(candidate)?.alive === false) continue;
-      nextTag = candidate; break;
-    }
-
-    if (!nextTag) {
-      // Auto-vs-manual cleared in two passes: preserve manual bans first.
-      const autoTags = [];
-      for (const [tag, entry] of _state.jp.badNodes.entries()) {
-        const obj = typeof entry === 'number' ? { source: 'auto' } : entry;
-        if (obj.source !== 'manual') autoTags.push(tag);
-      }
-      if (autoTags.length > 0) {
-        console.log(`[Proxy:JP] All ${_state.jp.nodeTags.length} KDDI nodes blacklisted; clearing ${autoTags.length} auto entries (manual preserved)`);
-        for (const tag of autoTags) {
-          _state.jp.badNodes.delete(tag);
-          try { blacklist.remove(tag, 'jp'); } catch {}
-        }
-      }
-      for (let i = 0; i < _state.jp.nodeTags.length; i++) {
-        if (_state.jp.rotationStrategy === 'random') {
-          nextTag = _state.jp.nodeTags[Math.floor(Math.random() * _state.jp.nodeTags.length)];
-        } else {
-          _state.jp.rotationIndex = (_state.jp.rotationIndex + 1) % _state.jp.nodeTags.length;
-          nextTag = _state.jp.nodeTags[_state.jp.rotationIndex];
-        }
-        if (!isJpBad(nextTag)) break;
-        nextTag = null;
-      }
-      if (!nextTag) {
-        console.log(`[Proxy:JP] All KDDI nodes remain blacklisted (all manual); clearing to avoid deadlock`);
-        _state.jp.badNodes.clear();
-        try { blacklist.removeAll('jp'); } catch {}
-        if (_state.jp.rotationStrategy === 'random') {
-          nextTag = _state.jp.nodeTags[Math.floor(Math.random() * _state.jp.nodeTags.length)];
-        } else {
-          _state.jp.rotationIndex = (_state.jp.rotationIndex + 1) % _state.jp.nodeTags.length;
-          nextTag = _state.jp.nodeTags[_state.jp.rotationIndex];
-        }
-      }
-    }
-
-    await clashApi.switchSelector(JP_SELECTOR_TAG, nextTag);
-    _state.jp.currentNode = nextTag;
-    return nextTag;
-  });
+  console.log('[Proxy:JP] rotateJp() is a no-op since v2.42 (sing-box urltest auto-selects)');
+  return _state.jp.currentNode || (await getActiveNode('jp')) || '';
 }
 
-// v2.31.1: 把真实 rotate 注入 recordBadAttempt 的 fire-and-forget 钩子（在 rotate/rotateJp
-// 已定义之后赋值，避免 TDZ）。
-_autoRotateFn = rotate;
-_autoRotateJpFn = rotateJp;
-
-/** Switch to a specific node by name. Serialized through the same rotate lock
- *  so this can't race with rotate / rotateJp. */
 async function switchTo(nodeTag) {
-  return withRotateLock(async () => {
-    if (!_state.nodeTags.includes(nodeTag)) throw new Error(`节点不存在: ${nodeTag}`);
-    await clashApi.switchSelector(SELECTOR_TAG, nodeTag);
-    _state.currentNode = nodeTag;
-    return nodeTag;
-  });
+  // v2.42: urltest outbound 不接受 PUT /proxies 切换（selector 才行）。stub 化保留。
+  if (!_state.nodeTags.includes(nodeTag)) throw new Error(`节点不存在: ${nodeTag}`);
+  console.log(`[Proxy] switchTo(${nodeTag}) is a no-op since v2.42 (use banFromUrltest to exclude unwanted nodes)`);
+  return nodeTag;
 }
 
-/** Detect current exit IP through the proxy. Uses HTTP CONNECT tunnel to HTTPS endpoint. */
 async function detectExit() {
   if (!_state.enabled) return '';
   try {
@@ -885,8 +662,10 @@ async function detectJpExit() {
   }
 }
 
+// v2.42 Task 4: 业务侧已改读 process.env.HTTPS_PROXY；这两个 stub 仅给少数仍调用的
+// 老路径（如 chatgpt-checkout.js fallback / 单测）返 env-based fallback URL。
 function getProxyUrl() {
-  return _state.enabled ? `http://127.0.0.1:${HTTP_PORT}` : '';
+  return process.env.HTTPS_PROXY || (_state.enabled ? `http://127.0.0.1:${HTTP_PORT}` : '');
 }
 
 function getJpProxyUrl() {
@@ -906,37 +685,39 @@ function isJpBad(tag) {
 }
 
 module.exports = {
+  // v2.42 Task 8 新增 API
+  getActiveNode,
+  banFromUrltest,
+  unbanNode,
+  getJpNodeCount,
+  regenerateAndReload,
+  // 核心 lifecycle
   getState,
   refresh,
   stop,
-  rotate,
-  switchTo,
-  markBad,
-  isBad,
-  detectExit,
-  getProxyUrl,
   buildSingboxConfig,
   pickJpNodes,
   pickMainNodes,
   US_PATTERNS,
-  // JP-Checkout channel
-  getJpProxyUrl,
-  rotateJp,
+  detectExit,
   detectJpExit,
-  markJpBad,
+  isBad,
   isJpBad,
-  // blacklist + counter API
-  recordBadAttempt,
-  recordGoodAttempt,
-  // PX-7 health probe
-  runHealthProbe,
-  __setAutoRotateForTest,
-  __autoRotateIfCurrentDeadForTest: _autoRotateIfCurrentDead,
   blacklistManually,
   removeFromBlacklist,
   clearBlacklist,
   isProxyNetError,
   FAIL_THRESHOLD,
+  // ----- 以下 export 为 v2.42 backwards-compat stub，避免 cascade 改 caller -----
+  rotate,
+  rotateJp,
+  switchTo,
+  markBad,
+  markJpBad,
+  recordBadAttempt,
+  recordGoodAttempt,
+  getProxyUrl,
+  getJpProxyUrl,
   // constants
   SELECTOR_TAG,
   JP_SELECTOR_TAG,

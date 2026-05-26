@@ -65,7 +65,7 @@ const baseMocks = (nodes, probeMap = {}) => ({
   },
 });
 
-test('PX-7: runHealthProbe 标 alive 节点为 alive，无响应为 dead', async () => {
+test('PX-7: runHealthProbe 标 alive 节点为 alive，无响应为 dead', { skip: 'v2.42 Task 8: runHealthProbe / probeResults 已删（sing-box urltest 自做 latency probe）' }, async () => {
   const nodes = ['a', 'b', 'c'].map((tag) => ({ type: 'ss', tag }));
   const p = freshProxyWithMocks(baseMocks(nodes, { a: 120, b: null, c: 80 }));
   await p.refresh();
@@ -79,7 +79,7 @@ test('PX-7: runHealthProbe 标 alive 节点为 alive，无响应为 dead', async
   assert.strictEqual(s.probeSummary.total, 3);
 });
 
-test('PX-7: rotate() 在有 alive 节点时跳过 dead 节点', async () => {
+test('PX-7: rotate() 在有 alive 节点时跳过 dead 节点', { skip: 'v2.42 Task 8: rotate / probeResults 已 stub 化' }, async () => {
   // sequence: a dead, b alive, c dead
   const nodes = ['a', 'b', 'c'].map((tag) => ({ type: 'ss', tag }));
   const p = freshProxyWithMocks(baseMocks(nodes, { a: null, b: 100, c: null }));
@@ -94,7 +94,7 @@ test('PX-7: rotate() 在有 alive 节点时跳过 dead 节点', async () => {
   assert.strictEqual(p.getState().currentNode, 'b');
 });
 
-test('PX-7: rotate() 回退到原逻辑 — 全部 dead 时不再跳', async () => {
+test('PX-7: rotate() 回退到原逻辑 — 全部 dead 时不再跳', { skip: 'v2.42 Task 8: rotate / probeResults 已 stub 化' }, async () => {
   // All nodes dead by probe — rotate must still pick something.
   const nodes = ['a', 'b'].map((tag) => ({ type: 'ss', tag }));
   const p = freshProxyWithMocks(baseMocks(nodes, { a: null, b: null }));
@@ -104,7 +104,7 @@ test('PX-7: rotate() 回退到原逻辑 — 全部 dead 时不再跳', async () 
   assert.ok(['a', 'b'].includes(p.getState().currentNode), 'must pick some node');
 });
 
-test('PX-7: probeAllNodes 跳过 manual-blacklisted 节点 (shouldSkip)', async () => {
+test('PX-7: probeAllNodes 跳过 manual-blacklisted 节点 (shouldSkip)', { skip: 'v2.42 Task 8: runHealthProbe 已删' }, async () => {
   // Disable auto-probe via config so we control timing — blacklist before probe.
   const nodes = ['a', 'b'].map((tag) => ({ type: 'ss', tag }));
   const mocks = baseMocks(nodes, { a: 100, b: 80 });
@@ -120,7 +120,7 @@ test('PX-7: probeAllNodes 跳过 manual-blacklisted 节点 (shouldSkip)', async 
   assert.strictEqual(s.probeResults.b.alive, true);
 });
 
-test('PX-7: getState() exposes probeSummary as plain object', () => {
+test('PX-7: getState() exposes probeSummary as plain object', { skip: 'v2.42 Task 8: probeSummary 已从 getState 移除' }, () => {
   const nodes = ['a'].map((tag) => ({ type: 'ss', tag }));
   const p = freshProxyWithMocks(baseMocks(nodes, {}));
   const s = p.getState();

@@ -43,7 +43,7 @@ const defaultMocks = (nodes) => ({
   },
 });
 
-test('R1 refresh 不重置 rotationIndex（节点池长度不变）', async () => {
+test('R1 refresh 不重置 rotationIndex（节点池长度不变）', { skip: 'v2.42 Task 8: rotate() 已 stub，rotationIndex 不再被 rotate 推进（urltest 自选）' }, async () => {
   const nodes = Array.from({ length: 8 }, (_, i) => ({ type: 'ss', tag: `us-${i}` }));
   const p = freshProxyWithMocks(defaultMocks(nodes));
   await p.refresh();
@@ -56,7 +56,7 @@ test('R1 refresh 不重置 rotationIndex（节点池长度不变）', async () =
   assert.strictEqual(p.getState().currentNode, 'us-3', 'currentNode 应跟随 rotationIndex');
 });
 
-test('R2 refresh 后节点列表变短：rotationIndex 取模到合法范围', async () => {
+test('R2 refresh 后节点列表变短：rotationIndex 取模到合法范围', { skip: 'v2.42 Task 8: rotate() 已 stub' }, async () => {
   const nodes10 = Array.from({ length: 10 }, (_, i) => ({ type: 'ss', tag: `us-${i}` }));
   let currentNodes = nodes10;
   const mocks = defaultMocks(nodes10);
@@ -86,7 +86,7 @@ test('R3 refresh 后节点列表为空：rotationIndex 安全 reset 为 0', asyn
   assert.strictEqual(p.getState().currentNode, '');
 });
 
-test('R4 refresh 后 currentNode 跟随 rotationIndex 而非 filtered[0]', async () => {
+test('R4 refresh 后 currentNode 跟随 rotationIndex 而非 filtered[0]', { skip: 'v2.42 Task 8: rotate() 已 stub' }, async () => {
   const nodes = Array.from({ length: 5 }, (_, i) => ({ type: 'ss', tag: `us-${i}` }));
   const p = freshProxyWithMocks(defaultMocks(nodes));
   await p.refresh();
