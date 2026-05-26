@@ -187,7 +187,26 @@ def login(email, password, login_type, client_id, refresh_token, totp_secret, pr
         raise Exception(f"login_fail: unexpected page.type={page_type}")
     _log(f"Step 2 OK: page.type={page_type}")
 
-    raise Exception("not_implemented: step 3-5 待 Task 3-5")
+    # Step 3: IMAP 取 OTP（Outlook 路径；Gmail TOTP 不在本 flow 范围）
+    if login_type != "outlook":
+        raise Exception(f"login_fail: SPA OAuth 仅支持 outlook，login_type={login_type}")
+    if not fetch_imap_otp:
+        raise Exception("login_fail: pyotp/imap deps missing")
+    _log("Step 3: IMAP poll OTP")
+    try:
+        baseline = get_imap_baseline(email, client_id, refresh_token)
+    except Exception as e:
+        baseline = 0
+        _log(f"IMAP baseline failed (use 0): {str(e)[:50]}")
+    # 给 OpenAI 邮件队列 5 秒缓冲再开始 poll，避免拿到过期 baseline 邮件
+    import time as _t; _t.sleep(5)
+    otp = fetch_imap_otp(email, client_id, refresh_token, baseline_uid=baseline, timeout=90,
+                        log=lambda m: _log(f"IMAP: {m}"))
+    if not otp:
+        raise Exception("otp timeout")
+    _log(f"Step 3 OK: OTP={otp[:2]}****")
+
+    raise Exception("not_implemented: step 4-5 待 Task 4-5")
 
 
 def main():
