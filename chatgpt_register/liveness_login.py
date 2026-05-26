@@ -147,7 +147,47 @@ def login(email, password, login_type, client_id, refresh_token, totp_secret, pr
             raise Exception(f"proxy reset (login): Cloudflare HTTP {r.status_code}")
     _log(f"Step 1 OK: status={r.status_code} cookies={len(session.cookies)}")
 
-    raise Exception("not_implemented: step 2-5 待 Task 2-5")
+    # Step 2: POST /api/accounts/authorize/continue → 触发 OTP 邮件
+    _log("Step 2: POST authorize/continue")
+    try:
+        r2 = session.post(
+            f"{_AUTH}/api/accounts/authorize/continue",
+            headers={
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "Origin": _AUTH,
+                "Referer": f"{_AUTH}/log-in",
+            },
+            json={"username": {"kind": "email", "value": email}},
+            timeout=30,
+        )
+    except Exception as e:
+        msg = str(e)
+        if 'ECONNRESET' in msg or 'reset' in msg.lower():
+            raise Exception("proxy reset (login)")
+        raise Exception(f"unexpected: authorize/continue {msg[:40]}")
+
+    if r2.status_code in (403, 429):
+        raise Exception(f"proxy reset (login): HTTP {r2.status_code}")
+    if r2.status_code >= 500:
+        raise Exception(f"proxy reset (login): HTTP {r2.status_code}")
+    try:
+        j2 = r2.json()
+    except Exception:
+        raise Exception(f"unexpected: authorize/continue body not json (HTTP {r2.status_code})")
+
+    if r2.status_code >= 400:
+        err = (j2.get("error") or {}).get("code") or "unknown"
+        if err == "unknown_user" or err == "invalid_email":
+            raise Exception(f"login_fail: authorize/continue {err}")
+        raise Exception(f"login_fail: authorize/continue HTTP {r2.status_code} code={err}")
+
+    page_type = (j2.get("page") or {}).get("type")
+    if page_type != "email_otp_verification":
+        raise Exception(f"login_fail: unexpected page.type={page_type}")
+    _log(f"Step 2 OK: page.type={page_type}")
+
+    raise Exception("not_implemented: step 3-5 待 Task 3-5")
 
 
 def main():
