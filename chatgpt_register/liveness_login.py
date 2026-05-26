@@ -102,28 +102,16 @@ def _build_session(proxy_url):
     return session, impersonate_name
 
 
-def _parse_state_from_authorize_page(response):
-    """Extract state CSRF from Auth0 authorize redirect URL or HTML form."""
-    import re
-    from urllib.parse import urlparse, parse_qs
-
-    url = str(response.url)
-    parsed = urlparse(url)
-    qs = parse_qs(parsed.query)
-    if 'state' in qs:
-        return qs['state'][0], None
-    body = response.text or ""
-    m = re.search(r'name="state"\s+value="([^"]+)"', body)
-    if m:
-        return m.group(1), None
-    return None, None
-
-
 def login(email, password, login_type, client_id, refresh_token, totp_secret, proxy_url):
-    """Returns {accessToken, accountId, expiresAtIso} or raises Exception
-    whose str() contains a runner.js-matchable keyword."""
-    if not password:
-        raise Exception("no password")
+    """新 SPA OAuth flow:
+    1. GET /authorize → 拿 cookies (oai-did, __cf_bm 等)
+    2. POST /api/accounts/authorize/continue → 触发 OTP 邮件
+    3. IMAP 拉 OTP
+    4. POST /api/accounts/email-otp/validate → 拿 chatgpt.com session cookies
+    5. GET chatgpt.com/api/auth/session → 拿 access_token + user.id
+    """
+    if not password and login_type != "outlook":
+        raise Exception("no password")  # gmail 走旧 flow（暂不支持），出错
     if login_type == "outlook" and (not client_id or not refresh_token):
         raise Exception("outlook oauth missing")
 
@@ -133,16 +121,7 @@ def login(email, password, login_type, client_id, refresh_token, totp_secret, pr
     session.cookies.set("oai-did", device_id, domain="auth.openai.com")
     session.cookies.set("oai-did", device_id, domain=".auth.openai.com")
 
-    # IMAP baseline BEFORE submitting password (avoid race with old OTP email)
-    imap_baseline = 0
-    if login_type == "outlook" and fetch_imap_otp:
-        try:
-            imap_baseline = get_imap_baseline(email, client_id, refresh_token)
-            _log(f"IMAP baseline: {imap_baseline}")
-        except Exception as e:
-            _log(f"IMAP baseline failed (will use 0): {str(e)[:50]}")
-
-    # Step 1: GET authorize page → parse state
+    # Step 1: GET /authorize → SPA shell（无需 parse HTML，只为拿 Cloudflare cookies）
     auth_url = (
         f"{_AUTH}/authorize?client_id={_CODEX_CLIENT_ID}"
         "&scope=openid%20email%20profile%20offline_access%20model.request"
@@ -150,7 +129,7 @@ def login(email, password, login_type, client_id, refresh_token, totp_secret, pr
         "&response_type=code"
         "&redirect_uri=https%3A%2F%2Fchatgpt.com%2Fapi%2Fauth%2Fcallback%2Flogin-web"
     )
-    _log("Step 1: GET authorize page")
+    _log("Step 1: GET /authorize (拿 cookies)")
     try:
         r = session.get(auth_url, headers={"Accept": "text/html"},
                        allow_redirects=True, timeout=30)
@@ -158,154 +137,17 @@ def login(email, password, login_type, client_id, refresh_token, totp_secret, pr
         msg = str(e)
         if 'ECONNRESET' in msg or 'CONNECTION_RESET' in msg or 'reset' in msg.lower():
             raise Exception("proxy reset (login)")
-        raise Exception(f"unexpected: navigation {msg[:40]}")
+        raise Exception(f"unexpected: GET /authorize {msg[:40]}")
 
-    # v2.41.4: HTTP 5xx 或 body 空 / 过短 → connection 被服务端 close（OpenAI/Cloudflare 限速）
-    #   不归到"no state"误报；HTTP 200 + body 完整但 state 缺失才算 page 结构变
     if r.status_code >= 500:
         raise Exception(f"proxy reset (login): HTTP {r.status_code}")
-    body_len = len(r.text or "")
-    if body_len < 500:
-        raise Exception(f"proxy reset (login): HTTP {r.status_code} body_len={body_len}")
-    # v2.41.11: HTTP 403/429 + Cloudflare challenge body 关键词 → proxy_error
-    #   实测 /authorize 拿到 HTTP 403 + body ~6966 字节 (Cloudflare 'Just a moment')，
-    #   v2.41.4 只检 >=500，403 漏了 → 走到 _parse_state 拿不到 state → 归 network_error 重试 3 次浪费。
     if r.status_code in (403, 429):
         _body_lower = (r.text or "").lower()
         if any(kw in _body_lower for kw in ('cloudflare', 'just a moment', 'challenge-platform', 'cf-mitigated', 'attention required')):
             raise Exception(f"proxy reset (login): Cloudflare HTTP {r.status_code}")
-        # 非 Cloudflare 的 403/429 继续走 fallback，归 network_error 等
-    # v2.41.9 / v2.41.10: 按 final_path 分类（state 缺失时）
-    from urllib.parse import urlparse as _urlparse_lv
-    _final_path = _urlparse_lv(str(r.url)).path
-    # v2.41.12: debug log 输出 final_path，让 livenessLogsDB 能记录实际跳转路径，
-    #   便于诊断未来类似 path-based 分类问题（path=/email-verification 等）。
-    _log(f"Step 1 GET response: status={r.status_code} body_len={body_len} path={_final_path}")
+    _log(f"Step 1 OK: status={r.status_code} cookies={len(session.cookies)}")
 
-    # v2.41.9: OpenAI OAuth /error 页（账号问题，非 deactivated 但 OAuth flow 错）→ 直接 login_fail，不要 retry
-    if _final_path == '/error' or _final_path.endswith('/error'):
-        raise Exception(f"login_fail: OAuth /error redirect (url={str(r.url)[:80]})")
-
-    state, _csrf = _parse_state_from_authorize_page(r)
-    if not state:
-        # v2.41.10: state 拿不到时按 path 细分。实测 liabhzo717818 出现：
-        # OpenAI OAuth flow 跳到 /email-verification 或 /api/accounts/authorize，
-        # 都拿不到 state — 语义是"账号已部分认证，需要 OTP reverify"，
-        # 归 token_expired 而非 network_error（后者会触发 3 次无意义 retry）。
-        if _final_path.startswith('/email-verification'):
-            # OpenAI 当账号已部分认证，跳过 login form 让 OTP reverify
-            raise Exception(f"token_expired: OAuth jumped to /email-verification (needs OTP reverify, url={str(r.url)[:80]})")
-        if _final_path.startswith('/api/accounts/'):
-            # 中间 redirect 失败（应该 302 到 /log-in 但停在 /api/accounts/*）
-            raise Exception(f"token_expired: OAuth stuck at {_final_path} (needs reverify, url={str(r.url)[:80]})")
-        # 真未知 path 或 page 结构变化 → fallback network_error retry
-        raise Exception(f"unexpected: authorize page structure changed (HTTP {r.status_code}, body_len={body_len}, path={_final_path})")
-
-    # Step 2: submit username
-    _log("Step 2: submit username")
-    sentinel = get_sentinel_token(session, device_id, flow="authorize_continue",
-                                  user_agent=session.headers.get("User-Agent", "")) or ""
-    try:
-        r = session.post(f"{_AUTH}/u/login/identifier?state={state}",
-                        data={"state": state, "username": email,
-                              "js-available": "true", "webauthn-available": "true",
-                              "is-brave": "false", "webauthn-platform-available": "false",
-                              "action": "default"},
-                        headers={"openai-sentinel-token": sentinel,
-                                 "Content-Type": "application/x-www-form-urlencoded"},
-                        allow_redirects=True, timeout=30)
-    except Exception as e:
-        if 'reset' in str(e).lower(): raise Exception("proxy reset (login)")
-        raise Exception(f"unexpected: identifier {str(e)[:40]}")
-
-    # Step 3: submit password
-    _log("Step 3: submit password")
-    sentinel = get_sentinel_token(session, device_id, flow="authorize_continue",
-                                  user_agent=session.headers.get("User-Agent", "")) or ""
-    try:
-        r = session.post(f"{_AUTH}/u/login/password?state={state}",
-                        data={"state": state, "username": email, "password": password,
-                              "action": "default"},
-                        headers={"openai-sentinel-token": sentinel,
-                                 "Content-Type": "application/x-www-form-urlencoded"},
-                        allow_redirects=True, timeout=30)
-    except Exception as e:
-        if 'reset' in str(e).lower(): raise Exception("proxy reset (login)")
-        raise Exception(f"unexpected: password {str(e)[:40]}")
-
-    if 'error=invalid' in str(r.url) or 'invalid_user_password' in (r.text or ''):
-        raise Exception("bad password")
-
-    # Step 4: detect OTP requirement
-    final_url = str(r.url)
-    need_otp = ('/u/email-otp' in final_url or '/u/mfa-otp' in final_url
-                or '/email-otp/challenge' in final_url)
-
-    if need_otp:
-        _log("Step 4: OTP required")
-        try:
-            if login_type == "outlook" and fetch_imap_otp:
-                code = fetch_imap_otp(email, client_id, refresh_token, imap_baseline,
-                                     timeout=90, log=_log)
-                if not code:
-                    raise Exception("otp timeout")
-            elif login_type == "google" and totp_secret and gen_totp:
-                code = gen_totp(totp_secret)
-            else:
-                raise Exception("otp fail: no method")
-        except TimeoutError:
-            raise Exception("otp timeout")
-        except Exception as e:
-            msg = str(e).lower()
-            if 'otp' in msg:
-                raise  # already-formatted otp error
-            if 'timeout' in msg:
-                raise Exception("otp timeout")
-            raise Exception(f"otp fail: {str(e)[:40]}")
-
-        # Step 5: submit OTP
-        _log(f"Step 5: submit OTP (code={code[:2]}***)")
-        sentinel = get_sentinel_token(session, device_id, flow="email_otp_validate",
-                                      user_agent=session.headers.get("User-Agent", "")) or ""
-        try:
-            r = session.post(f"{_AUTH}/u/email-otp/challenge?state={state}",
-                            data={"state": state, "code": code, "action": "default"},
-                            headers={"openai-sentinel-token": sentinel,
-                                     "Content-Type": "application/x-www-form-urlencoded"},
-                            allow_redirects=True, timeout=30)
-        except Exception as e:
-            if 'reset' in str(e).lower(): raise Exception("proxy reset (login)")
-            raise Exception(f"unexpected: otp submit {str(e)[:40]}")
-        final_url = str(r.url)
-
-        # OTP rejected by server (URL still on /u/email-otp/*)
-        if '/u/email-otp' in final_url:
-            raise Exception("otp fail: rejected by server")
-
-    # Step 6: ensure landed on chatgpt.com callback
-    if 'chatgpt.com' not in final_url:
-        if '/u/login' in final_url or '/authorize' in final_url:
-            raise Exception("captcha")
-        raise Exception(f"unexpected: stuck at {final_url[:40]}")
-
-    # Step 7: fetch /api/auth/session for accessToken
-    _log("Step 7: fetch /api/auth/session")
-    try:
-        r = session.get(f"{_BASE}/api/auth/session",
-                       headers={"Accept": "application/json"}, timeout=15)
-        session_data = r.json() if r.status_code == 200 else {}
-    except Exception:
-        session_data = {}
-
-    access_token = session_data.get("accessToken") or ""
-    if not access_token:
-        raise Exception("no session after login")
-
-    return {
-        "accessToken": access_token,
-        "accountId": (session_data.get("user") or {}).get("id", ""),
-        "expiresAtIso": _to_cst_iso(session_data.get("expires", "")),
-    }
+    raise Exception("not_implemented: step 2-5 待 Task 2-5")
 
 
 def main():
