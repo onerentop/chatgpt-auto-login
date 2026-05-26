@@ -337,24 +337,24 @@ def login(email, password, login_type, client_id, refresh_token, totp_secret, pr
     _log(f"Step 2 OK: page.type={page_type} sentinel={'yes' if sentinel else 'NO'}")
 
     # v2.43: 强制 passwordless 路径 — 即使 OpenAI 返回 login_password 也切回 OTP。
-    # 实测 ~55% outlook 账号 step 2 返回 page.type=login_password 而非 email_otp_verification，
-    # 但 payload.passwordless_disabled=false 说明可调 /api/accounts/passwordless/send-otp
-    # 强制切 OTP flow。reconnaissance: 空 body + 同 step 2 headers (sentinel/oai-device-id)。
+    # v2.43.2: 密码登录路径 — 参考 Gpt-Agreement-Payment/CTF-reg/auth_flow.py 实现。
+    # 实测 ~55% outlook 账号 step 2 返回 page.type=login_password。OpenAI 设计：
+    # POST /api/accounts/password/verify 输密码 → 成功后强制跳 email_otp_verification (2FA)
+    # → step 3 IMAP 拿 OTP → step 4 validate。force-passwordless (POST send-otp) 被 OpenAI 拒
+    # (return 409 invalid_state)，实测不可行。
     if page_type == "login_password":
-        page_payload = (j2.get("page") or {}).get("payload") or {}
-        if page_payload.get("passwordless_disabled"):
-            # OpenAI 明确不允许这账号走 OTP（罕见）
-            raise Exception("login_fail: passwordless_disabled by OpenAI")
-        _log("Step 2.5: page.type=login_password, force passwordless via send-otp")
+        if not password:
+            raise Exception("login_fail: page.type=login_password but DB has no password")
+        _log("Step 2.5: page.type=login_password, POST password/verify")
         try:
             sentinel25 = get_sentinel_token(session, device_id, flow="authorize_continue",
-                                           user_agent=session.headers.get("User-Agent", "")) or ""
+                                           user_agent=session.headers.get("User-Agent", "")) or sentinel
         except Exception as _e:
             _log(f"sentinel25 fail (复用 step 2 sentinel): {str(_e)[:40]}")
             sentinel25 = sentinel
         try:
             r25 = session.post(
-                f"{_AUTH}/api/accounts/passwordless/send-otp",
+                f"{_AUTH}/api/accounts/password/verify",
                 headers={
                     "Accept": "application/json",
                     "Content-Type": "application/json",
@@ -363,36 +363,56 @@ def login(email, password, login_type, client_id, refresh_token, totp_secret, pr
                     "oai-device-id": device_id,
                     "openai-sentinel-token": sentinel25,
                 },
-                json={},  # 实测 reqBody 为空
+                json={"password": password},
                 timeout=30,
             )
         except Exception as e:
             msg = str(e)
             if 'reset' in msg.lower() or 'ECONNRESET' in msg:
                 raise Exception("proxy reset (login)")
-            raise Exception(f"unexpected: send-otp {msg[:40]}")
+            raise Exception(f"unexpected: password/verify {msg[:40]}")
 
-        if r25.status_code in (429,):
-            raise Exception(f"proxy reset (login): HTTP {r25.status_code} send-otp rate_limited")
-        if r25.status_code >= 500:
+        if r25.status_code in (429,) or r25.status_code >= 500:
             raise Exception(f"proxy reset (login): HTTP {r25.status_code}")
 
-        if r25.status_code >= 400:
-            try:
-                j25 = r25.json()
-                err = (j25.get("error") or {}).get("code") or "unknown"
-            except Exception:
-                err = "parse_error"
-            if err == "invalid_state":
-                raise Exception("login_fail: send-otp invalid_state (session expired)")
-            if err == "account_deactivated":
-                raise Exception("deactivated: send-otp account_deactivated")
-            raise Exception(f"login_fail: send-otp HTTP {r25.status_code} code={err}")
+        body_text = r25.text or ""
+        if "account_deactivated" in body_text or "account_disabled" in body_text:
+            raise Exception("deactivated: account_deactivated")
 
-        _log("Step 2.5 OK: forced passwordless, OTP email sent")
-        # page_type 概念上现在已变 email_otp_verification，继续走 step 3 IMAP
+        if r25.status_code != 200:
+            try:
+                err = (r25.json().get('error') or {}).get('code') or 'unknown'
+            except Exception:
+                err = 'parse_error'
+            if err in ("invalid_credentials", "bad_password", "invalid_password", "invalid_username_or_password"):
+                raise Exception("login_fail: bad password")
+            if err == "invalid_state":
+                raise Exception("login_fail: password/verify invalid_state (session expired)")
+            raise Exception(f"login_fail: password/verify HTTP {r25.status_code} code={err}")
+
+        try:
+            j25 = r25.json()
+        except Exception:
+            j25 = {}
+        new_page_type = (j25.get('page') or {}).get('type', '')
+        new_continue = j25.get('continue_url') or ''
+        _log(f"Step 2.5 OK: password verified, next page.type={new_page_type} continue={new_continue[:50]}")
+
+        # 密码 verify 成功后通常跳 email_otp_verification（OpenAI 强制 2FA）→ 继续 step 3
+        if new_page_type == "email_otp_verification" or "/email-verification" in new_continue:
+            pass  # 流程继续走 step 3 IMAP
+        elif new_continue and "/login-web" in new_continue:
+            # 罕见：密码 verify 直接给 callback URL 不需要 OTP → step 5 应能拿到 session
+            _log("Step 2.5: post-password skip OTP (rare), proceeding to step 5")
+            # 跳过 step 3+4，flag 让下面走 step 5
+            # 简化：仍跑 step 3 但 timeout 短 — 真没邮件时直接走 step 5。
+            # 当前简化：raise login_fail，后续 spec 完善（YAGNI）
+            raise Exception(f"login_fail: post-password no_otp_required (TODO: step 5 直接拿 session)")
+        else:
+            raise Exception(f"login_fail: post-password unexpected page.type={new_page_type}")
+
     elif page_type != "email_otp_verification":
-        # 可能是其他未知页面类型 —— 这种情况下 protocol 侧暂不支持（YAGNI），归 login_fail
+        # 其他未知页面类型 —— 归 login_fail
         raise Exception(f"login_fail: unexpected page.type={page_type}")
 
     # Step 3: IMAP 取 OTP（Outlook 路径；Gmail TOTP 不在本 flow 范围）
