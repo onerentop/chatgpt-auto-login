@@ -28,6 +28,9 @@
       "baseUrl": "https://smscloud.sbs/api/system",
       "serviceCode": "",
       "countryCode": [187]
+    },
+    "oapi": {
+      "baseUrl": "https://sms.oapi.vip/api.php"
     }
   }
 }

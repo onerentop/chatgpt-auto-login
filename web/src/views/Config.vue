@@ -42,6 +42,7 @@
               <el-radio value="local">本地号池（v2.37）</el-radio>
               <el-radio value="zhusms">zhusms 卡密</el-radio>
               <el-radio value="smscloud">smscloud</el-radio>
+              <el-radio value="oapi">oapi (CDK 池)</el-radio>
             </el-radio-group>
           </el-form-item>
 
@@ -85,6 +86,44 @@
               <el-button :loading="testingSmscloudBalance" @click="testSmscloudBalance">查询余额</el-button>
               <span v-if="smscloudBalance !== null" style="margin-left: 12px; color: var(--el-color-success); font-weight: 600">余额: {{ smscloudBalance }}</span>
               <span v-else style="margin-left:8px;color:#909399">点按钮测试（先保存 apiKey）</span>
+            </el-form-item>
+          </template>
+
+          <!-- v2.50.0: oapi CDK 池配置 -->
+          <template v-if="form.phonePool.provider === 'oapi'">
+            <el-form-item label="oapi baseUrl">
+              <el-input v-model="form.phonePool.oapi.baseUrl" placeholder="https://sms.oapi.vip/api.php" style="width: 360px" />
+            </el-form-item>
+            <el-form-item label="CDK 池">
+              <div style="width: 600px">
+                <el-input v-model="oapiCdkBulkText" type="textarea" :rows="4" placeholder="每行一个 CDK，例：SMS-XXXX-XXXX-XXXX" />
+                <div style="margin-top: 8px">
+                  <el-button type="primary" size="small" @click="importOapiCdks">导入 CDK</el-button>
+                  <el-button size="small" @click="loadOapiCdks">刷新列表</el-button>
+                </div>
+              </div>
+            </el-form-item>
+            <el-form-item label="">
+              <el-table :data="oapiCdks" stripe size="small" max-height="320" style="width: 600px">
+                <el-table-column label="CDK" width="160">
+                  <template #default="{ row }">
+                    <code style="font-size: 12px">{{ row.cdk.slice(0, 8) }}…{{ row.cdk.slice(-4) }}</code>
+                  </template>
+                </el-table-column>
+                <el-table-column prop="phone" label="phone" width="130" />
+                <el-table-column label="状态" width="80">
+                  <template #default="{ row }">
+                    <el-tag :type="row.status === 'available' ? 'success' : 'danger'" size="small">{{ row.status }}</el-tag>
+                  </template>
+                </el-table-column>
+                <el-table-column prop="bindings_used" label="已绑" width="60" />
+                <el-table-column prop="remaining" label="剩余" width="60" />
+                <el-table-column label="操作" width="70">
+                  <template #default="{ row }">
+                    <el-button size="small" text type="danger" @click="deleteOapiCdk(row.cdk)">删除</el-button>
+                  </template>
+                </el-table-column>
+              </el-table>
             </el-form-item>
           </template>
         </el-form>
@@ -360,7 +399,7 @@ const form = reactive({
   proxyJpEnabled: true,
   proxyJpKeyword: 'KDDI',
   proxyJpWhitelist: [],
-  phonePool: { enabled: false, maxBindingsPerPhone: 5, smsPollIntervalMs: 3000, smsMaxAttempts: 30, provider: 'local', zhusms: { cardKey: '', service: 'codex', baseUrl: 'https://zhusms.com' }, smscloud: { apiKey: '', baseUrl: 'https://smscloud.sbs/api/system', serviceCode: '', countryCode: [187] } },
+  phonePool: { enabled: false, maxBindingsPerPhone: 5, smsPollIntervalMs: 3000, smsMaxAttempts: 30, provider: 'local', zhusms: { cardKey: '', service: 'codex', baseUrl: 'https://zhusms.com' }, smscloud: { apiKey: '', baseUrl: 'https://smscloud.sbs/api/system', serviceCode: '', countryCode: [187] }, oapi: { baseUrl: 'https://sms.oapi.vip/api.php' } },
 })
 
 onMounted(async () => {
@@ -398,6 +437,10 @@ onMounted(async () => {
         smscloud: cfg.phonePool.smscloud
           ? { ...{ apiKey: '', baseUrl: 'https://smscloud.sbs/api/system', serviceCode: '', countryCode: [187] }, ...cfg.phonePool.smscloud }
           : { apiKey: '', baseUrl: 'https://smscloud.sbs/api/system', serviceCode: '', countryCode: [187] },
+        // v2.50.0: oapi provider 默认 baseUrl
+        oapi: cfg.phonePool.oapi
+          ? { ...{ baseUrl: 'https://sms.oapi.vip/api.php' }, ...cfg.phonePool.oapi }
+          : { baseUrl: 'https://sms.oapi.vip/api.php' },
       }
     } else {
       form.phonePool = {
@@ -408,6 +451,7 @@ onMounted(async () => {
         provider: 'local',
         zhusms: { cardKey: '', service: 'codex', baseUrl: 'https://zhusms.com' },
         smscloud: { apiKey: '', baseUrl: 'https://smscloud.sbs/api/system', serviceCode: '', countryCode: [187] },
+        oapi: { baseUrl: 'https://sms.oapi.vip/api.php' },
       }
     }
     // v2.47: 旧 number countryCode 归一为 [number] 兼容 multi-select
@@ -755,6 +799,38 @@ watch(() => form.phonePool.smscloud.serviceCode, (newCode) => {
   if (_inventoryTimer) clearTimeout(_inventoryTimer)
   if (!newCode || !form.phonePool.smscloud.apiKey) return
   _inventoryTimer = setTimeout(() => fetchInventory(newCode), 300)
+}, { immediate: true })
+
+// v2.50.0 oapi CDK 池
+const oapiCdkBulkText = ref('')
+const oapiCdks = ref([])
+
+async function loadOapiCdks() {
+  try {
+    const { data } = await api.get('/phone-pool/oapi/list')
+    oapiCdks.value = data.items || []
+  } catch (e) { ElMessage.error('加载失败：' + e.message) }
+}
+
+async function importOapiCdks() {
+  if (!oapiCdkBulkText.value.trim()) return ElMessage.warning('粘贴 CDK 后再导入')
+  try {
+    const { data } = await api.post('/phone-pool/oapi/import', { text: oapiCdkBulkText.value })
+    ElMessage.success(`导入 ${data.added} 个，跳过 ${data.skipped} 个`)
+    oapiCdkBulkText.value = ''
+    await loadOapiCdks()
+  } catch (e) { ElMessage.error('导入失败：' + (e?.response?.data?.error || e.message)) }
+}
+
+async function deleteOapiCdk(cdk) {
+  try {
+    await api.delete('/phone-pool/oapi/' + encodeURIComponent(cdk))
+    await loadOapiCdks()
+  } catch (e) { ElMessage.error('删除失败：' + e.message) }
+}
+
+watch(() => form.phonePool.provider, (v) => {
+  if (v === 'oapi') loadOapiCdks()
 }, { immediate: true })
 
 onBeforeUnmount(() => {

@@ -133,4 +133,47 @@ router.post('/smscloud/inventory', async (req, res) => {
   }
 });
 
+// v2.50.0 oapi CDK 池管理
+router.post('/oapi/import', (req, res) => {
+  try {
+    const text = String(req.body?.text || '');
+    const cfg = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
+    const baseUrl = cfg?.phonePool?.oapi?.baseUrl || 'https://sms.oapi.vip/api.php';
+    const oapiPool = require('../oapi-pool');
+    const r = oapiPool.importCdks(getRawDb(), text, baseUrl);
+    save();
+    res.json(r);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.get('/oapi/list', (req, res) => {
+  try {
+    const oapiPool = require('../oapi-pool');
+    res.json({ items: oapiPool.listCdks(getRawDb()) });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.delete('/oapi/:cdk', (req, res) => {
+  try {
+    const oapiPool = require('../oapi-pool');
+    oapiPool.deleteCdk(getRawDb(), req.params.cdk);
+    save();
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/oapi/test', async (req, res) => {
+  try {
+    const cdk = String(req.body?.cdk || '');
+    const cfg = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
+    const baseUrl = cfg?.phonePool?.oapi?.baseUrl || 'https://sms.oapi.vip/api.php';
+    if (!cdk) return res.status(400).json({ error: 'cdk required' });
+    const oapi = require('../oapi-provider');
+    const order = await oapi.takeOrder(cdk, baseUrl);
+    res.json({ ok: true, phone: order.phone, remaining: order.remaining });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e.message || e), code: e?._oapiCode });
+  }
+});
+
 module.exports = router
