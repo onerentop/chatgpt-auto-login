@@ -111,6 +111,31 @@ def poll_sms(sms_cfg, max_attempts=30, interval=3):
                     _log(f"smscloud poll error: {str(e)[:60]}")
             time.sleep(interval)
         return None
+    if provider == 'oapi':
+        cdk = sms_cfg.get('cdk')
+        base_url = sms_cfg.get('base_url', 'https://sms.oapi.vip/api.php')
+        if not cdk:
+            _log('oapi poll: missing cdk')
+            return None
+        from curl_cffi import requests as curl_requests
+        for attempt in range(max_attempts):
+            try:
+                r = curl_requests.post(
+                    f"{base_url}?action=open_get_sms",
+                    json={"code": cdk},
+                    headers={"X-API-Key": cdk, "Content-Type": "application/json"},
+                    timeout=15,
+                )
+                j = r.json()
+                if j.get('ok') and j.get('code'):
+                    _log(f"oapi OTP received: {j['code']}")
+                    return str(j['code'])
+                # ok=false 是正常轮询等待（"No new SMS received yet"），不打印
+            except Exception as e:
+                if attempt == 0:
+                    _log(f"oapi poll error: {str(e)[:60]}")
+            time.sleep(interval)
+        return None
     for _ in range(max_attempts):
         try:
             if provider == "local":

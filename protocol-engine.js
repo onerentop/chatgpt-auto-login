@@ -282,6 +282,46 @@ class ProtocolEngine extends EventEmitter {
         return {};
       }
     }
+    if (provider === 'oapi') {
+      const o = cfg.phonePool.oapi || {};
+      const baseUrl = o.baseUrl || 'https://sms.oapi.vip/api.php';
+      if (!baseUrl) {
+        console.log(`[protocol] oapi config incomplete (baseUrl 为空)`);
+        return {};
+      }
+      try {
+        const oapi = require('./server/oapi-provider');
+        const oapiPool = require('./server/oapi-pool');
+        const max = cfg.phonePool.maxBindingsPerPhone || 3;
+        const takeOrderFn = async (cdk, baseUrlArg) => {
+          return await oapi.takeOrder(cdk, baseUrlArg);
+        };
+        const acq = await oapiPool.acquireCdk(getRawDb(), email, max, baseUrl, takeOrderFn);
+        if (!acq) {
+          console.log(`[protocol] oapi acquire failed: CDK 池空 / 全 rejected / 全已满`);
+          return {};
+        }
+        try { save(); } catch {}
+        const cdkTail = acq.cdk.slice(-8);
+        console.log(`[protocol] oapi ${acq.reused ? '复用' : '新取'}号 ${acq.phone} (cdk=...${cdkTail}, remaining=${acq.remaining})`);
+        return {
+          phone: acq.phone,
+          smsConfig: { provider: 'oapi', cdk: acq.cdk, base_url: acq.baseUrl },
+          releaseFn: async () => {
+            try {
+              oapiPool.releaseBinding(getRawDb(), acq.cdk, email, acq.phone);
+              save();
+            } catch (e) {
+              console.log(`[protocol] oapi releaseBinding failed: ${e?.message?.slice(0, 60)}`);
+            }
+          },
+          meta: { provider: 'oapi', cdk: acq.cdk, baseUrl: acq.baseUrl },
+        };
+      } catch (e) {
+        console.log(`[protocol] oapi acquire failed: ${e?.message?.slice(0, 80)}`);
+        return {};
+      }
+    }
     // local
     const max = cfg.phonePool.maxBindingsPerPhone || 3;
     const allotted = phonePool.acquirePhone(getRawDb(), email, max, excludePhones);
@@ -357,6 +397,13 @@ class ProtocolEngine extends EventEmitter {
             deferredCancel.enqueue({ apiKey: meta.apiKey, baseUrl: meta.baseUrl, orderNo: meta.orderNo, takenAtMs: meta.takenAtMs });
             save();
           } catch (e) { console.log(`[protocol] smscloud markRejected err: ${e?.message}`); }
+        } else if (meta?.provider === 'oapi') {
+          // v2.50.0: oapi markRejected（不调 deferred-cancel — oapi 无 cancel API）
+          try {
+            const oapiPool = require('./server/oapi-pool');
+            oapiPool.markRejected(getRawDb(), meta.cdk);
+            save();
+          } catch (e) { console.log(`[protocol] oapi markRejected err: ${e?.message}`); }
         } else {
           if (releaseFn) try { await releaseFn(); } catch {}
           try { save(); } catch {}
