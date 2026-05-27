@@ -35,6 +35,11 @@ def _imap_socket_proxy():
     IMAP 不是 HTTP，必须显式 socket monkey-patch（urllib/curl_cffi 的 HTTPS_PROXY
     自动识别对 IMAP 协议无效）。
     """
+    # v2.50.2: IMAP_DIRECT=1 强制直连（绕过 sing-box）—— 某些 sing-box outbound 节点
+    # 对 outlook.office365.com:993 转发 SSL 握手 timeout，但本机直连可达时 IMAP 直连更稳。
+    if os.environ.get('IMAP_DIRECT') == '1':
+        yield
+        return
     proxy_url = os.environ.get('HTTPS_PROXY', 'http://127.0.0.1:7890')
     if not proxy_url or not _HAS_SOCKS:
         yield
