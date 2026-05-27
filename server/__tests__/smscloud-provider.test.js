@@ -128,3 +128,30 @@ test('cancelOrder: 其他错误透传抛错', async () => {
     );
   } finally { restore(); }
 });
+
+test('resendSms: 200 success 不抛错', async () => {
+  const restore = mockFetch(async (url) => {
+    assert.ok(url.includes('/public/sms/orders/resend/order-x'));
+    return { ok: true, json: async () => ({ code: 0, data: {} }) };
+  });
+  try {
+    delete require.cache[require.resolve('../smscloud-provider')];
+    const smscloud = require('../smscloud-provider');
+    await smscloud.resendSms('order-x', 'key', null);  // 不抛
+  } finally { restore(); }
+});
+
+test('resendSms: code !== 0 抛错带 _smscloudCode', async () => {
+  const restore = mockFetch(async () => ({
+    ok: true,
+    json: async () => ({ code: 1001, message: 'cannot get another sms' }),
+  }));
+  try {
+    delete require.cache[require.resolve('../smscloud-provider')];
+    const smscloud = require('../smscloud-provider');
+    await assert.rejects(
+      smscloud.resendSms('order-y', 'key', null),
+      (e) => e.message.includes('cannot get another sms') && e._smscloudCode === '1001'
+    );
+  } finally { restore(); }
+});

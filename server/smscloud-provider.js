@@ -79,6 +79,10 @@ async function finishOrder(orderNo, apiKey, baseUrl) {
   await _get(`${baseUrl || DEFAULT_BASE_URL}/public/sms/orders/finish/${orderNo}`, apiKey);
 }
 
+async function resendSms(orderNo, apiKey, baseUrl) {
+  await _get(`${baseUrl || DEFAULT_BASE_URL}/public/sms/orders/resend/${orderNo}`, apiKey);
+}
+
 async function getBalance(apiKey, baseUrl) {
   const data = await _get(`${baseUrl || DEFAULT_BASE_URL}/public/sms/balance`, apiKey);
   return data?.balance;
@@ -93,7 +97,7 @@ async function listCountries(apiKey, baseUrl) {
 }
 
 module.exports = {
-  takeOrder, pollOrderSms, cancelOrder, finishOrder, getBalance,
+  takeOrder, pollOrderSms, cancelOrder, finishOrder, resendSms, getBalance,
   listServices, listCountries,
   _DEFAULT_BASE_URL: DEFAULT_BASE_URL,  // test 用
 };
