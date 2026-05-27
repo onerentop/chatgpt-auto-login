@@ -85,3 +85,46 @@ test('listServices: 返回服务数组', async () => {
     assert.strictEqual(services[0].code, 'tg');
   } finally { restore(); }
 });
+
+test('cancelOrder: 成功返 { ok: true }', async () => {
+  const restore = mockFetch(async (url) => {
+    assert.ok(url.includes('/public/sms/orders/cancel/order-x'));
+    return { ok: true, json: async () => ({ code: 0, data: null }) };
+  });
+  try {
+    delete require.cache[require.resolve('../smscloud-provider')];
+    const smscloud = require('../smscloud-provider');
+    const r = await smscloud.cancelOrder('order-x', 'key', null);
+    assert.deepStrictEqual(r, { ok: true });
+  } finally { restore(); }
+});
+
+test('cancelOrder: <2 分钟 错误返 { ok:false, deferred:true } 不抛', async () => {
+  const restore = mockFetch(async () => ({
+    ok: true,
+    json: async () => ({ code: 1, message: '取消号码需要在下单 2 分钟后操作' }),
+  }));
+  try {
+    delete require.cache[require.resolve('../smscloud-provider')];
+    const smscloud = require('../smscloud-provider');
+    const r = await smscloud.cancelOrder('order-y', 'key', null);
+    assert.strictEqual(r.ok, false);
+    assert.strictEqual(r.deferred, true);
+    assert.match(r.reason, /2 ?分钟/);
+  } finally { restore(); }
+});
+
+test('cancelOrder: 其他错误透传抛错', async () => {
+  const restore = mockFetch(async () => ({
+    ok: true,
+    json: async () => ({ code: 1, message: 'order not found' }),
+  }));
+  try {
+    delete require.cache[require.resolve('../smscloud-provider')];
+    const smscloud = require('../smscloud-provider');
+    await assert.rejects(
+      smscloud.cancelOrder('order-z', 'key', null),
+      (e) => e.message.includes('order not found')
+    );
+  } finally { restore(); }
+});

@@ -63,7 +63,16 @@ async function pollOrderSms(orderNo, apiKey, baseUrl, { pollIntervalMs = 3000, m
 }
 
 async function cancelOrder(orderNo, apiKey, baseUrl) {
-  await _get(`${baseUrl || DEFAULT_BASE_URL}/public/sms/orders/cancel/${orderNo}`, apiKey);
+  try {
+    await _get(`${baseUrl || DEFAULT_BASE_URL}/public/sms/orders/cancel/${orderNo}`, apiKey);
+    return { ok: true };
+  } catch (e) {
+    const msg = e?.message || '';
+    if (msg.includes('2 分钟') || msg.includes('2分钟')) {
+      return { ok: false, deferred: true, reason: msg };
+    }
+    throw e;
+  }
 }
 
 async function finishOrder(orderNo, apiKey, baseUrl) {
