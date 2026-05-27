@@ -221,7 +221,30 @@ class ProtocolEngine extends EventEmitter {
           if (!order || !order.phone) throw new Error('takeOrder empty');
           return { orderNo: order.order_no, phone: order.phone, apiKey: s.apiKey, baseUrl };
         };
-        const acq = await smscloudPool.acquirePhone(getRawDb(), email, max, EXPIRY_MS, excludePhones, takeOrderFn);
+        // v2.45.1: 复用号 cache hit 要 resend 通知 smscloud advance 上游 channel；
+        // 失败则 markRejected + releaseBinding，循环重 acquire（拿新号或下一个 active cache 行）
+        const MAX_ACQUIRE_TRIES = 3;
+        let acq = null;
+        for (let i = 0; i < MAX_ACQUIRE_TRIES; i++) {
+          acq = await smscloudPool.acquirePhone(getRawDb(), email, max, EXPIRY_MS, excludePhones, takeOrderFn);
+          if (!acq.reused) break;
+          try {
+            await smscloud.resendSms(acq.orderNo, acq.apiKey, acq.baseUrl);
+            console.log(`[protocol] smscloud resend SMS for orderNo=${acq.orderNo}`);
+            break;
+          } catch (e) {
+            console.log(`[protocol] smscloud resend failed for ${acq.orderNo}: ${e?.message?.slice(0, 80)}, marking rejected`);
+            smscloudPool.markRejected(getRawDb(), acq.orderNo);
+            smscloudPool.releaseBinding(getRawDb(), acq.orderNo, email, acq.phone);
+            try { save(); } catch {}
+            acq = null;
+            // continue: next iteration re-acquires (rejected entry 已被 WHERE status='active' 跳过)
+          }
+        }
+        if (!acq) {
+          console.log(`[protocol] smscloud acquire exhausted after ${MAX_ACQUIRE_TRIES} tries`);
+          return {};
+        }
         try { save(); } catch {}
         console.log(`[protocol] smscloud ${acq.reused ? '复用' : '新取'}号 ${acq.phone} (orderNo=${acq.orderNo}, bindings=${acq.bindings_used})`);
         return {
