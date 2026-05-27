@@ -1,16 +1,23 @@
-// v2.44.1 — smscloud cancelOrder 延迟兜底
+// v2.45.0 — 扩展：tick 顺带跑 smscloud_phone_cache 过期清理 + cancel rejected entry
+// （v2.44.1 的 deferred queue cancel 行为保留）
+//
 // smscloud 平台要求 "下单 ≥2 分钟" 才能 cancel。OpenAI rate-limited 等场景
 // 秒级 fail，直接 cancel 会被平台拒。本模块把 cancel 任务排进 in-memory queue，
 // 后台 worker 每 30s 扫描，到 takenAtMs + 125s 后尝试 cancel；失败重试 3 次。
 // 进程死掉时 queue 丢失 —— smscloud 平台端最终自然 timeout。
+//
+// v2.45.0 新增：tick 顺带跑 smscloud-pool.expireOldEntries (清理过期 active entry)
+// + 扫 smscloud_phone_cache 中 status='rejected' 的行调 cancelOrder 并删除。
 
 const READY_DELAY_MS = 125_000;
 const TICK_INTERVAL_MS = 30_000;
 const MAX_ATTEMPTS = 3;
+const EXPIRY_MS = 18 * 60 * 1000;
 
 const _queue = new Map();  // orderNo -> { apiKey, baseUrl, orderNo, takenAtMs, attempts }
 let _timer = null;
 let _ticking = false;
+let _getDb = null;
 
 function enqueue({ apiKey, baseUrl, orderNo, takenAtMs }) {
   if (!orderNo) return;
@@ -19,7 +26,7 @@ function enqueue({ apiKey, baseUrl, orderNo, takenAtMs }) {
   console.log(`[smscloud-deferred-cancel] enqueued orderNo=${orderNo} takenAtMs=${takenAtMs}`);
 }
 
-async function _tickOnce() {
+async function _processDeferredQueue() {
   const smscloud = require('./smscloud-provider');
   const now = Date.now();
   for (const entry of [..._queue.values()]) {
@@ -39,12 +46,55 @@ async function _tickOnce() {
   }
 }
 
-function start() {
+async function _processCacheMaintenance(getDb) {
+  if (!getDb) return;
+  let db;
+  try { db = getDb(); } catch { return; }
+  if (!db) return;
+  const smscloudPool = require('./smscloud-pool');
+  const smscloud = require('./smscloud-provider');
+  // 1) 过期 active entry 清理
+  try {
+    const r = smscloudPool.expireOldEntries(db, EXPIRY_MS);
+    if (r.expired > 0) console.log(`[smscloud-deferred-cancel] expired ${r.expired} cache entry(s)`);
+  } catch (e) { console.log(`[smscloud-deferred-cancel] expire err: ${e?.message?.slice(0, 200)}`); }
+  // 2) rejected entry 调 cancelOrder + 删
+  let rejectedRows;
+  try {
+    rejectedRows = db.exec("SELECT order_no, api_key, base_url, taken_at_ms FROM smscloud_phone_cache WHERE status='rejected'");
+  } catch (e) { console.log(`[smscloud-deferred-cancel] query rejected err: ${e?.message?.slice(0, 200)}`); return; }
+  if (!rejectedRows.length || !rejectedRows[0].values.length) return;
+  for (const [orderNo, apiKey, baseUrl, takenAtMs] of rejectedRows[0].values) {
+    if (Date.now() < takenAtMs + READY_DELAY_MS) {
+      enqueue({ apiKey, baseUrl, orderNo, takenAtMs });
+      continue;
+    }
+    try {
+      const r = await smscloud.cancelOrder(orderNo, apiKey, baseUrl);
+      if (r && r.deferred) {
+        enqueue({ apiKey, baseUrl, orderNo, takenAtMs });
+        continue;
+      }
+      db.run("DELETE FROM smscloud_phone_cache WHERE order_no = ?", [orderNo]);
+      console.log(`[smscloud-deferred-cancel] cancelled+deleted rejected orderNo=${orderNo}`);
+    } catch (e) {
+      console.log(`[smscloud-deferred-cancel] rejected cancel orderNo=${orderNo} failed: ${e?.message?.slice(0, 200)}, leaving in cache`);
+    }
+  }
+}
+
+async function _tickOnce(getDb) {
+  await _processDeferredQueue();
+  await _processCacheMaintenance(getDb || _getDb);
+}
+
+function start(getDb) {
   if (_timer) return;
+  _getDb = getDb || null;
   _timer = setInterval(async () => {
     if (_ticking) return;
     _ticking = true;
-    try { await _tickOnce(); }
+    try { await _tickOnce(_getDb); }
     catch (e) { console.log(`[smscloud-deferred-cancel] tick error: ${e?.message?.slice(0, 200)}`); }
     finally { _ticking = false; }
   }, TICK_INTERVAL_MS);
@@ -54,6 +104,7 @@ function start() {
 
 function stop() {
   if (_timer) { clearInterval(_timer); _timer = null; }
+  _getDb = null;
 }
 
-module.exports = { enqueue, start, stop, _tickOnce, _queueForTest: () => _queue };
+module.exports = { enqueue, start, stop, _tickOnce, _processDeferredQueue, _processCacheMaintenance, _queueForTest: () => _queue };
