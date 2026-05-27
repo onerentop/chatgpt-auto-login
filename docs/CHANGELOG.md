@@ -1,5 +1,28 @@
 # Changelog
 
+## v2.45.0 — 2026-05-27 — smscloud 一号多绑号缓存
+
+### 核心改动
+
+- 新建 `server/smscloud-pool.js`：smscloud 接码方号本地缓存，SQL-first 风格仿 `phone-pool.js`。提供 `acquirePhone / markRejected / releaseBinding / expireOldEntries / listCache`。`acquirePhone` 优先复用 `smscloud_phone_cache` 表中未过期（18min buffer）+ 未满 `maxBindingsPerPhone` + 未与本 email 绑过的 entry，否则回退 `takeOrderFn` 拿新号。
+- 新表 `smscloud_phone_cache (order_no PK, phone, api_key, base_url, taken_at_ms, bindings_used, status)`，由 `server/db.js initDB` 建表 + 2 索引。
+- `protocol-engine.js _acquirePhoneForProtocol` smscloud branch 改调 `smscloudPool.acquirePhone(..., takeOrderFn)`；返对象新增 `meta: { provider, orderNo, apiKey, baseUrl, takenAtMs }` 让 `_finalizePhoneVerify` saturate 分支精确定位 cache entry。
+- `_finalizePhoneVerify` rate-limited / fraud-blocked / voip-blocked 分支按 `meta?.provider === 'smscloud'` 分流：调 `smscloudPool.markRejected(orderNo)` + `deferredCancel.enqueue(...)`，不调 releaseFn（保留 binding 记录避免本 session 内同账号重选同号）。
+- `server/smscloud-deferred-cancel.start(getDb)` 接口微变（v2.44.1 是无参）；`_tickOnce` 现在做三件事：v2.44.1 deferred queue cancel + cache 过期清理 + cancel rejected entry。`server/index.js` wire-up 同步改成 `start(() => require('./db').getRawDb())`。
+
+### 端到端验证
+
+- 跑 smscloud 配置下连续激活 2 个账号，日志：第 1 个 `smscloud 新取号 +XXX (orderNo=Y, bindings=1)`，第 2 个 `smscloud 复用号 +XXX (orderNo=Y, bindings=2)`，smscloud 余额仅扣 1 次。
+- 跑同账号触发 rate-limited，`smscloud_phone_cache` entry `status='rejected'`，下个账号 acquire 跳过该号 takeOrder 新号；deferred-cancel queue 含 orderNo；2 分钟后 cancel + 删 entry。
+- 单测新增 9 个 smscloud-pool + 2 个 deferred-cancel 扩展 + 2 个 protocol-engine 集成。`npm test` 333 tests / 311 pass / 22 skipped / 0 fail（无回归）。
+- 进程重启后未过期号继续命中 cache。
+
+### 对照前版（v2.44.1）
+
+- smscloud 取号从"每次 takeOrder 拿新号"改为"先查本地 cache 复用"，节省接码方余额。
+- `_finalizePhoneVerify` saturate 分支按 `meta.provider` 分流（v2.44.1 是按运行时 `provider` 变量，smscloud / zhusms 都走 releaseFn）。zhusms 行为不变。
+- `start()` 接口微变 —— 由调用方传 `getDb` getter 给 worker 用于 cache 维护。无 getDb 的旧调用方仍可调（cache 维护静默跳过），向后兼容。
+
 ## v2.44.1 — 2026-05-27 — 协议模式 add-phone rate-limited 换号 retry
 
 ### 核心改动

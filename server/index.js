@@ -34,7 +34,7 @@ app.use(express.json());
 
 // Init DB then mount routes
 initDB().then(() => {
-  require('./smscloud-deferred-cancel').start();
+  require('./smscloud-deferred-cancel').start(() => require('./db').getRawDb());
   const accountsRoutes = require('./routes/accounts');
   const executeRoutes = require('./routes/execute');
   const resultsRoutes = require('./routes/results');
