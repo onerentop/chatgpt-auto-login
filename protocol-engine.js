@@ -222,7 +222,9 @@ class ProtocolEngine extends EventEmitter {
           return { orderNo: order.order_no, phone: order.phone, apiKey: s.apiKey, baseUrl };
         };
         // v2.45.1: 复用号 cache hit 要 resend 通知 smscloud advance 上游 channel；
-        // 失败则 markRejected + releaseBinding，循环重 acquire（拿新号或下一个 active cache 行）
+        // 失败则 markRejected + releaseBinding，循环重 acquire（拿新号或下一个 active cache 行）。
+        // 内层循环而非返 {} 外层 retry：_finalizePhoneVerify:308-310 在 !phone && !lastReason 时
+        // 短路成 phonePoolEmpty，attempt 1 acquire 失败不会进 attempt 2/3；改外层会影响 zhusms/local。
         const MAX_ACQUIRE_TRIES = 3;
         let acq = null;
         for (let i = 0; i < MAX_ACQUIRE_TRIES; i++) {

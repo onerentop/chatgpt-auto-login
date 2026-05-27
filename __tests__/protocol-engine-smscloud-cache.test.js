@@ -157,3 +157,50 @@ test('SC3 resend 失败 → cache entry markRejected + retry 拿新号', async (
     }
   } finally { restoreCfg(); }
 });
+
+test('SC4 cache 有 2 entry，第 1 个 resend 失败 → 第 2 个 resend 成功 → 不调 takeOrder', async () => {
+  setupCfg();
+  try {
+    const { engine, rawDb, protoMod } = await freshEngine();
+    delete require.cache[require.resolve('../server/smscloud-provider')];
+    const smscloud = require('../server/smscloud-provider');
+    const origTake = smscloud.takeOrder, origResend = smscloud.resendSms;
+
+    // 预先注入 2 个 active cache entry（不同 orderNo / 不同 phone，takenAtMs 区分）
+    const now = Date.now();
+    rawDb.run("INSERT INTO smscloud_phone_cache (order_no, phone, api_key, base_url, taken_at_ms, bindings_used, status) VALUES ('A1', '+1AAA', 'k', 'b', ?, 1, 'active')", [now - 5000]);
+    rawDb.run("INSERT INTO smscloud_phone_cache (order_no, phone, api_key, base_url, taken_at_ms, bindings_used, status) VALUES ('A2', '+1BBB', 'k', 'b', ?, 1, 'active')", [now - 3000]);
+
+    let takeCalls = 0;
+    smscloud.takeOrder = async () => { takeCalls++; throw new Error('should NOT be called'); };
+
+    let resendCalls = [];
+    smscloud.resendSms = async (orderNo) => {
+      resendCalls.push(orderNo);
+      if (orderNo === 'A1') throw new Error('cannot get another sms');
+      // A2 resend 成功
+    };
+
+    const orig = protoMod.__runProtocolPhoneVerify;
+    protoMod.__setRunProtocolPhoneVerify(async () => ({ status: 'ok', tokens: { access_token: 'tok' } }));
+
+    try {
+      const r = await engine._finalizePhoneVerify({}, { email: 'sc4@x.com' });
+      assert.ok(r.tokens, 'tokens 拿到');
+      assert.strictEqual(takeCalls, 0, '内层循环消化 cache，不触发 takeOrder');
+      assert.deepStrictEqual(resendCalls, ['A1', 'A2'], '两次 resend：A1 失败 → A2 成功');
+      // A1 status='rejected'
+      const a1Row = rawDb.exec("SELECT status FROM smscloud_phone_cache WHERE order_no='A1'");
+      assert.strictEqual(a1Row[0].values[0][0], 'rejected');
+      // A2 status='active'，bindings_used=2 (1 + 本次)
+      const a2Row = rawDb.exec("SELECT status, bindings_used FROM smscloud_phone_cache WHERE order_no='A2'");
+      assert.strictEqual(a2Row[0].values[0][0], 'active');
+      assert.strictEqual(a2Row[0].values[0][1], 2);
+      try { await require('../server/db').save?.flush?.(); } catch {}
+    } finally {
+      smscloud.takeOrder = origTake;
+      smscloud.resendSms = origResend;
+      protoMod.__setRunProtocolPhoneVerify(orig);
+    }
+  } finally { restoreCfg(); }
+});
