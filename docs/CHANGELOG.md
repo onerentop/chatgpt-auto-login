@@ -1,5 +1,31 @@
 # Changelog
 
+## v2.45.1 — 2026-05-27 — smscloud 复用号补调 resend
+
+### 核心改动
+
+- `server/smscloud-provider.js` 加 `resendSms(orderNo, apiKey, baseUrl)` 接口，对应 smscloud 文档 `/public/sms/orders/resend/{id}`（"请求上游平台继续接收下一条短信验证码"）。
+- `protocol-engine.js _acquirePhoneForProtocol` smscloud branch 在 `acq.reused === true` 时调 resend advance 上游 channel；resend 失败 → `markRejected` 当前 cache entry + `releaseBinding` 撤本次 binding + **内层循环重 acquire**（`MAX_ACQUIRE_TRIES = 3`，cache SQL `WHERE status='active'` 自动跳过 rejected entry）。
+
+### Bug 修复
+
+- **v2.45.0 复用号路径拿到旧 OTP 导致 OpenAI 验证 invalid_code**：v2.45.0 设计假设"同 orderNo 反复 poll sync 能拿不同 SMS"，实际 `/orders/sync/{id}` 返"最新 cached SMS"语义；必须显式调 `/orders/resend/{id}` 才能让上游 channel advance 到下一条。本版本补回 resend 步。
+
+### 实现说明（spec 偏离）
+
+- spec §3.2 原设计是 resend 失败 → return `{}` → 外层 `_finalizePhoneVerify` retry。实测发现外层 `_finalizePhoneVerify:308-310` 在 attempt 1 `!phone && !lastReason` 时直接返 `phonePoolEmpty`，不进 attempt 2/3。改外层会影响 zhusms/local 路径，超 spec 范围。改成**内层循环**：把 acquire+resend 处理包成 `MAX_ACQUIRE_TRIES=3` 循环，行为等价（resend 失败后能换新号 retry）且改动严格限制在 smscloud branch 内。spec 已同步更新。
+
+### 端到端验证
+
+- 跑 smscloud 配置下连续激活 2 个账号：第 1 个 `smscloud 新取号 +XXX`（无 resend 日志），第 2 个 `smscloud resend SMS for orderNo=...` + `smscloud 复用号 +XXX`，OpenAI 验证通过。
+- 模拟 `canGetAnotherSms=false`：日志含 `smscloud resend failed ... marking rejected`，**同 attempt 内**内层循环触发 takeOrder 拿新号。
+- 单测 + 集成测试新增 4 个（2 smscloud-provider + 2 protocol-engine SC3/SC4）+ SC1 改造，`npm test` 全绿。
+
+### 对照前版（v2.45.0）
+
+- v2.45.0 引入 smscloud cache 复用号但漏 resend 步。本版补 resend 调用 + 失败 fallback（内层循环 markRejected + 重 acquire）。
+- `protocol_phone_verify.py` 不变 —— Python 仍按 sync poll，resend 由 JS 侧（acquire 阶段）调。
+
 ## v2.45.0 — 2026-05-27 — smscloud 一号多绑号缓存
 
 ### 核心改动
