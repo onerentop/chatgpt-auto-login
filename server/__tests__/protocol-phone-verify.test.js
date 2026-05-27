@@ -131,20 +131,20 @@ test('池空 → phonePoolEmpty', async () => {
   } finally { env.cleanup(); }
 });
 
-test('sms-timeout 单次 break → release + phoneVerifyFail', async () => {
+test('sms-timeout 换号 retry 跑满 MAX_ATTEMPTS（v2.49）', async () => {
   const env = setupTestEnv({ phonePool: { enabled: true, provider: 'local', maxBindingsPerPhone: 3 } });
   try {
     let spawnCount = 0;
     let releaseCount = 0;
     const engine = await mkEngine({
       runResult: async () => { spawnCount++; return { status: 'sms-timeout' }; },
-      localQueue: [{ phone: '+1' }, { phone: '+2' }],
+      localQueue: [{ phone: '+1' }, { phone: '+2' }, { phone: '+3' }],
       releaseFn: async () => { releaseCount++; },
     });
     const r = await engine._finalizePhoneVerify({}, { email: 'a@b.c' });
     assert.deepEqual(r, { phoneVerifyFail: 'sms-timeout' });
-    assert.equal(spawnCount, 1, 'sms-timeout 不重试');
-    assert.equal(releaseCount, 1);
+    assert.equal(spawnCount, 3, 'v2.49: sms-timeout 每 attempt 都换号 retry，跑满 3 次');
+    assert.equal(releaseCount, 3, '每次 attempt 都 release');
   } finally { env.cleanup(); }
 });
 

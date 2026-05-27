@@ -364,8 +364,17 @@ class ProtocolEngine extends EventEmitter {
         lastReason = result.status;
         continue;
       }
-      if (result.status === 'sms-timeout' || result.status === 'validate-error' || result.status === 'submit-error') {
-        // OpenAI 那边号没真用（spawn 失败 / SMS 没到 / OpenAI 拒验证码）→ release
+      if (result.status === 'sms-timeout') {
+        // v2.49: sms-timeout 走换号 retry —— OpenAI 已发 SMS 但 smscloud 上游 channel
+        // 未收到（号被 carrier 屏蔽 / smscloud 平台延迟），换号有概率成功（attempt 外层 + countryCode list）。
+        console.log(`[protocol] add-phone sms-timeout for ${phone}, retry with new phone`);
+        if (releaseFn) try { await releaseFn(); } catch {}
+        try { save(); } catch {}
+        lastReason = 'sms-timeout';
+        continue;
+      }
+      if (result.status === 'validate-error' || result.status === 'submit-error') {
+        // OpenAI 那边号没真用（spawn 失败 / OpenAI 拒验证码）→ release，不 retry
         // v2.40.2 fix：原 submit-error 也归 post-validate-error 错（spawn 失败时号根本没用上）
         console.log(`[protocol] add-phone ${result.status}: ${(result.detail || '').slice(0, 500)}`);
         if (releaseFn) try { await releaseFn(); } catch {}
