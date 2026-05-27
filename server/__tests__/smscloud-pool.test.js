@@ -55,7 +55,7 @@ test('S1 acquirePhone: cache miss → 调 takeOrderFn + 写 cache + binding', as
   assert.strictEqual(r.phone, '+11111111111');
   assert.strictEqual(r.orderNo, 'O1');
   assert.ok(r.taken_at_ms > 0);
-  const row = db.exec('SELECT bindings_used FROM smscloud_phone_cache WHERE order_no=\"O1\"');
+  const row = db.exec("SELECT bindings_used FROM smscloud_phone_cache WHERE order_no='O1'");
   assert.strictEqual(row[0].values[0][0], 1);
   const bind = db.exec("SELECT * FROM phone_bindings WHERE email='a@b.com'");
   assert.strictEqual(bind[0].values.length, 1);
@@ -70,7 +70,7 @@ test('S2 acquirePhone: cache hit → 不调 takeOrderFn + 复用号', async () =
   assert.strictEqual(called, 0);
   assert.strictEqual(r.reused, true);
   assert.strictEqual(r.phone, '+12222222222');
-  const row = db.exec('SELECT bindings_used FROM smscloud_phone_cache WHERE order_no=\"O2\"');
+  const row = db.exec("SELECT bindings_used FROM smscloud_phone_cache WHERE order_no='O2'");
   assert.strictEqual(row[0].values[0][0], 1);
 });
 
