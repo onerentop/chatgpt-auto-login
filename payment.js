@@ -786,8 +786,12 @@ async function _doAutoPayment(page, phoneConfig, signal) {
   // Wait for PayPal to finish processing and redirect back to pay.openai.com.
   // Also fail-fast on paypal.com/checkoutweb/genericError (risk-control rejection)
   // — saves ~30s vs waiting for the full 30s loop.
+  // v2.55: 见 redirect_status=succeeded 仅表示 Stripe 接受 PayPal，OpenAI 后端还在
+  // 异步激活订阅 + 跳转 chatgpt.com（5-15s）。立刻进 PKCE 会拿到 plan=free token。
+  // 改：见 redirect_status=succeeded 标 success 保底但继续等 chatgpt.com 跳转。
   console.log('    [Pay] Waiting for payment redirect...');
   let paymentSuccess = false;
+  let stripeAccepted = false;
   let genericError = false;
   for (let w = 0; w < 15; w++) {
     if (signal?.aborted) throw _abortError();
@@ -795,12 +799,15 @@ async function _doAutoPayment(page, phoneConfig, signal) {
     let currentUrl;
     try { currentUrl = page.url(); } catch { break; }
     if (currentUrl.includes('pay.openai.com') && currentUrl.includes('redirect_status=succeeded')) {
-      console.log('    [Pay] Payment succeeded! (redirect_status=succeeded)');
-      paymentSuccess = true;
-      break;
+      if (!stripeAccepted) {
+        console.log('    [Pay] Stripe accepted PayPal, waiting for OpenAI to activate subscription + redirect to chatgpt.com...');
+        stripeAccepted = true;
+        paymentSuccess = true;  // 保底：30s loop 跑完仍未跳 chatgpt.com 也算 success
+      }
+      continue;
     }
     if (currentUrl.includes('chatgpt.com')) {
-      console.log('    [Pay] Redirected to chatgpt.com — payment likely succeeded');
+      console.log('    [Pay] Redirected to chatgpt.com — subscription activated');
       paymentSuccess = true;
       break;
     }
