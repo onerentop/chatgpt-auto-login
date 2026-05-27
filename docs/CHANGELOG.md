@@ -1,5 +1,24 @@
 # Changelog
 
+## v2.44.1 — 2026-05-27 — 协议模式 add-phone rate-limited 换号 retry
+
+### 核心改动
+
+- `protocol-engine.js _finalizePhoneVerify`：rate-limited / fraud-blocked / voip-blocked 三个 status 从“一次性 fail”改为“换号 retry”，复用现有 `triedPhones` + `MAX_ATTEMPTS=3` 框架。最终 fail 时 `phoneVerifyFail` 反映 lastReason（如 `rate-limited`）而非通用 `all-phones-rejected`，前端 status 映射保持 `phone_verify_fail` 不变。
+- `server/smscloud-provider.js cancelOrder`：检测“取消号码需要在下单 2 分钟后操作”中文消息返 `{ ok:false, deferred:true, reason }`，不再抛错。其他错误透传。
+- 新增 `server/smscloud-deferred-cancel.js`：in-memory queue + 30s tick worker，下单 ≥125s 后重试 cancelOrder；max 3 attempts 后丢弃。tick 加重入 guard。`server/index.js` 在 initDB 后 start，SIGINT/SIGTERM 时 stop。
+- smscloud 取号闭包 releaseFn 收到 `deferred:true` 时自动 enqueue 到 deferred 队列；进程崩溃则 queue 丢失，订单需等 smscloud 平台自然 timeout 释放。
+
+### 端到端验证
+
+- 协议模式 attempt 1 rate-limited 后日志出现 `attempt 2/3 (...)` 走新号，不再直接 phone_verify_fail。
+- smscloud rate-limited 场景看到 `[smscloud-deferred-cancel] enqueued orderNo=...`，2-3 分钟后 `cancelled orderNo=... ok`。
+- 单元/集成测试新增 10 个（4 deferred-cancel + 3 cancelOrder + 3 protocol-engine retry）全绿；`npm test` 298 pass / 0 fail / 22 skipped（skip 项与本版本无关）。
+
+### 对照前版（v2.44.0）
+
+- `_finalizePhoneVerify` rate-limited 分支原注释里“该号在 OpenAI 那边已被 flag，立刻 break + markSaturated”的设计假设已不成立 —— 实际线上 rate-limited 主要由账号/IP 级频率限制触发，换号能继续。本版调整。
+
 ## v2.44.0 — 2026-05-27
 
 ### 新增 smscloud 手机号 SMS provider
