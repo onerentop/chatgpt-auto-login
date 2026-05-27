@@ -34,6 +34,7 @@ app.use(express.json());
 
 // Init DB then mount routes
 initDB().then(() => {
+  require('./smscloud-deferred-cancel').start();
   const accountsRoutes = require('./routes/accounts');
   const executeRoutes = require('./routes/execute');
   const resultsRoutes = require('./routes/results');
@@ -146,6 +147,7 @@ async function gracefulShutdown(signal) {
     const db = require('./db');
     if (db.logsDB?.flush) db.logsDB.flush();
     if (db.livenessLogsDB?.clear) {} // intentionally not clearing on shutdown
+    require('./smscloud-deferred-cancel').stop();
     if (db.save?.flush) await db.save.flush();
   } catch (e) {
     console.error('[shutdown] flush failed:', e.message);
