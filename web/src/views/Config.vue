@@ -76,7 +76,7 @@
               <el-button size="small" :loading="loadingSmscloudServices" @click="fetchSmscloudServices" style="margin-left: 8px">拉服务列表</el-button>
             </el-form-item>
             <el-form-item label="国家">
-              <el-select v-model="form.phonePool.smscloud.countryCode" placeholder="先拉国家列表" filterable clearable style="width: 240px">
+              <el-select v-model="form.phonePool.smscloud.countryCode" placeholder="选 1+ 国家（按顺序作为 retry fallback）" filterable multiple clearable style="width: 360px">
                 <el-option v-for="c in smscloudCountries" :key="c.id" :label="`${c.chn}${c.eng ? ' / ' + c.eng : ''} (id=${c.id})${c.retailPrice != null ? ' · ¥' + c.retailPrice + ' / ' + c.count + '号' : ''}`" :value="c.id" />
               </el-select>
               <el-button size="small" :loading="loadingSmscloudCountries" @click="fetchSmscloudCountries" style="margin-left: 8px">拉国家列表</el-button>
@@ -360,7 +360,7 @@ const form = reactive({
   proxyJpEnabled: true,
   proxyJpKeyword: 'KDDI',
   proxyJpWhitelist: [],
-  phonePool: { enabled: false, maxBindingsPerPhone: 5, smsPollIntervalMs: 3000, smsMaxAttempts: 30, provider: 'local', zhusms: { cardKey: '', service: 'codex', baseUrl: 'https://zhusms.com' }, smscloud: { apiKey: '', baseUrl: 'https://smscloud.sbs/api/system', serviceCode: '', countryCode: 187 } },
+  phonePool: { enabled: false, maxBindingsPerPhone: 5, smsPollIntervalMs: 3000, smsMaxAttempts: 30, provider: 'local', zhusms: { cardKey: '', service: 'codex', baseUrl: 'https://zhusms.com' }, smscloud: { apiKey: '', baseUrl: 'https://smscloud.sbs/api/system', serviceCode: '', countryCode: [187] } },
 })
 
 onMounted(async () => {
@@ -396,8 +396,8 @@ onMounted(async () => {
           : { cardKey: '', service: 'codex', baseUrl: 'https://zhusms.com' },
         // v2.44.0: smscloud provider 默认 baseUrl + countryCode=187 (US)
         smscloud: cfg.phonePool.smscloud
-          ? { ...{ apiKey: '', baseUrl: 'https://smscloud.sbs/api/system', serviceCode: '', countryCode: 187 }, ...cfg.phonePool.smscloud }
-          : { apiKey: '', baseUrl: 'https://smscloud.sbs/api/system', serviceCode: '', countryCode: 187 },
+          ? { ...{ apiKey: '', baseUrl: 'https://smscloud.sbs/api/system', serviceCode: '', countryCode: [187] }, ...cfg.phonePool.smscloud }
+          : { apiKey: '', baseUrl: 'https://smscloud.sbs/api/system', serviceCode: '', countryCode: [187] },
       }
     } else {
       form.phonePool = {
@@ -407,8 +407,12 @@ onMounted(async () => {
         smsMaxAttempts: 30,
         provider: 'local',
         zhusms: { cardKey: '', service: 'codex', baseUrl: 'https://zhusms.com' },
-        smscloud: { apiKey: '', baseUrl: 'https://smscloud.sbs/api/system', serviceCode: '', countryCode: 187 },
+        smscloud: { apiKey: '', baseUrl: 'https://smscloud.sbs/api/system', serviceCode: '', countryCode: [187] },
       }
+    }
+    // v2.47: 旧 number countryCode 归一为 [number] 兼容 multi-select
+    if (form.phonePool.smscloud.countryCode != null && !Array.isArray(form.phonePool.smscloud.countryCode)) {
+      form.phonePool.smscloud.countryCode = [form.phonePool.smscloud.countryCode]
     }
   } catch (err) {
     console.error('Failed to load config:', err)

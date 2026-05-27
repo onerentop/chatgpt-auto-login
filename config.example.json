@@ -27,7 +27,7 @@
       "apiKey": "",
       "baseUrl": "https://smscloud.sbs/api/system",
       "serviceCode": "",
-      "countryCode": 187
+      "countryCode": [187]
     }
   }
 }
