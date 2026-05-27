@@ -99,6 +99,20 @@ async function initDB() {
     );
     CREATE INDEX IF NOT EXISTS idx_smscloud_phone_cache_phone ON smscloud_phone_cache(phone);
     CREATE INDEX IF NOT EXISTS idx_smscloud_phone_cache_active ON smscloud_phone_cache(status, taken_at_ms);
+
+    -- v2.50.0 oapi CDK 池
+    CREATE TABLE IF NOT EXISTS oapi_cdk_pool (
+      cdk           TEXT PRIMARY KEY,
+      phone         TEXT,
+      base_url      TEXT NOT NULL,
+      taken_at_ms   INTEGER,
+      bindings_used INTEGER NOT NULL DEFAULT 0,
+      remaining     INTEGER,
+      status        TEXT NOT NULL DEFAULT 'available',
+      created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_oapi_cdk_pool_status ON oapi_cdk_pool(status);
+    CREATE INDEX IF NOT EXISTS idx_oapi_cdk_pool_phone ON oapi_cdk_pool(phone);
   `);
 
   // Wire blacklist persistence module to the live DB
