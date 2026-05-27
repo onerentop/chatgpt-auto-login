@@ -226,11 +226,14 @@ const visibleGroups = computed(() => groupAccountsByStatus(filteredRows.value))
 
 // v2.34.0: 平铺视图的排序计算 —— 按 GROUP_ORDER 业务优先序，
 // 同 status 内保持稳定排序（filteredRows 的插入顺序）
+// v2.52: 用 _groupStatus snapshot 排（与分组模式 v2.34.0 一致），让执行后行不跳位置
 const flatSortedRows = computed(() => {
   const orderIndex = new Map(GROUP_ORDER.map((s, i) => [s, i]))
   return [...filteredRows.value].sort((a, b) => {
-    const ia = orderIndex.has(a._status) ? orderIndex.get(a._status) : 999
-    const ib = orderIndex.has(b._status) ? orderIndex.get(b._status) : 999
+    const sa = a._groupStatus || a._status
+    const sb = b._groupStatus || b._status
+    const ia = orderIndex.has(sa) ? orderIndex.get(sa) : 999
+    const ib = orderIndex.has(sb) ? orderIndex.get(sb) : 999
     return ia - ib
   })
 })
