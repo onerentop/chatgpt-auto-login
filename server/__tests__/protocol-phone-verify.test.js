@@ -100,7 +100,7 @@ test('local 1 拒 + 2 成功 → 返 {tokens}', async () => {
   } finally { env.cleanup(); }
 });
 
-test('local 3 attempt 全拒 → all-phones-rejected', async () => {
+test('local 3 attempt 全拒 → phoneVerifyFail=lastReason（v2.44.1 lastReason 兜底）', async () => {
   const env = setupTestEnv({ phonePool: { enabled: true, provider: 'local', maxBindingsPerPhone: 3 } });
   try {
     let spawnCount = 0;
@@ -111,7 +111,7 @@ test('local 3 attempt 全拒 → all-phones-rejected', async () => {
       releaseFn: async () => { releaseCount++; },
     });
     const r = await engine._finalizePhoneVerify({}, { email: 'a@b.c' });
-    assert.deepEqual(r, { phoneVerifyFail: 'all-phones-rejected' });
+    assert.deepEqual(r, { phoneVerifyFail: 'phone-rejected-by-openai' });
     assert.equal(spawnCount, 3);
     assert.equal(releaseCount, 3);
   } finally { env.cleanup(); }

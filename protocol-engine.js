@@ -212,6 +212,7 @@ class ProtocolEngine extends EventEmitter {
       }
       try {
         const smscloud = require('./server/smscloud-provider');
+        const deferredCancel = require('./server/smscloud-deferred-cancel');
         const order = await smscloud.takeOrder(
           s.apiKey,
           s.baseUrl || 'https://smscloud.sbs/api/system',
@@ -219,17 +220,23 @@ class ProtocolEngine extends EventEmitter {
           s.countryCode,
         );
         if (!order || !order.phone) return {};
+        const takenAtMs = Date.now();
+        const apiKey = s.apiKey;
+        const baseUrl = s.baseUrl || 'https://smscloud.sbs/api/system';
         return {
           phone: order.phone,
           smsConfig: {
             provider: 'smscloud',
             order_no: order.order_no,
-            api_key: s.apiKey,
-            base_url: s.baseUrl || 'https://smscloud.sbs/api/system',
+            api_key: apiKey,
+            base_url: baseUrl,
           },
           releaseFn: async () => {
             try {
-              await smscloud.cancelOrder(order.order_no, s.apiKey, s.baseUrl || 'https://smscloud.sbs/api/system');
+              const r = await smscloud.cancelOrder(order.order_no, apiKey, baseUrl);
+              if (r && r.deferred) {
+                deferredCancel.enqueue({ apiKey, baseUrl, orderNo: order.order_no, takenAtMs });
+              }
             } catch (e) {
               console.log(`[protocol] smscloud cancelOrder failed: ${e?.message?.slice(0, 60)}`);
             }
@@ -296,11 +303,10 @@ class ProtocolEngine extends EventEmitter {
         continue;
       }
       if (result.status === 'rate-limited' || result.status === 'fraud-blocked' || result.status === 'voip-blocked') {
-        // v2.40.4: OpenAI 返 fraud_guard / rate_limit_exceeded —— 该号在 OpenAI 那边
-        // 已被 flag（可能多账号过用太多 SMS）。其他账号再 acquire 该号也会被拒。
-        // 修复策略：把号标记 saturated（bindings_used → max），让 acquirePhone SQL 的
-        // `WHERE bindings_used < max` 自动排除给所有后续账号用。本 attempt binding 保留。
-        console.log(`[protocol] block-and-saturate ${result.status} for ${phone}: ${(result.detail || '').slice(0, 500)}`);
+        // v2.44.1: rate-limited / fraud-blocked / voip-blocked 现在走换号 retry。
+        // local provider 保留 markPhoneSaturated（持久黑名单避免后续账号再选到）。
+        // smscloud/zhusms 调 releaseFn 释放当前订单。retry 由外层 for-loop 接管。
+        console.log(`[protocol] ${result.status} for ${phone}: ${(result.detail || '').slice(0, 500)}, retry with new phone`);
         if (provider === 'local') {
           try {
             const max = cfg.phonePool.maxBindingsPerPhone || 3;
@@ -308,11 +314,11 @@ class ProtocolEngine extends EventEmitter {
             save();
           } catch (e) { console.log(`[protocol] markPhoneSaturated err: ${e?.message}`); }
         } else {
-          // zhusms: 订单释放（zhusms 用 cancelOrder 不消耗余额，号是接码方动态分配的）
           if (releaseFn) try { await releaseFn(); } catch {}
           try { save(); } catch {}
         }
-        return { phoneVerifyFail: result.status };
+        lastReason = result.status;
+        continue;
       }
       if (result.status === 'sms-timeout' || result.status === 'validate-error' || result.status === 'submit-error') {
         // OpenAI 那边号没真用（spawn 失败 / SMS 没到 / OpenAI 拒验证码）→ release
@@ -327,7 +333,7 @@ class ProtocolEngine extends EventEmitter {
       return { phoneVerifyFail: 'post-validate-error' };
     }
 
-    return { phoneVerifyFail: 'all-phones-rejected' };
+    return { phoneVerifyFail: lastReason || 'all-phones-rejected' };
   }
 
   // Run PKCE and emit final status. Used by both already-Plus and post-payment branches.
