@@ -147,12 +147,19 @@ async function getPaymentLink(gw, accessToken) {
   await interact({ type: 3, nonce: nn(), guild_id: GUILD_ID, channel_id: CHANNEL_ID, message_flags: 0, message_id: HUB_MESSAGE_ID, application_id: APP_ID, session_id: gw.sessionId, data: { component_type: 2, custom_id: 'hub:chatgpt' } });
   const menu = await menuP;
   let btnId = null;
+  // v2.56 DEBUG: dump 所有 button labels 用于诊断 "US Plus button not found"
+  const allLabels = [];
   for (const r of (menu.components || [])) {
     for (const c of (r.components || [])) {
-      if (c.label?.includes('美区') && c.label?.includes('PLUS') && c.label?.includes('免费试用')) btnId = c.custom_id;
+      if (c.label) allLabels.push(c.label);
+      // v2.56: 卖家文案 "⚡ 美区 PLUS 试用链接"（无"免费"二字），放宽 match 到 "试用" 子串
+      if (c.label?.includes('美区') && c.label?.includes('PLUS') && c.label?.includes('试用')) btnId = c.custom_id;
     }
   }
-  if (!btnId) throw new Error('US Plus button not found');
+  if (!btnId) {
+    console.log(`[Discord] hub menu buttons: ${JSON.stringify(allLabels)}`);
+    throw new Error('US Plus button not found');
+  }
   const modalP = waitFor(gw, 'INTERACTION_MODAL_CREATE', () => true, 15000);
   await new Promise(r => setTimeout(r, 1500));
   await interact({ type: 3, nonce: nn(), guild_id: GUILD_ID, channel_id: CHANNEL_ID, message_flags: 64, message_id: menu.id, application_id: APP_ID, session_id: gw.sessionId, data: { component_type: 2, custom_id: btnId } });
