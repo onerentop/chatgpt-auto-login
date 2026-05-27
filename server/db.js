@@ -86,6 +86,7 @@ async function initDB() {
     );
     CREATE INDEX IF NOT EXISTS idx_phone_bindings_phone ON phone_bindings(phone);
     CREATE INDEX IF NOT EXISTS idx_phone_bindings_email ON phone_bindings(email);
+    -- v2.45.0 smscloud phone cache
     CREATE TABLE IF NOT EXISTS smscloud_phone_cache (
       order_no       TEXT PRIMARY KEY,
       phone          TEXT NOT NULL,
