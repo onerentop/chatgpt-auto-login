@@ -78,7 +78,11 @@ async function _processCacheMaintenance(getDb) {
       db.run("DELETE FROM smscloud_phone_cache WHERE order_no = ?", [orderNo]);
       console.log(`[smscloud-deferred-cancel] cancelled+deleted rejected orderNo=${orderNo}`);
     } catch (e) {
-      console.log(`[smscloud-deferred-cancel] rejected cancel orderNo=${orderNo} failed: ${e?.message?.slice(0, 200)}, leaving in cache`);
+      // v2.49: cancel 失败 force-delete cache row 避免无限 spam（脏数据 / 订单已 expire 等）
+      // 代价：smscloud 平台订单可能未真正 cancel，但 entry status=rejected 已经不再业务复用，
+      // 平台端订单自然 timeout 释放。优于无限 retry log spam。
+      console.log(`[smscloud-deferred-cancel] rejected cancel orderNo=${orderNo} failed: ${e?.message?.slice(0, 200)}, force-deleting cache row`);
+      try { db.run("DELETE FROM smscloud_phone_cache WHERE order_no = ?", [orderNo]); } catch {}
     }
   }
 }
