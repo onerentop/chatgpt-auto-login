@@ -96,8 +96,13 @@ async function listCountries(apiKey, baseUrl) {
   return await _get(`${baseUrl || DEFAULT_BASE_URL}/public/sms/countries`, apiKey);
 }
 
+async function getInventory(apiKey, baseUrl, serviceCode) {
+  const url = `${baseUrl || DEFAULT_BASE_URL}/public/sms/getInventory?serviceCode=${encodeURIComponent(serviceCode)}`;
+  return await _get(url, apiKey);
+}
+
 module.exports = {
   takeOrder, pollOrderSms, cancelOrder, finishOrder, resendSms, getBalance,
-  listServices, listCountries,
+  listServices, listCountries, getInventory,
   _DEFAULT_BASE_URL: DEFAULT_BASE_URL,  // test 用
 };

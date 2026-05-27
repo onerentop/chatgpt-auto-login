@@ -155,3 +155,36 @@ test('resendSms: code !== 0 抛错带 _smscloudCode', async () => {
     );
   } finally { restore(); }
 });
+
+test('getInventory: 返 array', async () => {
+  const restore = mockFetch(async (url) => {
+    assert.ok(url.includes('/public/sms/getInventory?serviceCode=tg'));
+    return { ok: true, json: async () => ({ code: 0, data: [
+      { country: 187, countryName: '美国', count: 365, retailPrice: 0.56, freePriceMap: '{}' },
+      { country: 44, countryName: '英国', count: 25, retailPrice: 3.2, freePriceMap: '{}' },
+    ] }) };
+  });
+  try {
+    delete require.cache[require.resolve('../smscloud-provider')];
+    const smscloud = require('../smscloud-provider');
+    const inv = await smscloud.getInventory('key', null, 'tg');
+    assert.strictEqual(inv.length, 2);
+    assert.strictEqual(inv[0].country, 187);
+    assert.strictEqual(inv[0].retailPrice, 0.56);
+  } finally { restore(); }
+});
+
+test('getInventory: serviceCode 不存在抛错', async () => {
+  const restore = mockFetch(async () => ({
+    ok: true,
+    json: async () => ({ code: 1, message: 'service not found' }),
+  }));
+  try {
+    delete require.cache[require.resolve('../smscloud-provider')];
+    const smscloud = require('../smscloud-provider');
+    await assert.rejects(
+      smscloud.getInventory('key', null, 'unknown'),
+      (e) => e.message.includes('service not found')
+    );
+  } finally { restore(); }
+});
