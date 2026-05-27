@@ -836,7 +836,8 @@ def main():
             _log(f"Following auth continue: {final_continue[:60]}...")
             try:
                 r = session.get(final_continue, headers={"Accept": "text/html", "Upgrade-Insecure-Requests": "1"}, allow_redirects=True, timeout=30)
-            except Exception: pass
+            except Exception as e:
+                _log(f"Follow auth continue error: {str(e)[:80]}")
             time.sleep(1)
             try:
                 r = session.get(f"{BASE}/api/auth/session", headers={"Accept": "application/json"}, timeout=15)
@@ -846,6 +847,13 @@ def main():
 
         if not access_token:
             page_info = page_type or (otp_page if need_otp else "unknown")
+            # v2.51: enroll-passkey 是 OpenAI 首次 create_account 概率触发的页面，
+            # 同账号重新 login（走 existing-account OTP）会跳过。Node 端 retry 一次。
+            is_passkey = "passkey" in str(final_continue).lower() or "passkey" in page_info.lower()
+            if is_passkey:
+                _log(f"enroll-passkey detected (page={page_info}), returning passkey_retry for Node-side retry")
+                print(json.dumps({"status": "passkey_retry", "page": page_info}))
+                return
             _log(f"No accessToken (page: {page_info})")
             print(json.dumps({"status": "error", "error": f"Auth OK but no accessToken (page: {page_info})"}))
             return

@@ -25,7 +25,23 @@ const PYTHON_SCRIPT = path.join(ROOT, 'protocol_register.py');
 const PYTHON_PHONE_VERIFY_SCRIPT = path.join(ROOT, 'protocol_phone_verify.py');
 
 // ========== Python subprocess ==========
-function runProtocolRegister(account, engine) {
+// v2.51: enroll-passkey 自动 retry wrapper —— Python 返 passkey_retry 时 spawn 第 2 次
+async function runProtocolRegister(account, engine) {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const result = await _runProtocolRegisterOnce(account, engine);
+    if (result.status === 'passkey_retry') {
+      if (attempt === 0) {
+        console.log(`[1/1] enroll-passkey detected (page=${result.page}), retrying once in 2s (OpenAI 首次 create_account 概率触发)`);
+        await new Promise(r => setTimeout(r, 2000));
+        continue;
+      }
+      throw new Error('enroll-passkey retry exhausted (2 attempts)');
+    }
+    return result;
+  }
+}
+
+function _runProtocolRegisterOnce(account, engine) {
   return new Promise((resolve, reject) => {
     const py = spawn('py', ['-3', PYTHON_SCRIPT], { cwd: ROOT, stdio: ['pipe', 'pipe', 'pipe'] });
     if (engine) engine._pyProc = py;
@@ -52,6 +68,7 @@ function runProtocolRegister(account, engine) {
         if (result.status === 'success') resolve(result);
         else if (result.status === 'deactivated') resolve(result);  // surface to caller
         else if (result.status === 'tls_failure') resolve(result);  // surface to caller — engine handles retry
+        else if (result.status === 'passkey_retry') resolve(result);  // v2.51: surface for outer retry
         else reject(new Error(result.error || 'Protocol register failed'));
       } catch { reject(new Error(stderr.slice(-200) || `Python exit ${code}`)); }
     });
