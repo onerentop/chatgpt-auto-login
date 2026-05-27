@@ -92,4 +92,15 @@ function deleteCdk(db, cdk) {
   db.run('DELETE FROM oapi_cdk_pool WHERE cdk = ?', [cdk]);
 }
 
-module.exports = { acquireCdk, markRejected, releaseBinding, updateRemaining, listCdks, importCdks, deleteCdk };
+// v2.54: acquireCdk 返 null 时调 diagnose 区分 fail 原因（pool 空 / 全 rejected / 全已满）
+function diagnose(db) {
+  const totalR = db.exec("SELECT COUNT(*) FROM oapi_cdk_pool");
+  const total = (totalR.length && totalR[0].values[0][0]) || 0;
+  if (total === 0) return 'CDK 池为空（请在 Config 页 import CDK）';
+  const availR = db.exec("SELECT COUNT(*) FROM oapi_cdk_pool WHERE status='available'");
+  const avail = (availR.length && availR[0].values[0][0]) || 0;
+  if (avail === 0) return `CDK 全部 rejected（共 ${total} 个，需要在 oapi 平台买新 CDK 或手动恢复 rejected 状态）`;
+  return `CDK 共 ${total} 个，${avail} 个 available 但都不满足条件（bindings 满 max / remaining=0 / 已绑本 email）`;
+}
+
+module.exports = { acquireCdk, markRejected, releaseBinding, updateRemaining, listCdks, importCdks, deleteCdk, diagnose };

@@ -316,7 +316,9 @@ class ProtocolEngine extends EventEmitter {
         };
         const acq = await oapiPool.acquireCdk(getRawDb(), email, max, baseUrl, takeOrderFn);
         if (!acq) {
-          console.log(`[protocol] oapi acquire failed: CDK 池空 / 全 rejected / 全已满`);
+          // v2.54: diagnose 区分 fail 原因（pool 空 / 全 rejected / 全 bindings 满）
+          const reason = oapiPool.diagnose(getRawDb());
+          console.log(`[protocol] oapi acquire failed: ${reason}`);
           return {};
         }
         try { save(); } catch {}

@@ -136,3 +136,18 @@ test('P8 listCdks + deleteCdk', () => {
   const bd = db.exec("SELECT * FROM phone_bindings WHERE phone='+1L'");
   assert.strictEqual(bd.length, 0, 'cascade phone_bindings');
 });
+
+test('P9 diagnose: 空池 / 全 rejected / 全已满 区分输出', () => {
+  // case 1: 空池
+  let db = freshDb();
+  assert.match(pool.diagnose(db), /CDK 池为空/);
+  // case 2: 全 rejected
+  db = freshDb();
+  insertCdk(db, { cdk: 'SMS-R1', phone: '+1R', status: 'rejected' });
+  insertCdk(db, { cdk: 'SMS-R2', phone: '+1R2', status: 'rejected' });
+  assert.match(pool.diagnose(db), /CDK 全部 rejected.*共 2 个/);
+  // case 3: 有 available 但 bindings 已满
+  db = freshDb();
+  insertCdk(db, { cdk: 'SMS-F', phone: '+1F', bindings_used: 99, status: 'available' });
+  assert.match(pool.diagnose(db), /CDK 共 1 个.*1 个 available/);
+});
