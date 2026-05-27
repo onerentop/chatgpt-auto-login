@@ -20,7 +20,8 @@ function freshDb() {
       base_url       TEXT NOT NULL,
       taken_at_ms    INTEGER NOT NULL,
       bindings_used  INTEGER NOT NULL DEFAULT 0,
-      status         TEXT NOT NULL DEFAULT 'active'
+      status         TEXT NOT NULL DEFAULT 'active',
+      country_code   INTEGER
     );
     CREATE TABLE phone_bindings (
       phone TEXT NOT NULL,
@@ -32,11 +33,11 @@ function freshDb() {
   return db;
 }
 
-function insertEntry(db, { orderNo, phone, taken_at_ms, bindings_used = 0, status = 'active' }) {
+function insertEntry(db, { orderNo, phone, taken_at_ms, bindings_used = 0, status = 'active', country_code = null }) {
   db.run(
-    `INSERT INTO smscloud_phone_cache (order_no, phone, api_key, base_url, taken_at_ms, bindings_used, status)
-     VALUES (?, ?, 'k', 'b', ?, ?, ?)`,
-    [orderNo, phone, taken_at_ms, bindings_used, status]
+    `INSERT INTO smscloud_phone_cache (order_no, phone, api_key, base_url, taken_at_ms, bindings_used, status, country_code)
+     VALUES (?, ?, 'k', 'b', ?, ?, ?, ?)`,
+    [orderNo, phone, taken_at_ms, bindings_used, status, country_code]
   );
 }
 
@@ -147,4 +148,27 @@ test('S9 expireOldEntries: 删过期 active 行 (rejected 行不删)', async () 
   assert.strictEqual(r.expired, 1);
   const rows = db.exec("SELECT order_no FROM smscloud_phone_cache ORDER BY order_no");
   assert.deepStrictEqual(rows[0].values.map(v => v[0]), ['A', 'C']);
+});
+
+test('S10 acquirePhone: preferredCountryCode 过滤 → 命中匹配 country 的 entry', async () => {
+  const db = freshDb();
+  insertEntry(db, { orderNo: 'A', phone: '+1A', taken_at_ms: Date.now(), country_code: 7 });
+  insertEntry(db, { orderNo: 'B', phone: '+1B', taken_at_ms: Date.now() - 1000, country_code: 187 });
+  let called = 0;
+  const takeOrderFn = async () => { called++; return { orderNo: 'NEW', phone: '+1NEW', apiKey: 'k', baseUrl: 'b', countryCode: 187 }; };
+  const r = await pool.acquirePhone(db, 'x@y', 3, EXPIRY_MS, [], takeOrderFn, 187);
+  assert.strictEqual(called, 0, 'cache hit on B (country=187)');
+  assert.strictEqual(r.phone, '+1B');
+});
+
+test('S11 acquirePhone: preferredCountryCode 无匹配 → takeOrderFn 新取号并落 country_code', async () => {
+  const db = freshDb();
+  insertEntry(db, { orderNo: 'C', phone: '+1C', taken_at_ms: Date.now(), country_code: 7 });
+  let called = 0;
+  const takeOrderFn = async () => { called++; return { orderNo: 'D', phone: '+1D', apiKey: 'k', baseUrl: 'b', countryCode: 44 }; };
+  const r = await pool.acquirePhone(db, 'y@z', 3, EXPIRY_MS, [], takeOrderFn, 44);
+  assert.strictEqual(called, 1);
+  assert.strictEqual(r.phone, '+1D');
+  const row = db.exec("SELECT country_code FROM smscloud_phone_cache WHERE order_no='D'");
+  assert.strictEqual(row[0].values[0][0], 44);
 });

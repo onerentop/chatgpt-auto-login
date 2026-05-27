@@ -15,11 +15,15 @@
  *   cache miss 时调用，向 smscloud 取新号。可 sync / async。
  * @returns {Promise<{orderNo, phone, apiKey, baseUrl, taken_at_ms, bindings_used, reused}>}
  */
-function acquirePhone(db, email, maxBindingsPerPhone, expiryMs, excludePhones, takeOrderFn) {
+function acquirePhone(db, email, maxBindingsPerPhone, expiryMs, excludePhones, takeOrderFn, preferredCountryCode = null) {
   const now = Date.now();
   const exclusionClause = excludePhones.length > 0
     ? `AND phone NOT IN (${excludePhones.map(() => '?').join(',')})`
     : '';
+  const countryClause = preferredCountryCode != null
+    ? 'AND (country_code = ? OR country_code IS NULL)'
+    : '';
+  const countryParams = preferredCountryCode != null ? [preferredCountryCode] : [];
   const r = db.exec(`
     SELECT order_no, phone, api_key, base_url, taken_at_ms, bindings_used
     FROM smscloud_phone_cache
@@ -27,22 +31,23 @@ function acquirePhone(db, email, maxBindingsPerPhone, expiryMs, excludePhones, t
       AND taken_at_ms + ? > ?
       AND bindings_used < ?
       AND phone NOT IN (SELECT phone FROM phone_bindings WHERE email = ?)
+      ${countryClause}
       ${exclusionClause}
     ORDER BY bindings_used ASC, taken_at_ms ASC
     LIMIT 1
-  `, [expiryMs, now, maxBindingsPerPhone, email, ...excludePhones]);
+  `, [expiryMs, now, maxBindingsPerPhone, email, ...countryParams, ...excludePhones]);
   if (r.length && r[0].values.length) {
     const [orderNo, phone, apiKey, baseUrl, taken_at_ms, bindings_used] = r[0].values[0];
     db.run('INSERT INTO phone_bindings (phone, email) VALUES (?, ?)', [phone, email]);
     db.run('UPDATE smscloud_phone_cache SET bindings_used = bindings_used + 1 WHERE order_no = ?', [orderNo]);
     return Promise.resolve({ orderNo, phone, apiKey, baseUrl, taken_at_ms, bindings_used: bindings_used + 1, reused: true });
   }
-  return Promise.resolve(takeOrderFn()).then(({ orderNo, phone, apiKey, baseUrl }) => {
+  return Promise.resolve(takeOrderFn()).then(({ orderNo, phone, apiKey, baseUrl, countryCode }) => {
     const taken_at_ms = Date.now();
     db.run(
-      `INSERT INTO smscloud_phone_cache (order_no, phone, api_key, base_url, taken_at_ms, bindings_used, status)
-       VALUES (?, ?, ?, ?, ?, 1, 'active')`,
-      [orderNo, phone, apiKey, baseUrl, taken_at_ms]
+      `INSERT INTO smscloud_phone_cache (order_no, phone, api_key, base_url, taken_at_ms, bindings_used, status, country_code)
+       VALUES (?, ?, ?, ?, ?, 1, 'active', ?)`,
+      [orderNo, phone, apiKey, baseUrl, taken_at_ms, countryCode ?? null]
     );
     db.run('INSERT INTO phone_bindings (phone, email) VALUES (?, ?)', [phone, email]);
     return { orderNo, phone, apiKey, baseUrl, taken_at_ms, bindings_used: 1, reused: false };
