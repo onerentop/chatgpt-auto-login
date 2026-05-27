@@ -497,6 +497,13 @@ class PipelineEngine extends EventEmitter {
                 currentPhase = 'payment';
                 console.log(`${p} Phase 3: Opening payment page...`);
                 this.emitStatus({ email: account.email, status: 'running', phase: 'payment', progress });
+                // v2.57: cached access_token 路径跳过了 Phase 1，browser 未 init —— 懒启动让 Phase 3 跑 page
+                if (!browser) {
+                  console.log(`${p} Launching chrome (cached login skipped Phase 1 chrome init)...`);
+                  this._chromeProc = launchChrome(port, tempDir, {});
+                  this._browser = await waitForCDP(port);
+                  browser = this._browser;
+                }
                 const ctx = browser.contexts()[0];
                 const pages = ctx.pages();
                 const page = pages.length > 0 ? pages[0] : await ctx.newPage();
