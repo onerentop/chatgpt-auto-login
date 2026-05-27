@@ -30,7 +30,8 @@
       "countryCode": [187]
     },
     "oapi": {
-      "baseUrl": "https://sms.oapi.vip/api.php"
+      "baseUrl": "https://sms.oapi.vip/api.php",
+      "apiKey": ""
     }
   }
 }

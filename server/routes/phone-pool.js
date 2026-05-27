@@ -167,9 +167,11 @@ router.post('/oapi/test', async (req, res) => {
     const cdk = String(req.body?.cdk || '');
     const cfg = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
     const baseUrl = cfg?.phonePool?.oapi?.baseUrl || 'https://sms.oapi.vip/api.php';
+    const apiKey = req.body?.apiKey || cfg?.phonePool?.oapi?.apiKey;
     if (!cdk) return res.status(400).json({ error: 'cdk required' });
+    if (!apiKey) return res.status(400).json({ error: 'apiKey required (config or req.body)' });
     const oapi = require('../oapi-provider');
-    const order = await oapi.takeOrder(cdk, baseUrl);
+    const order = await oapi.takeOrder(cdk, baseUrl, apiKey);
     res.json({ ok: true, phone: order.phone, remaining: order.remaining });
   } catch (e) {
     res.status(500).json({ ok: false, error: String(e.message || e), code: e?._oapiCode });

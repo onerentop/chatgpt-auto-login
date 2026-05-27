@@ -285,8 +285,9 @@ class ProtocolEngine extends EventEmitter {
     if (provider === 'oapi') {
       const o = cfg.phonePool.oapi || {};
       const baseUrl = o.baseUrl || 'https://sms.oapi.vip/api.php';
-      if (!baseUrl) {
-        console.log(`[protocol] oapi config incomplete (baseUrl 为空)`);
+      const apiKey = o.apiKey;
+      if (!apiKey) {
+        console.log(`[protocol] oapi config incomplete (apiKey 为空)`);
         return {};
       }
       try {
@@ -294,7 +295,7 @@ class ProtocolEngine extends EventEmitter {
         const oapiPool = require('./server/oapi-pool');
         const max = cfg.phonePool.maxBindingsPerPhone || 3;
         const takeOrderFn = async (cdk, baseUrlArg) => {
-          return await oapi.takeOrder(cdk, baseUrlArg);
+          return await oapi.takeOrder(cdk, baseUrlArg, apiKey);
         };
         const acq = await oapiPool.acquireCdk(getRawDb(), email, max, baseUrl, takeOrderFn);
         if (!acq) {
@@ -306,7 +307,7 @@ class ProtocolEngine extends EventEmitter {
         console.log(`[protocol] oapi ${acq.reused ? '复用' : '新取'}号 ${acq.phone} (cdk=...${cdkTail}, remaining=${acq.remaining})`);
         return {
           phone: acq.phone,
-          smsConfig: { provider: 'oapi', cdk: acq.cdk, base_url: acq.baseUrl },
+          smsConfig: { provider: 'oapi', cdk: acq.cdk, base_url: acq.baseUrl, api_key: apiKey },
           releaseFn: async () => {
             try {
               oapiPool.releaseBinding(getRawDb(), acq.cdk, email, acq.phone);

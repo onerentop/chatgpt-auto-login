@@ -1,15 +1,16 @@
 // v2.50.0 — oapi (sms.oapi.vip) SMS Relay provider
-// 鉴权: X-API-Key: <cdk> header（CDK 兼作 API Key，用户验证可用）
-// 所有 endpoint POST + JSON body { code: cdk }
+// v2.50.1: 拆分 apiKey 与 cdk（apiKey 全局配置，cdk 单号绑定）
+// 鉴权: X-API-Key: <apiKey> header；body: { code: cdk }
+// 所有 endpoint POST + JSON body
 
 const DEFAULT_BASE_URL = 'https://sms.oapi.vip/api.php';
 
-async function _post(baseUrl, action, cdk) {
+async function _post(baseUrl, action, cdk, apiKey) {
   const url = `${baseUrl || DEFAULT_BASE_URL}?action=${action}`;
   const r = await fetch(url, {
     method: 'POST',
     headers: {
-      'X-API-Key': cdk,
+      'X-API-Key': apiKey,
       'Content-Type': 'application/json',
       'Accept': 'application/json',
     },
@@ -30,17 +31,17 @@ async function _post(baseUrl, action, cdk) {
   return j;
 }
 
-async function takeOrder(cdk, baseUrl) {
-  const j = await _post(baseUrl, 'open_get_phone', cdk);
+async function takeOrder(cdk, baseUrl, apiKey) {
+  const j = await _post(baseUrl, 'open_get_phone', cdk, apiKey);
   return { phone: '+' + String(j.phone).replace(/^\+/, ''), remaining: j.remaining };
 }
 
-async function pollOnce(cdk, baseUrl) {
+async function pollOnce(cdk, baseUrl, apiKey) {
   // 单次 poll —— ok=false 不抛错（正常轮询等待），返 null
   const url = `${baseUrl || DEFAULT_BASE_URL}?action=open_get_sms`;
   const r = await fetch(url, {
     method: 'POST',
-    headers: { 'X-API-Key': cdk, 'Content-Type': 'application/json' },
+    headers: { 'X-API-Key': apiKey, 'Content-Type': 'application/json' },
     body: JSON.stringify({ code: cdk }),
   });
   if (!r.ok) return null;
@@ -49,9 +50,9 @@ async function pollOnce(cdk, baseUrl) {
   return null;
 }
 
-async function changePhone(cdk, baseUrl) {
+async function changePhone(cdk, baseUrl, apiKey) {
   // v1 不在路径上调用，仅暴露 API 供未来使用
-  const j = await _post(baseUrl, 'open_change_phone', cdk);
+  const j = await _post(baseUrl, 'open_change_phone', cdk, apiKey);
   return { phone: '+' + String(j.phone).replace(/^\+/, ''), remaining: j.remaining };
 }
 

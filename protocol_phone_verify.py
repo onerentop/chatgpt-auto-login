@@ -113,9 +113,10 @@ def poll_sms(sms_cfg, max_attempts=30, interval=3):
         return None
     if provider == 'oapi':
         cdk = sms_cfg.get('cdk')
+        api_key = sms_cfg.get('api_key')
         base_url = sms_cfg.get('base_url', 'https://sms.oapi.vip/api.php')
-        if not cdk:
-            _log('oapi poll: missing cdk')
+        if not cdk or not api_key:
+            _log('oapi poll: missing cdk or api_key')
             return None
         from curl_cffi import requests as curl_requests
         for attempt in range(max_attempts):
@@ -123,7 +124,7 @@ def poll_sms(sms_cfg, max_attempts=30, interval=3):
                 r = curl_requests.post(
                     f"{base_url}?action=open_get_sms",
                     json={"code": cdk},
-                    headers={"X-API-Key": cdk, "Content-Type": "application/json"},
+                    headers={"X-API-Key": api_key, "Content-Type": "application/json"},
                     timeout=15,
                 )
                 j = r.json()

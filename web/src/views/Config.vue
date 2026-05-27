@@ -94,6 +94,10 @@
             <el-form-item label="oapi baseUrl">
               <el-input v-model="form.phonePool.oapi.baseUrl" placeholder="https://sms.oapi.vip/api.php" style="width: 360px" />
             </el-form-item>
+            <el-form-item label="oapi apiKey">
+              <el-input v-model="form.phonePool.oapi.apiKey" type="password" show-password
+                placeholder="sk-xxx (X-API-Key 全局配置)" style="width: 360px" />
+            </el-form-item>
             <el-form-item label="CDK 池">
               <div style="width: 600px">
                 <el-input v-model="oapiCdkBulkText" type="textarea" :rows="4" placeholder="每行一个 CDK，例：SMS-XXXX-XXXX-XXXX" />
@@ -399,7 +403,7 @@ const form = reactive({
   proxyJpEnabled: true,
   proxyJpKeyword: 'KDDI',
   proxyJpWhitelist: [],
-  phonePool: { enabled: false, maxBindingsPerPhone: 5, smsPollIntervalMs: 3000, smsMaxAttempts: 30, provider: 'local', zhusms: { cardKey: '', service: 'codex', baseUrl: 'https://zhusms.com' }, smscloud: { apiKey: '', baseUrl: 'https://smscloud.sbs/api/system', serviceCode: '', countryCode: [187] }, oapi: { baseUrl: 'https://sms.oapi.vip/api.php' } },
+  phonePool: { enabled: false, maxBindingsPerPhone: 5, smsPollIntervalMs: 3000, smsMaxAttempts: 30, provider: 'local', zhusms: { cardKey: '', service: 'codex', baseUrl: 'https://zhusms.com' }, smscloud: { apiKey: '', baseUrl: 'https://smscloud.sbs/api/system', serviceCode: '', countryCode: [187] }, oapi: { baseUrl: 'https://sms.oapi.vip/api.php', apiKey: '' } },
 })
 
 onMounted(async () => {
@@ -439,8 +443,8 @@ onMounted(async () => {
           : { apiKey: '', baseUrl: 'https://smscloud.sbs/api/system', serviceCode: '', countryCode: [187] },
         // v2.50.0: oapi provider 默认 baseUrl
         oapi: cfg.phonePool.oapi
-          ? { ...{ baseUrl: 'https://sms.oapi.vip/api.php' }, ...cfg.phonePool.oapi }
-          : { baseUrl: 'https://sms.oapi.vip/api.php' },
+          ? { ...{ baseUrl: 'https://sms.oapi.vip/api.php', apiKey: '' }, ...cfg.phonePool.oapi }
+          : { baseUrl: 'https://sms.oapi.vip/api.php', apiKey: '' },
       }
     } else {
       form.phonePool = {
@@ -451,7 +455,7 @@ onMounted(async () => {
         provider: 'local',
         zhusms: { cardKey: '', service: 'codex', baseUrl: 'https://zhusms.com' },
         smscloud: { apiKey: '', baseUrl: 'https://smscloud.sbs/api/system', serviceCode: '', countryCode: [187] },
-        oapi: { baseUrl: 'https://sms.oapi.vip/api.php' },
+        oapi: { baseUrl: 'https://sms.oapi.vip/api.php', apiKey: '' },
       }
     }
     // v2.47: 旧 number countryCode 归一为 [number] 兼容 multi-select
