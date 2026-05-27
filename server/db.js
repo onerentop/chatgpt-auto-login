@@ -86,6 +86,17 @@ async function initDB() {
     );
     CREATE INDEX IF NOT EXISTS idx_phone_bindings_phone ON phone_bindings(phone);
     CREATE INDEX IF NOT EXISTS idx_phone_bindings_email ON phone_bindings(email);
+    CREATE TABLE IF NOT EXISTS smscloud_phone_cache (
+      order_no       TEXT PRIMARY KEY,
+      phone          TEXT NOT NULL,
+      api_key        TEXT NOT NULL,
+      base_url       TEXT NOT NULL,
+      taken_at_ms    INTEGER NOT NULL,
+      bindings_used  INTEGER NOT NULL DEFAULT 0,
+      status         TEXT NOT NULL DEFAULT 'active'
+    );
+    CREATE INDEX IF NOT EXISTS idx_smscloud_phone_cache_phone ON smscloud_phone_cache(phone);
+    CREATE INDEX IF NOT EXISTS idx_smscloud_phone_cache_active ON smscloud_phone_cache(status, taken_at_ms);
   `);
 
   // Wire blacklist persistence module to the live DB
