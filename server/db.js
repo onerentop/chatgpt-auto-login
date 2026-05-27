@@ -94,7 +94,8 @@ async function initDB() {
       base_url       TEXT NOT NULL,
       taken_at_ms    INTEGER NOT NULL,
       bindings_used  INTEGER NOT NULL DEFAULT 0,
-      status         TEXT NOT NULL DEFAULT 'active'
+      status         TEXT NOT NULL DEFAULT 'active',
+      country_code   INTEGER
     );
     CREATE INDEX IF NOT EXISTS idx_smscloud_phone_cache_phone ON smscloud_phone_cache(phone);
     CREATE INDEX IF NOT EXISTS idx_smscloud_phone_cache_active ON smscloud_phone_cache(status, taken_at_ms);
@@ -144,6 +145,13 @@ async function initDB() {
   }
   if (!existingCols.has('exit_ip')) {
     db.run("ALTER TABLE account_status ADD COLUMN exit_ip TEXT DEFAULT ''");
+  }
+
+  // v2.47.0: smscloud_phone_cache.country_code — fraud-retry 跨 country fallback
+  const smscloudCacheCols = db.exec("PRAGMA table_info(smscloud_phone_cache)");
+  const smscloudCacheColsSet = new Set(smscloudCacheCols[0]?.values.map((row) => row[1]) || []);
+  if (!smscloudCacheColsSet.has('country_code')) {
+    db.run("ALTER TABLE smscloud_phone_cache ADD COLUMN country_code INTEGER");
   }
 
   // One-time migration of old status values
