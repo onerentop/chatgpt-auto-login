@@ -1,5 +1,35 @@
 # Changelog
 
+## v2.50.0 — 2026-05-28 — oapi SMS provider 接入
+
+### 核心改动
+
+- 新增第三种远程 SMS provider `oapi`（sms.oapi.vip），CDK 池模型 + 一号多绑 cache，与 v2.45.0 smscloud cache 概念对齐。
+- 新表 `oapi_cdk_pool` 持久化用户预先导入的 CDK（`cdk PK, phone, base_url, taken_at_ms, bindings_used, remaining, status`）。phone_bindings 表（v2.37.0）复用，按 phone 关联 email。
+- `server/oapi-provider.js`：takeOrder / pollOnce / changePhone（X-API-Key=CDK header，POST + JSON body）。
+- `server/oapi-pool.js`：acquireCdk（首次取号触发 takeOrderFn，cache hit 不调 API）/ markRejected / releaseBinding / importCdks（批量粘贴）/ listCdks / deleteCdk。
+- `protocol-engine.js _acquirePhoneForProtocol` 加 oapi branch；`_finalizePhoneVerify` saturate 分支按 `meta.provider === 'oapi'` 走 `oapiPool.markRejected(cdk)`。
+- `protocol_phone_verify.py poll_sms` 加 oapi branch：直接 POST `open_get_sms` 轮询（无需 resend，自动 advance）。
+- `web/src/views/Config.vue` 加 oapi provider radio + 配置区：baseUrl 输入 + CDK 池 textarea 批量导入 + el-table 列表（CDK 掩码显示 `SMS-XXXX…XXXX` 仅前 8 后 4 字符）。
+- `server/routes/phone-pool.js` 加 4 routes：`POST /oapi/import` / `GET /oapi/list` / `DELETE /oapi/:cdk` / `POST /oapi/test`。
+
+### UX 提升
+
+- 卖家给的 CDK 兑换码（如 `SMS-CY7L-UYKS-KGXW`）可直接批量粘贴导入。CDK 在数据库内绑定 oapi 平台分配的号码 + 本地 bindings_used 计数，多账号共享同 CDK 的同号实现一号多绑。
+- CDK 在 oapi 平台过期 / 被风控时 API 返 `"CDK已过期"` 等错误，protocol-engine catch 自动 `markRejected`，下次 acquire SQL 自动跳过。
+- CDK 完整字符串仅在 db / API 调用中流转；日志只打后 8 位（`cdk=...XXXX`），UI 列表掩码显示前 8 后 4。
+
+### 不在范围
+
+- 不实现 `open_change_phone` 调用（sms-timeout 走 attempt retry 拿下个 CDK 已够）。
+- 不动 smscloud / zhusms / local provider，不动 PipelineEngine（浏览器模式）。
+- oapi 单 baseUrl 池模型，不支持多卖家多 baseUrl pool。
+
+### 测试
+
+- 单测新增 13 个（5 oapi-provider + 8 oapi-pool）。`npm test` 355 / 333 pass / 22 skipped / 0 fail。
+- Python `npm run test:py` 不受 oapi branch 影响（新分支顺序在 smscloud 之后、local/zhusms 之前，互斥）。
+
 ## v2.47.0 — 2026-05-27 — smscloud fraud retry 跨 country fallback + Execute UI fixes
 
 ### 核心改动
