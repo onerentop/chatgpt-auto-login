@@ -201,8 +201,13 @@ def main():
         return
 
     # Step 2: poll SMS
-    _log(f"verify: polling SMS (provider={sms_cfg.get('provider')})")
-    code = poll_sms(sms_cfg, max_attempts=30, interval=3)
+    # v2.48: 接受 stdin sms_poll_interval_ms / sms_max_attempts 覆盖默认（来自 cfg.phonePool）
+    sms_poll_interval_ms = inp.get('sms_poll_interval_ms')
+    sms_max_attempts_cfg = inp.get('sms_max_attempts')
+    interval = (sms_poll_interval_ms / 1000.0) if sms_poll_interval_ms else 3
+    max_attempts = sms_max_attempts_cfg if sms_max_attempts_cfg else 30
+    _log(f"verify: polling SMS (provider={sms_cfg.get('provider')}, interval={interval}s, max_attempts={max_attempts})")
+    code = poll_sms(sms_cfg, max_attempts=max_attempts, interval=interval)
     if not code:
         print(json.dumps({"status": "sms-timeout"}), flush=True)
         return

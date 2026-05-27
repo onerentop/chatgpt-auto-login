@@ -94,7 +94,8 @@ function runProtocolPKCE(account, engine) {
 }
 
 // v2.40.0: 协议模式 add_phone 单次 attempt（spawn protocol_phone_verify.py）
-let runProtocolPhoneVerify = function (sessionState, phone, smsConfig, proxyUrl, engine) {
+// v2.48: 加 cfg 参数透传 sms_poll_interval_ms / sms_max_attempts 给 Python 端
+let runProtocolPhoneVerify = function (sessionState, phone, smsConfig, proxyUrl, engine, cfg = {}) {
   return new Promise((resolve) => {
     const py = spawn('py', ['-3', PYTHON_PHONE_VERIFY_SCRIPT], { cwd: ROOT, stdio: ['pipe', 'pipe', 'pipe'] });
     if (engine) engine._pyProc = py;
@@ -105,6 +106,8 @@ let runProtocolPhoneVerify = function (sessionState, phone, smsConfig, proxyUrl,
     const input = JSON.stringify({
       session_state: sessionState,
       phone, sms: smsConfig, proxy_url: proxyUrl,
+      sms_poll_interval_ms: cfg.phonePool?.smsPollIntervalMs,
+      sms_max_attempts: cfg.phonePool?.smsMaxAttempts,
     });
     let stdout = '', stderr = '';
     py.stdout.on('data', (data) => {
@@ -321,7 +324,7 @@ class ProtocolEngine extends EventEmitter {
       try { save(); } catch {}
 
       console.log(`[protocol] add-phone (attempt ${attempt}/${MAX_ATTEMPTS}): ${phone} (provider=${provider})`);
-      const result = await runProtocolPhoneVerify(sessionState, phone, smsConfig, proxyUrl, this);
+      const result = await runProtocolPhoneVerify(sessionState, phone, smsConfig, proxyUrl, this, cfg);
 
       if (result.status === 'ok') {
         console.log(`[protocol] add-phone OK, tokens obtained`);
