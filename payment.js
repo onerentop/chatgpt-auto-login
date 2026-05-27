@@ -726,7 +726,10 @@ async function autoPayment(page, phoneConfig, opts = {}) {
 async function _doAutoPayment(page, phoneConfig, signal) {
   const PHONE = phoneConfig?.phone || CONFIG.phone;
   const SMS_API = phoneConfig?.smsApiUrl || CONFIG.smsApiUrl;
-  const EMAIL = phoneConfig?.email || '';
+  // v2.53: 还原 f0fb1c5 之前的逻辑 —— PayPal 用 randEmail() 16-char @gmail.com 避开 PayPal 风控
+  // 复用 GPT outlook email 给 PayPal 会触发风控（截图 Email 字段空 + "This is required" 红字）。
+  // caller 仍传 phoneConfig.email 但 payment.js 忽略，未来想恢复改回 `phoneConfig?.email || ''` 即可。
+  const EMAIL = '';
   console.log('    [Pay] Starting auto-payment flow...');
 
   await page.addStyleTag({ content: '#captcha-standalone,.captcha-overlay,.captcha-container,.AddressAutocomplete-results{display:none!important;height:0!important;overflow:hidden!important}' }).catch(() => {});
