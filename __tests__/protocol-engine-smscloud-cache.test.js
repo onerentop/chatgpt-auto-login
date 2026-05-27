@@ -103,6 +103,7 @@ test('SC2 rate-limited → cache entry 标 rejected + deferred-cancel queue 含�
       const rejected = rawDb.exec("SELECT order_no FROM smscloud_phone_cache WHERE status='rejected'");
       assert.deepStrictEqual(rejected[0].values.map(v => v[0]), ['OO1']);
       assert.ok(deferred._queueForTest().has('OO1'), 'OO1 enqueued for deferred cancel');
+      assert.strictEqual(takeCalls, 2, 'each attempt takeOrder once');
     } finally {
       smscloud.takeOrder = origTake;
       protoMod.__setRunProtocolPhoneVerify(orig);
