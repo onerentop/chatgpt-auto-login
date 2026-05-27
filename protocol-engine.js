@@ -212,38 +212,39 @@ class ProtocolEngine extends EventEmitter {
       }
       try {
         const smscloud = require('./server/smscloud-provider');
-        const deferredCancel = require('./server/smscloud-deferred-cancel');
-        const order = await smscloud.takeOrder(
-          s.apiKey,
-          s.baseUrl || 'https://smscloud.sbs/api/system',
-          s.serviceCode,
-          s.countryCode,
-        );
-        if (!order || !order.phone) return {};
-        const takenAtMs = Date.now();
-        const apiKey = s.apiKey;
+        const smscloudPool = require('./server/smscloud-pool');
+        const max = cfg.phonePool.maxBindingsPerPhone || 3;
+        const EXPIRY_MS = 18 * 60 * 1000;
         const baseUrl = s.baseUrl || 'https://smscloud.sbs/api/system';
+        const takeOrderFn = async () => {
+          const order = await smscloud.takeOrder(s.apiKey, baseUrl, s.serviceCode, s.countryCode);
+          if (!order || !order.phone) throw new Error('takeOrder empty');
+          return { orderNo: order.order_no, phone: order.phone, apiKey: s.apiKey, baseUrl };
+        };
+        const acq = await smscloudPool.acquirePhone(getRawDb(), email, max, EXPIRY_MS, excludePhones, takeOrderFn);
+        try { save(); } catch {}
+        console.log(`[protocol] smscloud ${acq.reused ? '复用' : '新取'}号 ${acq.phone} (orderNo=${acq.orderNo}, bindings=${acq.bindings_used})`);
         return {
-          phone: order.phone,
-          smsConfig: {
-            provider: 'smscloud',
-            order_no: order.order_no,
-            api_key: apiKey,
-            base_url: baseUrl,
-          },
+          phone: acq.phone,
+          smsConfig: { provider: 'smscloud', order_no: acq.orderNo, api_key: acq.apiKey, base_url: acq.baseUrl },
           releaseFn: async () => {
             try {
-              const r = await smscloud.cancelOrder(order.order_no, apiKey, baseUrl);
-              if (r && r.deferred) {
-                deferredCancel.enqueue({ apiKey, baseUrl, orderNo: order.order_no, takenAtMs });
-              }
+              smscloudPool.releaseBinding(getRawDb(), acq.orderNo, email, acq.phone);
+              save();
             } catch (e) {
-              console.log(`[protocol] smscloud cancelOrder failed: ${e?.message?.slice(0, 60)}`);
+              console.log(`[protocol] smscloud releaseBinding failed: ${e?.message?.slice(0, 60)}`);
             }
+          },
+          meta: {
+            provider: 'smscloud',
+            orderNo: acq.orderNo,
+            apiKey: acq.apiKey,
+            baseUrl: acq.baseUrl,
+            takenAtMs: acq.taken_at_ms,
           },
         };
       } catch (e) {
-        console.log(`[protocol] smscloud takeOrder failed: ${e?.message?.slice(0, 60)} (code=${e?._smscloudCode || 'n/a'})`);
+        console.log(`[protocol] smscloud acquire failed: ${e?.message?.slice(0, 60)}`);
         return {};
       }
     }
@@ -280,7 +281,7 @@ class ProtocolEngine extends EventEmitter {
 
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       const acq = await this._acquirePhoneForProtocol(provider, cfg, account.email, proxyUrl, triedPhones);
-      const { phone, smsConfig, releaseFn } = acq;
+      const { phone, smsConfig, releaseFn, meta } = acq;
       if (!phone) {
         return lastReason ? { phoneVerifyFail: lastReason } : { phonePoolEmpty: true };
       }
@@ -305,7 +306,8 @@ class ProtocolEngine extends EventEmitter {
       if (result.status === 'rate-limited' || result.status === 'fraud-blocked' || result.status === 'voip-blocked') {
         // v2.44.1: rate-limited / fraud-blocked / voip-blocked 现在走换号 retry。
         // local provider 保留 markPhoneSaturated（持久黑名单避免后续账号再选到）。
-        // smscloud/zhusms 调 releaseFn 释放当前订单。retry 由外层 for-loop 接管。
+        // v2.45.0: smscloud 走 cache markRejected + deferred-cancel 入队（不动 releaseFn，
+        //   binding 记录保留以避免本 session 同账号重选同号）。zhusms/其他走原 releaseFn。
         console.log(`[protocol] ${result.status} for ${phone}: ${(result.detail || '').slice(0, 500)}, retry with new phone`);
         if (provider === 'local') {
           try {
@@ -313,6 +315,14 @@ class ProtocolEngine extends EventEmitter {
             phonePool.markPhoneSaturated(getRawDb(), phone, max);
             save();
           } catch (e) { console.log(`[protocol] markPhoneSaturated err: ${e?.message}`); }
+        } else if (meta?.provider === 'smscloud') {
+          try {
+            const smscloudPool = require('./server/smscloud-pool');
+            const deferredCancel = require('./server/smscloud-deferred-cancel');
+            smscloudPool.markRejected(getRawDb(), meta.orderNo);
+            deferredCancel.enqueue({ apiKey: meta.apiKey, baseUrl: meta.baseUrl, orderNo: meta.orderNo, takenAtMs: meta.takenAtMs });
+            save();
+          } catch (e) { console.log(`[protocol] smscloud markRejected err: ${e?.message}`); }
         } else {
           if (releaseFn) try { await releaseFn(); } catch {}
           try { save(); } catch {}

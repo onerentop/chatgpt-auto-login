@@ -1,0 +1,111 @@
+// v2.45.0 — protocol-engine smscloud branch 接 cache + saturate 按 meta 分流 集成测试
+// SC1：两账号连续 add-phone 应复用同一 cache 号，takeOrder 仅 1 次。
+// SC2：rate-limited 时 cache 标 rejected + deferred-cancel queue 含该 orderNo。
+
+const test = require('node:test');
+const assert = require('node:assert');
+const path = require('path');
+const fs = require('fs');
+
+const ROOT = path.join(__dirname, '..');
+const CONFIG_PATH = path.join(ROOT, 'config.json');
+
+let _origCfg = null;
+function setupCfg() {
+  try { _origCfg = fs.readFileSync(CONFIG_PATH, 'utf-8'); } catch { _origCfg = null; }
+  const merged = _origCfg ? JSON.parse(_origCfg) : {};
+  merged.phonePool = Object.assign({}, merged.phonePool, {
+    enabled: true,
+    provider: 'smscloud',
+    maxBindingsPerPhone: 3,
+    smscloud: { apiKey: 'k', baseUrl: 'b', serviceCode: 'tg', countryCode: 187 },
+  });
+  fs.writeFileSync(CONFIG_PATH, JSON.stringify(merged, null, 2));
+}
+function restoreCfg() {
+  if (_origCfg !== null) fs.writeFileSync(CONFIG_PATH, _origCfg);
+  else try { fs.unlinkSync(CONFIG_PATH); } catch {}
+}
+
+async function freshEngine() {
+  delete require.cache[require.resolve('../protocol-engine')];
+  delete require.cache[require.resolve('../server/smscloud-pool')];
+  delete require.cache[require.resolve('../server/db')];
+  const dbMod = require('../server/db');
+  await dbMod.initDB();
+  const rawDb = dbMod.getRawDb();
+  rawDb.run('DELETE FROM smscloud_phone_cache');
+  rawDb.run('DELETE FROM phone_bindings');
+  const { ProtocolEngine } = require('../protocol-engine');
+  return { engine: new ProtocolEngine(), rawDb, protoMod: require('../protocol-engine') };
+}
+
+test('SC1 两账号连续 add-phone：第 2 个复用 cache 号，takeOrder 只调一次', async () => {
+  setupCfg();
+  try {
+    const { engine, rawDb, protoMod } = await freshEngine();
+
+    let takeOrderCalls = 0;
+    delete require.cache[require.resolve('../server/smscloud-provider')];
+    const smscloud = require('../server/smscloud-provider');
+    const origTake = smscloud.takeOrder;
+    smscloud.takeOrder = async () => {
+      takeOrderCalls++;
+      return { order_no: 'OO1', phone: '+15550001111', raw: {} };
+    };
+
+    const orig = protoMod.__runProtocolPhoneVerify;
+    protoMod.__setRunProtocolPhoneVerify(async () => ({ status: 'ok', tokens: { access_token: 'tok' } }));
+
+    try {
+      const r1 = await engine._finalizePhoneVerify({}, { email: 'u1@x.com' });
+      assert.ok(r1.tokens, 'account 1 success');
+      const r2 = await engine._finalizePhoneVerify({}, { email: 'u2@x.com' });
+      assert.ok(r2.tokens, 'account 2 success');
+      assert.strictEqual(takeOrderCalls, 1, 'takeOrder only called once (cache reused)');
+      const row = rawDb.exec("SELECT bindings_used FROM smscloud_phone_cache WHERE order_no='OO1'");
+      assert.strictEqual(row[0].values[0][0], 2, 'bindings_used = 2');
+    } finally {
+      smscloud.takeOrder = origTake;
+      protoMod.__setRunProtocolPhoneVerify(orig);
+    }
+  } finally { restoreCfg(); }
+});
+
+test('SC2 rate-limited → cache entry 标 rejected + deferred-cancel queue 含该 orderNo', async () => {
+  setupCfg();
+  try {
+    const { engine, rawDb, protoMod } = await freshEngine();
+
+    delete require.cache[require.resolve('../server/smscloud-provider')];
+    const smscloud = require('../server/smscloud-provider');
+    const origTake = smscloud.takeOrder;
+    let takeCalls = 0;
+    smscloud.takeOrder = async () => {
+      takeCalls++;
+      return { order_no: 'OO' + takeCalls, phone: '+1555' + String(takeCalls).padStart(7, '0'), raw: {} };
+    };
+
+    delete require.cache[require.resolve('../server/smscloud-deferred-cancel')];
+    const deferred = require('../server/smscloud-deferred-cancel');
+
+    const orig = protoMod.__runProtocolPhoneVerify;
+    let i = 0;
+    protoMod.__setRunProtocolPhoneVerify(async () => {
+      i++;
+      if (i === 1) return { status: 'rate-limited', detail: 'rate_limit_exceeded' };
+      return { status: 'ok', tokens: { access_token: 'tok' } };
+    });
+
+    try {
+      const r = await engine._finalizePhoneVerify({}, { email: 'u3@x.com' });
+      assert.ok(r.tokens, 'attempt 2 success');
+      const rejected = rawDb.exec("SELECT order_no FROM smscloud_phone_cache WHERE status='rejected'");
+      assert.deepStrictEqual(rejected[0].values.map(v => v[0]), ['OO1']);
+      assert.ok(deferred._queueForTest().has('OO1'), 'OO1 enqueued for deferred cancel');
+    } finally {
+      smscloud.takeOrder = origTake;
+      protoMod.__setRunProtocolPhoneVerify(orig);
+    }
+  } finally { restoreCfg(); }
+});
