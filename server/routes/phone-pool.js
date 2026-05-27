@@ -117,4 +117,20 @@ router.post('/smscloud/countries', async (req, res) => {
   }
 });
 
+router.post('/smscloud/inventory', async (req, res) => {
+  try {
+    const cfg = req.body?.config || JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
+    const apiKey = req.body?.apiKey || cfg?.phonePool?.smscloud?.apiKey;
+    const baseUrl = req.body?.baseUrl || cfg?.phonePool?.smscloud?.baseUrl || 'https://smscloud.sbs/api/system';
+    const serviceCode = req.body?.serviceCode;
+    if (!apiKey) return res.status(400).json({ error: 'apiKey required' });
+    if (!serviceCode) return res.status(400).json({ error: 'serviceCode required' });
+    const smscloud = require('../smscloud-provider');
+    const inventory = await smscloud.getInventory(apiKey, baseUrl, serviceCode);
+    res.json({ inventory });
+  } catch (e) {
+    res.status(500).json({ error: String(e.message || e), code: e?._smscloudCode });
+  }
+});
+
 module.exports = router

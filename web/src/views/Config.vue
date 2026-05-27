@@ -77,7 +77,7 @@
             </el-form-item>
             <el-form-item label="国家">
               <el-select v-model="form.phonePool.smscloud.countryCode" placeholder="先拉国家列表" filterable clearable style="width: 240px">
-                <el-option v-for="c in smscloudCountries" :key="c.id" :label="`${c.chn} / ${c.eng} (id=${c.id})`" :value="c.id" />
+                <el-option v-for="c in smscloudCountries" :key="c.id" :label="`${c.chn}${c.eng ? ' / ' + c.eng : ''} (id=${c.id})${c.retailPrice != null ? ' · ¥' + c.retailPrice + ' / ' + c.count + '号' : ''}`" :value="c.id" />
               </el-select>
               <el-button size="small" :loading="loadingSmscloudCountries" @click="fetchSmscloudCountries" style="margin-left: 8px">拉国家列表</el-button>
             </el-form-item>
@@ -716,6 +716,42 @@ async function testSmscloudBalance() {
     testingSmscloudBalance.value = false
   }
 }
+
+// v2.46.0: serviceCode 变化时自动拉 inventory，merge 价格 + 库存到 smscloudCountries
+async function fetchInventory(serviceCode) {
+  try {
+    const { data } = await api.post('/phone-pool/smscloud/inventory', {
+      apiKey: form.phonePool.smscloud.apiKey,
+      baseUrl: form.phonePool.smscloud.baseUrl,
+      serviceCode,
+    })
+    const inv = data.inventory || []
+    const byId = new Map(inv.map(i => [i.country, i]))
+    const existingIds = new Set(smscloudCountries.value.map(c => c.id))
+    const merged = smscloudCountries.value.map(row => {
+      const m = byId.get(row.id)
+      return m ? { ...row, retailPrice: m.retailPrice, count: m.count }
+               : { ...row, retailPrice: null, count: null }
+    })
+    for (const i of inv) {
+      if (!existingIds.has(i.country)) {
+        merged.push({ id: i.country, chn: i.countryName, eng: '', phoneCode: '', retailPrice: i.retailPrice, count: i.count })
+      }
+    }
+    smscloudCountries.value = merged
+    ElMessage.success(`已加载 ${inv.length} 个有库存国家的价格`)
+  } catch (e) {
+    console.warn('[smscloud inventory] fetch failed:', e)
+    ElMessage.warning('价格拉取失败：' + (e?.response?.data?.error || e.message))
+  }
+}
+
+let _inventoryTimer = null
+watch(() => form.phonePool.smscloud.serviceCode, (newCode) => {
+  if (_inventoryTimer) clearTimeout(_inventoryTimer)
+  if (!newCode || !form.phonePool.smscloud.apiKey) return
+  _inventoryTimer = setTimeout(() => fetchInventory(newCode), 300)
+}, { immediate: true })
 
 onBeforeUnmount(() => {
   stopBlacklistPolling()
