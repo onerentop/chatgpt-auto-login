@@ -443,7 +443,8 @@ async function handleFirstTimeSetup(page) {
       await randomDelay(800, 1000);
 
       // Click "完成帐户创建"
-      const createBtn = page.locator('button').filter({ hasText: /完成帐户创建|完成帳戶創建|Create account|Complete|Continue|继续/i }).first();
+      // v2.58: 加 "Finish creating" 匹配 OpenAI /about-you 页 "Finish creating account" 按钮
+      const createBtn = page.locator('button').filter({ hasText: /完成帐户创建|完成帳戶創建|Create account|Complete|Continue|继续|Finish creating/i }).first();
       if (await createBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
         await page.waitForTimeout(500);
         console.log(`  [7/10] Clicking create account...`);
