@@ -19,6 +19,15 @@ async function loginAccount(browser, account) {
     await randomDelay(1000, 2000);
 
     console.log(`  [2/10] Clicking Log in...`);
+    // v2.58: dismiss onboarding 弹窗（"Meet the all-new ChatGPT Images 2.0" 等遮 Log in 按钮）
+    try {
+      const notNow = page.locator('button').filter({ hasText: /^(Not now|稍后|不再提示|跳过)$/i }).first();
+      if (await notNow.isVisible({ timeout: 1500 }).catch(() => false)) {
+        console.log(`  [2/10] Dismissing onboarding popup...`);
+        await notNow.click({ force: true });
+        await randomDelay(500, 1000);
+      }
+    } catch {}
     // Try header login button first, then sidebar
     const headerBtn = page.locator('header button, header a, nav button, nav a').filter({ hasText: /^(Log\s*in|登录)$/i }).first();
     const testIdBtn = page.locator('[data-testid="login-button"]').first();
