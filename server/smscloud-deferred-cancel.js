@@ -10,6 +10,7 @@ const MAX_ATTEMPTS = 3;
 
 const _queue = new Map();  // orderNo -> { apiKey, baseUrl, orderNo, takenAtMs, attempts }
 let _timer = null;
+let _ticking = false;
 
 function enqueue({ apiKey, baseUrl, orderNo, takenAtMs }) {
   if (!orderNo) return;
@@ -40,7 +41,13 @@ async function _tickOnce() {
 
 function start() {
   if (_timer) return;
-  _timer = setInterval(() => { _tickOnce().catch(() => {}); }, TICK_INTERVAL_MS);
+  _timer = setInterval(async () => {
+    if (_ticking) return;
+    _ticking = true;
+    try { await _tickOnce(); }
+    catch (e) { console.log(`[smscloud-deferred-cancel] tick error: ${e?.message?.slice(0, 200)}`); }
+    finally { _ticking = false; }
+  }, TICK_INTERVAL_MS);
   _timer.unref?.();
   console.log(`[smscloud-deferred-cancel] started, tick=${TICK_INTERVAL_MS}ms`);
 }
