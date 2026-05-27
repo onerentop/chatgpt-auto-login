@@ -204,3 +204,43 @@ test('SC4 cache 有 2 entry，第 1 个 resend 失败 → 第 2 个 resend 成�
     }
   } finally { restoreCfg(); }
 });
+
+test('SC5 attempt 1/2/3 跨 countryCode list 切换', async () => {
+  setupCfg();
+  try {
+    // 覆盖 cfg 用 list
+    const fs2 = require('fs');
+    const cfg = JSON.parse(fs2.readFileSync(CONFIG_PATH, 'utf-8'));
+    cfg.phonePool.smscloud.countryCode = [7, 187, 44];
+    fs2.writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2));
+
+    const { engine, rawDb, protoMod } = await freshEngine();
+    delete require.cache[require.resolve('../server/smscloud-provider')];
+    const smscloud = require('../server/smscloud-provider');
+    const origTake = smscloud.takeOrder, origResend = smscloud.resendSms;
+    const takeCountries = [];
+    smscloud.takeOrder = async (apiKey, baseUrl, serviceCode, countryCode) => {
+      takeCountries.push(countryCode);
+      return { order_no: 'OO' + takeCountries.length, phone: '+1cc' + countryCode + 'p' + takeCountries.length, raw: {} };
+    };
+    smscloud.resendSms = async () => {};
+
+    const orig = protoMod.__runProtocolPhoneVerify;
+    let i = 0;
+    protoMod.__setRunProtocolPhoneVerify(async () => {
+      i++;
+      if (i < 3) return { status: 'fraud-blocked', detail: 'fraud_guard' };
+      return { status: 'ok', tokens: { access_token: 'tok' } };
+    });
+    try {
+      const r = await engine._finalizePhoneVerify({}, { email: 'sc5@x.com' });
+      assert.ok(r.tokens, 'attempt 3 success');
+      assert.deepStrictEqual(takeCountries, [7, 187, 44], 'attempt 跨 country fallback');
+      try { await require('../server/db').save?.flush?.(); } catch {}
+    } finally {
+      smscloud.takeOrder = origTake;
+      smscloud.resendSms = origResend;
+      protoMod.__setRunProtocolPhoneVerify(orig);
+    }
+  } finally { restoreCfg(); }
+});

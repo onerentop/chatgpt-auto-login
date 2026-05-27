@@ -171,7 +171,7 @@ class ProtocolEngine extends EventEmitter {
 
   // v2.40.0: 协议模式 add_phone — 统一 local / zhusms provider 出参
   // v2.40.1: 加 excludePhones 参数避免 retry 反复取同号
-  async _acquirePhoneForProtocol(provider, cfg, email, proxyUrl, excludePhones = []) {
+  async _acquirePhoneForProtocol(provider, cfg, email, proxyUrl, excludePhones = [], attemptIdx = 0) {
     if (provider === 'zhusms') {
       const z = cfg.phonePool.zhusms || {};
       if (!z.cardKey) return {};
@@ -206,7 +206,11 @@ class ProtocolEngine extends EventEmitter {
     }
     if (provider === 'smscloud') {
       const s = cfg.phonePool.smscloud || {};
-      if (!s.apiKey || !s.serviceCode || !s.countryCode) {
+      // v2.47.0: countryCode 支持 number | number[]（fraud retry 跨 country fallback）
+      const codes = Array.isArray(s.countryCode)
+        ? s.countryCode
+        : (s.countryCode != null ? [s.countryCode] : []);
+      if (!s.apiKey || !s.serviceCode || codes.length === 0) {
         console.log(`[protocol] smscloud config incomplete (apiKey/serviceCode/countryCode 任一为空)`);
         return {};
       }
@@ -216,10 +220,12 @@ class ProtocolEngine extends EventEmitter {
         const max = cfg.phonePool.maxBindingsPerPhone || 3;
         const EXPIRY_MS = 18 * 60 * 1000;
         const baseUrl = s.baseUrl || 'https://smscloud.sbs/api/system';
+        const countryCode = codes[attemptIdx % codes.length];
+        console.log(`[protocol] smscloud attempt ${attemptIdx + 1} country=${countryCode} (list=[${codes.join(',')}])`);
         const takeOrderFn = async () => {
-          const order = await smscloud.takeOrder(s.apiKey, baseUrl, s.serviceCode, s.countryCode);
+          const order = await smscloud.takeOrder(s.apiKey, baseUrl, s.serviceCode, countryCode);
           if (!order || !order.phone) throw new Error('takeOrder empty');
-          return { orderNo: order.order_no, phone: order.phone, apiKey: s.apiKey, baseUrl };
+          return { orderNo: order.order_no, phone: order.phone, apiKey: s.apiKey, baseUrl, countryCode };
         };
         // v2.45.1: 复用号 cache hit 要 resend 通知 smscloud advance 上游 channel；
         // 失败则 markRejected + releaseBinding，循环重 acquire（拿新号或下一个 active cache 行）。
@@ -228,7 +234,7 @@ class ProtocolEngine extends EventEmitter {
         const MAX_ACQUIRE_TRIES = 3;
         let acq = null;
         for (let i = 0; i < MAX_ACQUIRE_TRIES; i++) {
-          acq = await smscloudPool.acquirePhone(getRawDb(), email, max, EXPIRY_MS, excludePhones, takeOrderFn);
+          acq = await smscloudPool.acquirePhone(getRawDb(), email, max, EXPIRY_MS, excludePhones, takeOrderFn, countryCode);
           if (!acq.reused) break;
           try {
             await smscloud.resendSms(acq.orderNo, acq.apiKey, acq.baseUrl);
@@ -305,7 +311,7 @@ class ProtocolEngine extends EventEmitter {
     const triedPhones = [];  // v2.40.1: retry 内防止反复取同号
 
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-      const acq = await this._acquirePhoneForProtocol(provider, cfg, account.email, proxyUrl, triedPhones);
+      const acq = await this._acquirePhoneForProtocol(provider, cfg, account.email, proxyUrl, triedPhones, attempt - 1);
       const { phone, smsConfig, releaseFn, meta } = acq;
       if (!phone) {
         return lastReason ? { phoneVerifyFail: lastReason } : { phonePoolEmpty: true };
