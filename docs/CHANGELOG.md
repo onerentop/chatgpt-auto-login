@@ -1,5 +1,30 @@
 # Changelog
 
+## v2.46.0 — 2026-05-27 — smscloud Config 页价格 + 库存内联
+
+### 核心改动
+
+- `server/smscloud-provider.js` 加 `getInventory(apiKey, baseUrl, serviceCode)` 对应 smscloud 文档 `/public/sms/getInventory`，返该 service 下所有有库存国家的 `{country, countryName, count, retailPrice, freePriceMap}`。
+- `server/routes/phone-pool.js` 加 POST `/smscloud/inventory` 透传调用，body 接 `{apiKey?, baseUrl?, serviceCode}`，apiKey 缺省读 `config.json`。
+- `web/src/views/Config.vue` 加 `watch(form.phonePool.smscloud.serviceCode, ..., { immediate: true })` + debounce 300ms 触发 `fetchInventory`，把 inventory 数据 by-id merge 进 `smscloudCountries`。country select 的 option label 增强为 `中文名 / English (id=N) · ¥R / N号`（无价格时保持原 label）。
+
+### UX 提升
+
+- 选定 service 后 country select 直接看到每个国家的当前价格 + 可用号库存，不再需要切到 smscloud 网站查价。
+- 切 service 自动重拉，无需手动按钮。
+- 价格拉取失败仅 warn 不阻塞配置流程。
+
+### 不在范围
+
+- 不展示阶梯价 `freePriceMap`（YAGNI）。
+- 不引入动态调价取号 `/public/sms/flexible`（保留 `/getNumber` 默认价路径）。
+- 不动 protocol-engine / smscloud-pool / smscloud-deferred-cancel。
+
+### 测试
+
+- 单测新增 2 个（`getInventory` 成功 + 失败）。后端 route 与前端 Vue 沿用项目无单测惯例。
+- `npm test` 339 / 317 pass / 22 skipped / 0 fail。
+
 ## v2.45.1 — 2026-05-27 — smscloud 复用号补调 resend
 
 ### 核心改动
