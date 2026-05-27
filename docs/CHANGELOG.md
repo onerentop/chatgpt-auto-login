@@ -1,5 +1,44 @@
 # Changelog
 
+## v2.47.0 — 2026-05-27 — smscloud fraud retry 跨 country fallback + Execute UI fixes
+
+### 核心改动
+
+- `phonePool.smscloud.countryCode` 字段升级为 `number | number[]`。`_acquirePhoneForProtocol` smscloud branch 按 `list[(attempt-1) % length]` 取 country，attempt 跨 country fallback 规避 OpenAI fraud_guard 号段相似检测。
+- `server/db.js`：`smscloud_phone_cache` 加 `country_code INTEGER` 列（含 ALTER 兜底）。`server/smscloud-pool.js acquirePhone` 加 `preferredCountryCode` 参数，cache 查询 SQL `WHERE (country_code = ? OR country_code IS NULL)` 过滤；INSERT 时存 country_code。
+- `web/src/views/Config.vue`：country select 改 `multiple`，v-model 直接是 number[]。onMounted 读旧 number 值归一为 [number]。`config.example.json` 同步改 `countryCode: [187]`。
+- `web/src/components/AppLayout.vue`：`.app-shell { height: 100vh; overflow: hidden }` 让 sidebar 在 main 内容滚动时固定不跟随 document 滚走。
+- `web/src/views/Execute.vue`：加 `flatTableRef`，平铺模式（groupingEnabled=false）下 `onRowClick` / `clearAllSelection` 通过 flatTableRef 操作 selection。修复 v2.43.4 平铺模式无法点击行选中 + 取消选中只清当前组的 2 个 bug。
+
+### Bug 修复
+
+- **OpenAI fraud_guard 号段相似检测全 3 attempts fail**（2026-05-27 线上）：v2.45.1 retry 不换 country，smscloud 同 country 取号高度相似（如全 +60116xxxx），fraud_guard 必中。本版 retry 跨 country。
+- **Execute 平铺模式点击行无效**：v2.43.4 默认平铺后，`onRowClick` 用 `groupRefs[row._status]` 查 ref，平铺路径未注册 ref。
+- **取消选中只清当前组**：同上 root cause，clearAllSelection 遍历 groupRefs 在平铺模式是空 Map。
+- **左侧菜单跟随滚动**：`.app-shell { min-height: 100vh }` 未限上限，main 长内容 → document 滚动 → sidebar 跟着滚走。
+
+### 端到端验证
+
+- config 改 `countryCode: [7, 187, 44]` → 一个 fraud-blocked 触发账号执行 → 日志：
+  - `[protocol] smscloud attempt 1 country=7 (list=[7,187,44])` + Malaysia 号 fraud-blocked
+  - `[protocol] smscloud attempt 2 country=187 (list=[7,187,44])` + US 号成功 / 不同 fail
+  - 不再 3 次全同号段 fail
+- 旧 `countryCode: 7` (number) config 仍工作（归一为 [7]），向后兼容。
+- Config 页 country select 显示 multi-select，可选 1+ 国家拖出顺序。
+- Execute 平铺关掉分组开关 → 点击行可正常选中 + 取消选中清全部。
+- 浏览长 Execute 列表时 sidebar 不滚走。
+
+### 测试
+
+- 单测新增 3 个（smscloud-pool S10/S11 + protocol-engine SC5），`npm test` 342 / 320 pass / 22 skipped / 0 fail。
+
+### 不在范围
+
+- 不动 zhusms / local provider
+- 不引入 serviceCode 列表
+- 不主动 inventory-driven country 自动选
+- 不动 deferred-cancel / protocol-engine 内层 MAX_ACQUIRE_TRIES 循环
+
 ## v2.46.0 — 2026-05-27 — smscloud Config 页价格 + 库存内联
 
 ### 核心改动
