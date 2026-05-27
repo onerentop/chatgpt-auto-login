@@ -188,10 +188,12 @@ function formatTime(ts) {
 
 <style scoped>
 /* === Shell layout — full viewport with sticky topbar + flex body === */
+/* v2.47: height: 100vh + overflow: hidden 让 sidebar 在 main 滚动时保持固定 */
 .app-shell {
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
+  height: 100vh;
+  overflow: hidden;
   background: var(--app-bg);
 }
 

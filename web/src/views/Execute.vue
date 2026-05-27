@@ -89,6 +89,7 @@
     <!-- v2.34.0: 平铺视图 —— 单 AccountTableRows 渲染全部 filteredRows (按 GROUP_ORDER 排序) -->
     <AccountTableRows
       v-else
+      ref="flatTableRef"
       :rows="flatSortedRows"
       :running="running"
       :global-selected-set="globalSelectedSet"
@@ -140,6 +141,8 @@ const expandedKeys = ref([...DEFAULT_EXPANDED_STATUSES])
 // v2.34.0: 分组视图开关；v2.43.4: 默认 false（进页面平铺，用户手动开分组）
 const groupingEnabled = ref(false)
 const groupRefs = ref({})
+// v2.47: 平铺模式下 AccountTableRows 的 ref，让 onRowClick / clearAllSelection 能管到它
+const flatTableRef = ref(null)
 const globalSelectedSet = getSelectionSet('execute')
 const engineMode = ref({ protocolMode: false, paymentLinkSource: 'api' })
 
@@ -370,6 +373,8 @@ function clearAllSelection() {
   for (const ref of Object.values(groupRefs.value)) {
     ref?.clearSelection?.()
   }
+  // v2.47: 平铺模式下 groupRefs 是空，单独清平铺 ref
+  flatTableRef.value?.clearSelection?.()
 }
 
 function onRowAction({ email, action }) {
@@ -387,8 +392,13 @@ function onRowClick({ row, column, event }) {
   // that row's selection. Quick-select UX for operators.
   if (column?.type === 'selection' || column?.type === 'expand') return
   if (event?.target?.closest('.el-button, .el-dropdown, a')) return
-  const status = row._status || 'idle'
-  groupRefs.value[status]?.toggleRowSelection?.(row)
+  // v2.47: 分组模式走 groupRefs[status]，平铺模式走 flatTableRef
+  if (groupingEnabled.value) {
+    const status = row._status || 'idle'
+    groupRefs.value[status]?.toggleRowSelection?.(row)
+  } else {
+    flatTableRef.value?.toggleRowSelection?.(row)
+  }
 }
 
 async function startExec(emails) {
