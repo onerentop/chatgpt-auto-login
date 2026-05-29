@@ -15,6 +15,13 @@ os.environ.setdefault('NO_PROXY', '127.0.0.1,localhost')
 
 from curl_cffi import requests as cr
 
+_MIDTRANS_RE = re.compile(r'https://app\.midtrans\.com/snap/v[34]/redirection/[0-9a-fA-F-]{36}')
+
+def extract_midtrans_url(text):
+    """从结账响应文本里提取 Midtrans snap redirection URL（去掉 query string）。"""
+    m = _MIDTRANS_RE.search(text or '')
+    return m.group(0) if m else ''
+
 _CHROME = ['chrome146', 'chrome142', 'chrome136', 'chrome133a', 'chrome131', 'chrome124']
 
 def _log(m):
@@ -55,7 +62,10 @@ def main():
             if m:
                 pk_match = re.search(r'pk_live_[A-Za-z0-9]+', text)
                 pk = pk_match.group(0) if pk_match else ""
-                print(json.dumps({"status": "success", "link": m.group(0), "pk": pk, "raw": text[:500]}))
+                midtrans_url = extract_midtrans_url(text)
+                _log(f"midtrans_url in checkout response: {'yes' if midtrans_url else 'no'}")
+                print(json.dumps({"status": "success", "link": m.group(0), "pk": pk,
+                                  "midtrans_url": midtrans_url, "raw": text[:500]}))
                 return
             _log(f"No link in response (status={r.status_code}): {text[:120]}")
             # 401 → invalid token, no retry helps.
