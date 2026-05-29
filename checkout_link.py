@@ -15,7 +15,7 @@ os.environ.setdefault('NO_PROXY', '127.0.0.1,localhost')
 
 from curl_cffi import requests as cr
 
-_MIDTRANS_RE = re.compile(r'https://app\.midtrans\.com/snap/v[34]/redirection/[0-9a-fA-F-]{36}')
+_MIDTRANS_RE = re.compile(r'https://app\.midtrans\.com/snap/v[34]/redirection/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}')
 
 def extract_midtrans_url(text):
     """从结账响应文本里提取 Midtrans snap redirection URL（去掉 query string）。"""
