@@ -113,6 +113,18 @@ async function initDB() {
     );
     CREATE INDEX IF NOT EXISTS idx_oapi_cdk_pool_status ON oapi_cdk_pool(status);
     CREATE INDEX IF NOT EXISTS idx_oapi_cdk_pool_phone ON oapi_cdk_pool(phone);
+
+    -- pipeline step state (P0 refactor)
+    CREATE TABLE IF NOT EXISTS account_step_state (
+      email       TEXT NOT NULL,
+      step_id     TEXT NOT NULL,
+      status      TEXT DEFAULT 'pending',
+      reason      TEXT DEFAULT '',
+      started_at  TEXT DEFAULT '',
+      finished_at TEXT DEFAULT '',
+      updated_at  TEXT DEFAULT '',
+      PRIMARY KEY (email, step_id)
+    );
   `);
 
   // Wire blacklist persistence module to the live DB
@@ -406,6 +418,38 @@ const livenessLogsDB = {
   },
 };
 
+const stepStateDB = {
+  get(email, stepId) {
+    const stmt = db.prepare("SELECT * FROM account_step_state WHERE email=? AND step_id=?");
+    stmt.bind([email, stepId]);
+    const row = stmt.step() ? stmt.getAsObject() : null;
+    stmt.free();
+    return row;
+  },
+  list(email) {
+    const stmt = db.prepare("SELECT * FROM account_step_state WHERE email=? ORDER BY started_at");
+    stmt.bind([email]);
+    const rows = [];
+    while (stmt.step()) rows.push(stmt.getAsObject());
+    stmt.free();
+    return rows;
+  },
+  set(email, stepId, data) {
+    const existing = this.get(email, stepId) || {};
+    const incoming = data || {};
+    const status      = 'status'     in incoming ? (incoming.status || 'pending') : (existing.status || 'pending');
+    const reason      = 'reason'     in incoming ? (incoming.reason || '')        : (existing.reason || '');
+    const started_at  = 'startedAt'  in incoming ? (incoming.startedAt || '')     : (existing.started_at || '');
+    const finished_at = 'finishedAt' in incoming ? (incoming.finishedAt || '')    : (existing.finished_at || '');
+    db.run(
+      "INSERT OR REPLACE INTO account_step_state (email, step_id, status, reason, started_at, finished_at, updated_at) VALUES (?,?,?,?,?,?,datetime('now'))",
+      [email, stepId, status, reason, started_at, finished_at]
+    );
+    save();
+  },
+  reset(email) { db.run("DELETE FROM account_step_state WHERE email=?", [email]); save(); },
+};
+
 // v2.42 Task 9: proxyDB —— bad-node API 路由的薄包装层。
 // 复用既有 proxy_blacklist schema (tag, channel, expires_at, reason, source)。
 // 与 server/proxy/blacklist.js 同一张表，但提供 untilMs 直接传值的 API（routes 友好），
@@ -453,4 +497,4 @@ function mapRows(result) {
   });
 }
 
-module.exports = { initDB, accountsDB, statusDB, logsDB, livenessLogsDB, proxyDB, save, getRawDb: () => db };
+module.exports = { initDB, accountsDB, statusDB, logsDB, stepStateDB, livenessLogsDB, proxyDB, save, getRawDb: () => db };
