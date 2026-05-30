@@ -101,6 +101,10 @@ function paypalPayStep() {
       // make Playwright connect to the wrong browser and run the entire
       // payment flow in the wrong incognito session.
       // ======================================================================
+      // D-Pay3: port/tempDir 仅在 protocol 路径（need launch）时生成；
+      // browser 模式下若已有 resources.browser，这两个变量不会被 launch 路径使用，
+      // 但 finally 的 tempDir 清理需要局部变量存在（browser 模式 finally 是 no-op，
+      // 所以实际上不影响，只是提前生成以简化分支）。
       const port    = await _findFreePort();
       const tempDir = path.join(os.tmpdir(), `proto-pay-${Date.now()}-${Math.floor(Math.random() * 100000)}`);
       let chromeProc = null, browser = null;
@@ -116,12 +120,27 @@ function paypalPayStep() {
         // protocol-engine.js:853-858
         // v2.42: 不再显式传 proxyServer，launchChrome 默认读 process.env.HTTPS_PROXY
         // 存入 resources 袋（镜像原始 this._chromeProc/_browser/_tempDir）
+        //
+        // D-Pay1 (browser-engine.md C1): browser mode 下 login strategy 可能已在
+        // Phase 1 启动了 Chrome 并写入 resources.browser（engine.js:271-281）；
+        // 或缓存登录跳过了 Phase 1（resources.browser===null），此时需要懒启动
+        // （engine.js:499-505）。仅当 resources.browser 为 null（协议模式 + 浏览器
+        // 缓存登录懒启动）时才执行 launchChrome，否则直接复用已有 browser。
         // ====================================================================
-        chromeProc = _launchChrome(port, tempDir, {});
-        browser    = await _waitForCDP(port);
-        resources.chromeProc = chromeProc;
-        resources.browser    = browser;
-        resources.tempDir    = tempDir;
+        if (ctx.deps.resources.browser) {
+          // browser mode: Phase 1 已启动 Chrome，复用已有 browser/chromeProc/tempDir
+          // （engine.js:507 直接 browser.contexts()[0]，不 re-launch）
+          browser    = ctx.deps.resources.browser;
+          chromeProc = ctx.deps.resources.chromeProc;
+          // tempDir 已由 login strategy 持有，不用本地 tempDir 变量（finally no-op）
+        } else {
+          // protocol mode（或浏览器缓存登录懒启动）：正常 launchChrome + waitForCDP
+          chromeProc = _launchChrome(port, tempDir, {});
+          browser    = await _waitForCDP(port);
+          resources.chromeProc = chromeProc;
+          resources.browser    = browser;
+          resources.tempDir    = tempDir;
+        }
 
         const bCtx = browser.contexts()[0];
         const page = bCtx.pages()[0] || await bCtx.newPage();
@@ -253,15 +272,26 @@ function paypalPayStep() {
         // subprocesses ignore (see process-utils.js header). Without killTree,
         // the parent chrome.exe lingers and Chrome auto-opens an about:blank
         // tab to replace the CDP-closed page — visible as a phantom window.
+        //
+        // D-Pay1 / C1 (browser-engine.md): browser mode 下 Chrome 生命周期由
+        // engine-shell 的账号循环 finally（engine.js:647-657）统一管理，
+        // paypal-pkce step 之后的 CPA 阶段仍需要 browser，本 step 的 finally
+        // 必须是 no-op（不关闭 browser，不 null resources）。
+        // ctx.deps.browserMode 为 falsy（协议模式）时，执行原有清理逻辑不变。
         // ====================================================================
-        if (browser) try { await browser.close(); } catch {}
-        if (chromeProc) try { killTree(chromeProc.pid); } catch {}
-        if (chromeProc) try { chromeProc.kill(); } catch {}
-        try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {}
-        // 清空 resources 袋（镜像原始 this._browser=null 等）
-        resources.browser    = null;
-        resources.chromeProc = null;
-        resources.tempDir    = null;
+        if (!ctx.deps.browserMode) {
+          // protocol mode（或未迁移的浏览器模式）：原有清理逻辑，字节完全相同
+          if (browser) try { await browser.close(); } catch {}
+          if (chromeProc) try { killTree(chromeProc.pid); } catch {}
+          if (chromeProc) try { chromeProc.kill(); } catch {}
+          try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {}
+          // 清空 resources 袋（镜像原始 this._browser=null 等）
+          resources.browser    = null;
+          resources.chromeProc = null;
+          resources.tempDir    = null;
+        }
+        // browser mode: engine-shell 账号循环 finally（engine.js:647-657）负责清理；
+        // resources.browser/chromeProc/tempDir 保持存在，供 paypal-pkce + CPA step 使用。
       }
     },
   });
