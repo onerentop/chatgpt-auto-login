@@ -58,8 +58,6 @@ function _getDbDeps() {
   return { statusDB: _noopStatusDB, stepStateDB: _noopStepStateDB, save: _noopSave };
 }
 
-const STRIPE_SCRIPT = path.join(__dirname, '..', 'stripe_gopay_flow.py');
-const GOPAY_SCRIPT  = path.join(__dirname, '..', 'gopay_activate.py');
 const MAIN_CONFIG   = path.join(__dirname, '..', 'config.json');
 
 const _OTP_RE   = /\b\d{4,6}\b/g;
@@ -207,66 +205,6 @@ class GoPayEngine extends EventEmitter {
     this.emit('result', r);
   }
 
-  // _spawnPython kept for reference; no longer called by runOne (P5 cleanup)
-  _spawnPython(script, input, envOverrides, timeoutMs) {
-    const { spawn } = require('child_process');
-    return new Promise((resolve) => {
-      if (this._aborted) {
-        resolve({ status: 'aborted' });
-        return;
-      }
-
-      const child = spawn('py', ['-3', script], {
-        cwd: path.join(__dirname, '..'),
-        env: { ...process.env, ...envOverrides },
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
-      this._childProc = child;
-
-      let finalResult = null;
-      let stderr = '';
-
-      child.stdin.write(JSON.stringify(input));
-      child.stdin.end();
-
-      child.stdout.on('data', (data) => {
-        for (const line of data.toString().split('\n').filter(l => l.trim())) {
-          try {
-            const parsed = JSON.parse(line);
-            if (parsed.log) {
-              this._emitLog(parsed.log);
-            } else {
-              finalResult = parsed;
-            }
-          } catch {
-            this._emitLog(line);
-          }
-        }
-      });
-
-      child.stderr.on('data', (d) => { stderr += d.toString(); });
-
-      const timer = setTimeout(() => {
-        try { child.kill(); } catch {}
-        resolve({ status: 'timeout', detail: `${timeoutMs}ms exceeded` });
-      }, timeoutMs);
-
-      child.on('exit', () => {
-        clearTimeout(timer);
-        this._childProc = null;
-        if (finalResult) {
-          resolve(finalResult);
-        } else {
-          resolve({ status: 'error', detail: stderr.slice(-300) || 'no output' });
-        }
-      });
-
-      child.on('error', (e) => {
-        clearTimeout(timer);
-        resolve({ status: 'error', detail: e.message });
-      });
-    });
-  }
 }
 
 const engine = new GoPayEngine();
