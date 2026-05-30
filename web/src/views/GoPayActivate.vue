@@ -1,39 +1,33 @@
 <template>
   <div class="app-stack--lg">
-    <PageHeader title="GoPay 激活" subtitle="印尼区 GoPay 支付激活 ChatGPT Plus" />
+    <PageHeader title="GoPay 激活" subtitle="印尼区 GoPay 支付激活 ChatGPT Plus（自动协议登录）" />
 
-    <!-- Toolbar -->
     <SectionCard flush>
       <div style="display:flex;align-items:center;gap:12px;padding:12px 16px;flex-wrap:wrap">
-        <el-input v-model="accessToken" placeholder="ChatGPT Access Token" style="flex:1;min-width:300px" />
-        <el-button type="primary" :loading="running" :disabled="running || !accessToken" @click="startActivation">
-          开始激活
+        <el-button type="primary" :loading="running" :disabled="running || selectedEmails.length === 0" @click="activate">
+          激活选中 ({{ selectedEmails.length }})
         </el-button>
         <el-button type="danger" :disabled="!running" @click="stopActivation">停止</el-button>
-        <el-button @click="refreshStatus">刷新状态</el-button>
+        <el-button @click="loadAccounts">刷新列表</el-button>
+        <span style="color:#909399;font-size:12px">登录注册走纯协议；与主执行控制(PayPal)互斥</span>
       </div>
     </SectionCard>
 
-    <!-- Status -->
-    <SectionCard title="引擎状态">
-      <el-descriptions :column="3" border size="small">
-        <el-descriptions-item label="状态">
-          <el-tag :type="running ? '' : 'info'" size="small">{{ running ? '运行中' : '空闲' }}</el-tag>
-        </el-descriptions-item>
-        <el-descriptions-item label="阶段">
-          <el-tag type="warning" size="small">{{ phaseLabel }}</el-tag>
-        </el-descriptions-item>
-        <el-descriptions-item label="当前账号">
-          <span style="margin-right:8px">{{ status.currentAccount || '-' }}</span>
-          <el-button
-            v-if="status.currentAccount"
-            size="small"
-            type="primary"
-            plain
-            @click="openStepsDrawer(status.currentAccount)"
-          >查看步骤</el-button>
-        </el-descriptions-item>
-      </el-descriptions>
+    <SectionCard title="账号列表" flush>
+      <el-table :data="accounts" stripe size="small" max-height="460" @selection-change="onSelectionChange" row-key="email">
+        <el-table-column type="selection" width="44" />
+        <el-table-column prop="email" label="邮箱" min-width="220" />
+        <el-table-column label="状态" width="150">
+          <template #default="{ row }">
+            <el-tag :type="statusType(rowStatus(row.email))" size="small">{{ statusLabel(rowStatus(row.email)) }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="步骤" width="100" fixed="right">
+          <template #default="{ row }">
+            <el-button size="small" link type="primary" @click="openStepsDrawer(row.email)">查看步骤</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
     </SectionCard>
 
     <!-- Log -->
@@ -42,26 +36,6 @@
         <div v-for="(line, i) in logs" :key="i" class="gopay-log-line">{{ line }}</div>
         <div v-if="logs.length === 0" style="color:#999">暂无日志</div>
       </div>
-    </SectionCard>
-
-    <!-- Results -->
-    <SectionCard title="结果" v-if="results.length > 0">
-      <el-table :data="results" stripe size="small" max-height="300">
-        <el-table-column prop="email" label="邮箱" min-width="200" />
-        <el-table-column prop="status" label="状态" width="140">
-          <template #default="{ row }">
-            <el-tag :type="resultType(row.status)" size="small">{{ row.status }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column prop="phone" label="GoPay手机号" width="160" />
-        <el-table-column prop="detail" label="详情" min-width="200" show-overflow-tooltip />
-        <el-table-column prop="timestamp" label="时间" width="180" />
-        <el-table-column label="步骤" width="100" fixed="right">
-          <template #default="{ row }">
-            <el-button size="small" link type="primary" @click="openStepsDrawer(row.email)">查看步骤</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
     </SectionCard>
 
     <!-- AccountStepDrawer — gopay pipeline real-time step visualization -->
@@ -99,87 +73,59 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, nextTick, onMounted } from 'vue'
+import { ElMessage } from 'element-plus'
 import api from '../api'
 import { socketState } from '../socket'
+import { statusType, statusLabel } from '../status'
 import PageHeader from '../components/ui/PageHeader.vue'
 import SectionCard from '../components/ui/SectionCard.vue'
 import AccountStepDrawer from '../components/AccountStepDrawer.vue'
 
-const accessToken = ref('')
-const status = ref({ running: false, phase: 'idle', currentAccount: null, results: [], logCount: 0 })
-const logs = computed(() => socketState.gopayLogs)
-const results = computed(() => socketState.gopayResults)
-const config = ref(null)
+const accounts = ref([])
+const selectedEmails = ref([])
 const logBox = ref(null)
-
-// Step drawer state
 const stepsDrawerOpen = ref(false)
 const drawerEmail = ref('')
+const config = ref(null)
 
+const logs = computed(() => socketState.gopayLogs)
+const running = computed(() =>
+  Object.values(socketState.accountStatuses || {}).some(s => s.status === 'running')
+)
+
+function rowStatus(email) {
+  return socketState.accountStatuses?.[email]?.status || 'idle'
+}
+function onSelectionChange(rows) {
+  selectedEmails.value = rows.map(r => r.email)
+}
 function openStepsDrawer(email) {
   drawerEmail.value = email || ''
   stepsDrawerOpen.value = true
 }
 
-const running = computed(() => status.value.running)
-const PHASE_LABELS = {
-  idle: '空闲',
-  plan_check: 'Plan检查',
-  stripe_checkout: 'Stripe结账',
-  gopay_activate: 'GoPay注册+支付',
-  verify_plus: '验证Plus',
-}
-const phaseLabel = computed(() => PHASE_LABELS[status.value.phase] || status.value.phase)
-
-let pollTimer = null
-
-function resultType(s) {
-  if (s === 'success' || s === 'plus_gopay') return 'success'
-  if (s === 'gopay_fraud') return 'danger'
-  if (s?.includes('fail')) return 'danger'
-  return 'warning'
-}
-
-async function startActivation() {
+async function loadAccounts() {
   try {
-    socketState.gopayLogs.splice(0)
-    socketState.gopayResults.splice(0)
-    await api.post('/gopay-activate/start', {
-      email: 'manual',
-      accessToken: accessToken.value,
-      planType: 'free',
-    })
-    startPolling()
+    const { data } = await api.get('/accounts')
+    accounts.value = data.map(a => ({ email: a.email }))
+  } catch (e) { ElMessage.error(e.response?.data?.error || '加载账号失败') }
+}
+
+async function activate() {
+  try {
+    await api.post('/gopay-activate/start', { emails: selectedEmails.value })
+    ElMessage.success('已开始激活')
   } catch (e) {
-    logs.value.push(`Error: ${e.response?.data?.error || e.message}`)
+    ElMessage.error(e.response?.data?.error || '激活失败')
   }
 }
 
 async function stopActivation() {
   try {
     await api.post('/gopay-activate/stop')
-  } catch {}
-}
-
-async function refreshStatus() {
-  try {
-    const { data } = await api.get('/gopay-activate/status')
-    status.value = data
-    results.value = data.results || []
-  } catch {}
-}
-
-function startPolling() {
-  stopPolling()
-  pollTimer = setInterval(async () => {
-    await refreshStatus()
-    if (!status.value.running) stopPolling()
-  }, 2000)
-}
-
-function stopPolling() {
-  if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
+    ElMessage.info('正在停止…')
+  } catch (e) { ElMessage.error(e.response?.data?.error || '停止失败') }
 }
 
 async function loadConfig() {
@@ -198,23 +144,21 @@ async function saveConfig() {
   if (!config.value) return
   try {
     await api.post('/gopay-activate/config', config.value)
-    logs.value.push('配置已保存')
+    socketState.gopayLogs.push('配置已保存')
   } catch (e) {
-    logs.value.push(`保存失败: ${e.message}`)
+    socketState.gopayLogs.push(`保存失败: ${e.message}`)
   }
 }
 
-watch(logs, () => {
-  nextTick(() => {
-    if (logBox.value) logBox.value.scrollTop = logBox.value.scrollHeight
-  })
+watch(logs, async () => {
+  await nextTick()
+  if (logBox.value) logBox.value.scrollTop = logBox.value.scrollHeight
 }, { deep: true })
 
 onMounted(() => {
-  refreshStatus()
+  loadAccounts()
   loadConfig()
 })
-onUnmounted(() => stopPolling())
 </script>
 
 <style scoped>
