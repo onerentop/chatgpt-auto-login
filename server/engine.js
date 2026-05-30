@@ -321,21 +321,26 @@ class PipelineEngine extends EventEmitter {
           // ===================================================================
           // Loop-end emit (engine.js:659-670 semantics) — CONDITIONAL:
           //
-          // result.completed === true  → the pipeline ran to the end without
-          //   stoppedAt (success path through browser-pkce, or
-          //   phone_pool_empty/phone_verify_fail specials that are emitted
-          //   inside browser-pkce but still return {ok:true}).
-          //   ctx.flags.finalStatus is set by browser-pkce step.
-          //   We emit the terminal /done here (not inside the step) because
-          //   browser-pkce does NOT emit its own terminal done for these cases.
+          // OLD browser engine emit pattern (target):
+          //   - Login-failure → emits in-block (login step), then `continue`s
+          //     past loop-end → NO loop-end emit.
+          //   - Every other account → gets the loop-end {status}/done emit.
+          //     This includes: success (plus/plus_no_rt), no_jp_proxy, no_link,
+          //     no_promo, verify_error, aborted, NOT_FREE_TRIAL (no_link),
+          //     pay-error, phone_pool_empty, phone_verify_fail.
+          //   - aborted also emits in-block (aborted/payment) AND gets loop-end.
+          //   - phone_pool_empty/phone_verify_fail emit in-block (pkce) AND
+          //     get loop-end (browser-pkce returns ok:true → result.completed).
           //
-          // result.stoppedAt is set → a step already emitted its own terminal
-          //   status via emitStatus (login failure → error/deactivated,
-          //   paypal-fetch → no_jp_proxy/no_link, paypal-verify → verify_error
-          //   /no_promo, paypal-pay → aborted/no_link/error).
-          //   DO NOT emit again — that would double-emit.
+          // NEW: emit for every account EXCEPT login-failure
+          //   (result.stoppedAt === 'login' means login step emitted in-block
+          //    and the OLD engine continued past loop-end — skip loop-end emit).
+          //
+          // Steps that previously emitted their own terminal in-step are now
+          // suppressed via browserMode gate (Part A), so the loop-end emit is
+          // the SINGLE terminal emit for those paths.
           // ===================================================================
-          if (result.completed === true) {
+          if (result.stoppedAt !== 'login') {
             const finalStatus = ctx.flags.finalStatus || 'error';
             const finalReason = ctx.flags.finalReason || '';
             const finalPaymentLink = ctx.flags.finalPaymentLink || '';

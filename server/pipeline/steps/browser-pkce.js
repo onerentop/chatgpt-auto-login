@@ -97,9 +97,9 @@ function browserPkceStep() {
         // engine.js:597 (post-pay):    `Phase 4: PKCE OAuth...`
         // ------------------------------------------------------------------
         if (ctx.flags.alreadyPlus) {
-          console.log(`${progress} Running PKCE for already-Plus account...`);
+          console.log(`[${progress}] Running PKCE for already-Plus account...`);
         } else {
-          console.log(`${progress} Phase 4: PKCE OAuth...`);
+          console.log(`[${progress}] Phase 4: PKCE OAuth...`);
         }
 
         // engine.js:352 (alreadyPlus) / 598 (post-pay)
@@ -114,7 +114,7 @@ function browserPkceStep() {
           // engine.js:600-603 (post-pay)    — post-pay DOES log success
           if (!ctx.flags.alreadyPlus) {
             // engine.js:601 — post-pay only
-            console.log(`${progress} PKCE success, saving with refresh_token`);
+            console.log(`[${progress}] PKCE success, saving with refresh_token`);
           }
           // engine.js:355 (alreadyPlus) / 602 (post-pay)
           saveCPAAuthFile(email, pkceTokens.access_token, pkceTokens);
@@ -122,14 +122,14 @@ function browserPkceStep() {
 
         } else if (pkceTokens?.phonePoolEmpty) {
           // engine.js:358-361 (alreadyPlus) / 605-610 (post-pay)
-          console.log(`${progress} PKCE: phone pool exhausted for this account`);
+          console.log(`[${progress}] PKCE: phone pool exhausted for this account`);
           emitStatus({ email, status: 'phone_pool_empty', phase: 'pkce', progress, reason: '号池已用尽或全部满' });
           saveCPAAuthFile(email, loginResult.accessToken, loginResult.session);
           finalStatus = 'phone_pool_empty';
 
         } else if (pkceTokens?.phoneVerifyFail) {
           // engine.js:362-366 (alreadyPlus) / 611-616 (post-pay)
-          console.log(`${progress} PKCE: phone verify failed (${pkceTokens.phoneVerifyFail})`);
+          console.log(`[${progress}] PKCE: phone verify failed (${pkceTokens.phoneVerifyFail})`);
           emitStatus({ email, status: 'phone_verify_fail', phase: 'pkce', progress, reason: pkceTokens.phoneVerifyFail });
           saveCPAAuthFile(email, loginResult.accessToken, loginResult.session);
           finalStatus = 'phone_verify_fail';
@@ -144,12 +144,12 @@ function browserPkceStep() {
           // engine.js:617-622 (post-pay) — 同上 + 一条额外 else:
           //   else console.log("PKCE failed, saving without refresh_token")  ← post-pay 独有
           if (pkceTokens?.needsPhone) {
-            console.log(`${progress} PKCE requires phone verification (pool disabled)`);
+            console.log(`[${progress}] PKCE requires phone verification (pool disabled)`);
           } else if (pkceTokens && !pkceTokens.refresh_token) {
-            console.log(`${progress} PKCE returned no refresh_token`);
+            console.log(`[${progress}] PKCE returned no refresh_token`);
           } else if (!ctx.flags.alreadyPlus) {
             // engine.js:621 — post-pay 独有（alreadyPlus 路径无此 else 分支）
-            console.log(`${progress} PKCE failed, saving without refresh_token`);
+            console.log(`[${progress}] PKCE failed, saving without refresh_token`);
           }
           // engine.js:371 (alreadyPlus) / 622 (post-pay)
           saveCPAAuthFile(email, pkceTokens?.access_token || loginResult.accessToken, pkceTokens || loginResult.session);

@@ -20,6 +20,7 @@ function makeCtx({
   getPaymentLinkFn = null,       // 测试接缝：替换 getPaymentLink
   connectGatewayFn = null,       // 测试接缝：替换 connectGateway
   gwReadyState = 1,              // Discord gateway ws.readyState（1=OPEN）
+  browserMode = false,           // P2 browserMode gate
 } = {}) {
   const statusDbRows = {};
   const account = { email: 'test@example.com', password: 'pw', client_id: '', refresh_token: '' };
@@ -44,6 +45,7 @@ function makeCtx({
       get: (email) => statusDbRows[email] || null,
       set: (email, data) => { statusDbRows[email] = { ...(statusDbRows[email] || {}), ...data }; },
     },
+    browserMode,
     // 测试接缝
     __fetchCheckoutLink: fetchCheckoutLinkFn,
     __getPaymentLink: getPaymentLinkFn,
@@ -439,4 +441,109 @@ test('REUSE_STATUSES contains exactly the 5 expected values', async () => {
     await step.run(ctx);
     assert.strictEqual(fetchCalled, true, `status='${status}' should NOT be in REUSE_STATUSES → fetch called`);
   }
+});
+
+// ==========================================================================
+// P2 browserMode gate tests (Part A): browser mode suppresses terminal emits
+// Protocol mode (browserMode falsy) must be byte-identical (gates open).
+// ==========================================================================
+
+// --------------------------------------------------------------------------
+// 测试 15：browserMode=true + noJpProxy → 不 emit no_jp_proxy，但 summary.noJpProxy++, ok:false
+// --------------------------------------------------------------------------
+test('browserMode=true + noJpProxy → NO emit, summary.noJpProxy++ still, ok:false', async () => {
+  const emitCalls = [];
+  const fakeCheckout = async () => ({ noJpProxy: true, link: null, pk: '' });
+
+  const ctx = makeCtx({
+    emitStatusCalls: emitCalls,
+    linkSource: 'api',
+    fetchCheckoutLinkFn: fakeCheckout,
+    browserMode: true,
+  });
+
+  const step = paypalFetchStep();
+  const res = await step.run(ctx);
+
+  assert.strictEqual(res.ok, false);
+  // browser mode: no terminal emit
+  const noJpEmit = emitCalls.find(e => e.status === 'no_jp_proxy');
+  assert.strictEqual(noJpEmit, undefined, 'browserMode must suppress no_jp_proxy emit');
+  // running emit still fires
+  const runningEmit = emitCalls.find(e => e.status === 'running');
+  assert.ok(runningEmit, 'running emit must still fire in browserMode');
+  // summary still incremented
+  assert.strictEqual(ctx.deps.summary.noJpProxy, 1, 'summary.noJpProxy must still be incremented in browserMode');
+  // flags set
+  assert.strictEqual(ctx.flags.finalStatus, 'no_jp_proxy');
+});
+
+// --------------------------------------------------------------------------
+// 测试 16：browserMode=true + no_link → 不 emit no_link，但 summary.noLink++, ok:false
+// --------------------------------------------------------------------------
+test('browserMode=true + no link → NO emit, summary.noLink++ still, ok:false', async () => {
+  const emitCalls = [];
+  const fakeCheckout = async () => ({ link: null, pk: '', raw: 'no promo' });
+
+  const ctx = makeCtx({
+    emitStatusCalls: emitCalls,
+    linkSource: 'api',
+    fetchCheckoutLinkFn: fakeCheckout,
+    browserMode: true,
+  });
+
+  const step = paypalFetchStep();
+  const res = await step.run(ctx);
+
+  assert.strictEqual(res.ok, false);
+  const noLinkEmit = emitCalls.find(e => e.status === 'no_link');
+  assert.strictEqual(noLinkEmit, undefined, 'browserMode must suppress no_link emit');
+  assert.strictEqual(ctx.deps.summary.noLink, 1, 'summary.noLink must still be incremented in browserMode');
+  assert.strictEqual(ctx.flags.finalStatus, 'no_link');
+});
+
+// --------------------------------------------------------------------------
+// 测试 17：browserMode=true + fetch error → 不 emit error，但 summary.error++, ok:false
+// --------------------------------------------------------------------------
+test('browserMode=true + fetch error → NO emit, summary.error++ still, ok:false', async () => {
+  const emitCalls = [];
+  const fakeCheckout = async () => { throw new Error('Connection refused'); };
+
+  const ctx = makeCtx({
+    emitStatusCalls: emitCalls,
+    linkSource: 'api',
+    fetchCheckoutLinkFn: fakeCheckout,
+    browserMode: true,
+  });
+
+  const step = paypalFetchStep();
+  const res = await step.run(ctx);
+
+  assert.strictEqual(res.ok, false);
+  const errorEmit = emitCalls.find(e => e.status === 'error');
+  assert.strictEqual(errorEmit, undefined, 'browserMode must suppress error emit in fetch');
+  assert.strictEqual(ctx.deps.summary.error, 1, 'summary.error must still be incremented in browserMode');
+  assert.strictEqual(ctx.flags.finalStatus, 'error');
+});
+
+// --------------------------------------------------------------------------
+// 测试 18：protocol mode (browserMode falsy) — emits still fire (byte-identical)
+// --------------------------------------------------------------------------
+test('protocol mode (browserMode falsy) — noJpProxy terminal emit still fires', async () => {
+  const emitCalls = [];
+  const fakeCheckout = async () => ({ noJpProxy: true, link: null, pk: '' });
+
+  // browserMode not passed → undefined → falsy → gate opens
+  const ctx = makeCtx({
+    emitStatusCalls: emitCalls,
+    linkSource: 'api',
+    fetchCheckoutLinkFn: fakeCheckout,
+  });
+
+  const step = paypalFetchStep();
+  const res = await step.run(ctx);
+
+  assert.strictEqual(res.ok, false);
+  const noJpEmit = emitCalls.find(e => e.status === 'no_jp_proxy' && e.phase === 'done');
+  assert.ok(noJpEmit, 'protocol mode must still emit no_jp_proxy/done');
 });

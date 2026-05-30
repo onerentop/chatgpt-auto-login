@@ -128,11 +128,11 @@ function paypalFetchStep() {
             console.log(`[${progress}] Link: ${link || 'none'}`);
             if (fetchResult.noJpProxy) {
               console.log(`[${progress}] No JP proxy — skipping account`);
-              emitStatus({ email: account.email, status: 'no_jp_proxy', phase: 'done', progress, reason: 'JP checkout channel unavailable' });
+              if (!ctx.deps.browserMode) emitStatus({ email: account.email, status: 'no_jp_proxy', phase: 'done', progress, reason: 'JP checkout channel unavailable' });
               summary.noJpProxy++;
             } else if (!link) {
               console.log(`[${progress}] ${(fetchResult.raw || 'No link').slice(0, 500)}`);
-              emitStatus({ email: account.email, status: 'no_link', phase: 'done', progress, reason: fetchResult.raw });
+              if (!ctx.deps.browserMode) emitStatus({ email: account.email, status: 'no_link', phase: 'done', progress, reason: fetchResult.raw });
               summary.noLink++;
             }
             linkFetchOk = true;
@@ -143,7 +143,7 @@ function paypalFetchStep() {
               await new Promise(r2 => setTimeout(r2, 2000));
               continue;
             }
-            emitStatus({ email: account.email, status: 'error', phase: phaseTag, progress, reason: e.message });
+            if (!ctx.deps.browserMode) emitStatus({ email: account.email, status: 'error', phase: phaseTag, progress, reason: e.message });
             summary.error++;
             linkFetchOk = true;
             break;

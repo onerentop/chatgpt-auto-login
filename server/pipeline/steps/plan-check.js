@@ -44,15 +44,23 @@ function planCheckStep() {
 
     async run(ctx) {
       const result = ctx.outputs.login;
+      const planType = (result.planType || 'free').toLowerCase();
 
       // protocol-engine.js:727 — 原文逐字：isPlusOrAbove 计算
-      const isPlusOrAbove = ['plus', 'pro', 'team', 'enterprise'].includes(
-        (result.planType || 'free').toLowerCase()
-      );
+      const isPlusOrAbove = ['plus', 'pro', 'team', 'enterprise'].includes(planType);
+
+      if (ctx.deps.browserMode) {
+        // browser mode: OLD engine always logged Plan line (engine.js:268-275),
+        // even for non-Plus accounts, before routing on isPlusOrAbove.
+        console.log(`[${ctx.deps.progress}] Plan: ${planType} (${isPlusOrAbove ? 'Plus member' : 'Not Plus'})`);
+      }
 
       if (isPlusOrAbove) {
-        // protocol-engine.js:731 — 原文逐字：日志 "Already Plus"（经 LogCapture 进 logsDB/UI）
-        console.log(`[${ctx.deps.progress}] Already Plus`);
+        if (!ctx.deps.browserMode) {
+          // protocol-engine.js:731 — 原文逐字：日志 "Already Plus"（经 LogCapture 进 logsDB/UI）
+          // protocol mode only: browser mode already logged the Plan line above.
+          console.log(`[${ctx.deps.progress}] Already Plus`);
+        }
         // 设旗，供下游步骤路由。
         // 已-Plus 的终止动作（clearPaymentLink + clearAccessToken + _finalizePkce/saveCPAAuthFile
         // + summary.success++）由 paypal-pkce step 在 alreadyPlus 分支中统一处理（BY DESIGN）。

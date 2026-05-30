@@ -242,7 +242,7 @@ function paypalPayStep() {
           ctx.flags.finalPaymentLink = '';
           return { ok: false, reason: 'aborted' };
         } else if (paymentResult.notFreeTrial) {
-          emitStatus({ email: account.email, status: 'no_link', phase: 'done', progress, reason: paymentResult.reason });
+          if (!ctx.deps.browserMode) emitStatus({ email: account.email, status: 'no_link', phase: 'done', progress, reason: paymentResult.reason });
           summary.noLink++;
           ctx.flags.finalStatus = 'no_link';
           ctx.flags.finalReason = paymentResult.reason;
@@ -251,7 +251,7 @@ function paypalPayStep() {
         } else if (paymentResult.status) {
           const reason = paymentResult.reason || 'Payment not completed';
           console.log(`[${progress}] Payment incomplete: ${reason}`);
-          emitStatus({ email: account.email, status: paymentResult.status, phase: 'payment', progress, reason });
+          if (!ctx.deps.browserMode) emitStatus({ email: account.email, status: paymentResult.status, phase: 'payment', progress, reason });
           summary.error++;
           ctx.flags.finalStatus = paymentResult.status;
           ctx.flags.finalReason = reason;
@@ -260,7 +260,7 @@ function paypalPayStep() {
         } else {
           const reason = paymentResult.reason || 'Payment not completed';
           console.log(`[${progress}] Payment incomplete: ${reason}`);
-          emitStatus({ email: account.email, status: 'error', phase: 'payment', progress, reason });
+          if (!ctx.deps.browserMode) emitStatus({ email: account.email, status: 'error', phase: 'payment', progress, reason });
           summary.error++;
           ctx.flags.finalStatus = 'error';
           ctx.flags.finalReason = reason;
@@ -273,7 +273,7 @@ function paypalPayStep() {
         // 外层 catch：非 autoPayment 内部异常（如 chrome-error retry 耗尽抛出）
         // ====================================================================
         console.log(`[${progress}] ${account.email} error: ${e.message?.slice(0, 500)}`);
-        emitStatus({ email: account.email, status: 'error', phase: 'payment', progress, reason: e.message });
+        if (!ctx.deps.browserMode) emitStatus({ email: account.email, status: 'error', phase: 'payment', progress, reason: e.message });
         summary.error++;
         ctx.flags.finalStatus = 'error';
         ctx.flags.finalReason = e.message;

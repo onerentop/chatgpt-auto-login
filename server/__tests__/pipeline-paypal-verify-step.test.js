@@ -18,6 +18,7 @@ function makeCtx({
   verifyFn = null,        // 测试接缝：替换 verifyCheckoutIsFree
   link = 'https://pay.stripe.com/test',
   pk   = 'pk_test_abc',
+  browserMode = false,    // P2 browserMode gate
 } = {}) {
   const account = { email: 'test@example.com', password: 'pw', client_id: '', refresh_token: '' };
 
@@ -30,6 +31,7 @@ function makeCtx({
       get: () => null,
       set: () => {},
     },
+    browserMode,
     // 测试接缝
     __verifyCheckoutIsFree: verifyFn,
   };
@@ -180,4 +182,82 @@ test('{ok:true, is_free:true, coupons:["X"]} → ok:true, no terminal emit', asy
   // summary 计数不变
   assert.strictEqual(ctx.deps.summary.verifyError, 0);
   assert.strictEqual(ctx.deps.summary.noPromo, 0);
+});
+
+// ==========================================================================
+// P2 browserMode gate tests (Part A): browser mode suppresses terminal emits
+// Protocol mode (browserMode falsy) must be byte-identical (gates open).
+// ==========================================================================
+
+// --------------------------------------------------------------------------
+// 测试 7：browserMode=true + !v.ok → 不 emit verify_error，但 summary++ 和 flags 仍设置
+// --------------------------------------------------------------------------
+test('browserMode=true + !v.ok → NO emit, summary.verifyError++ still, flags set, ok:false', async () => {
+  const emitCalls = [];
+  const fakeVerify = async () => ({ ok: false, reason: 'boom' });
+
+  const ctx = makeCtx({
+    emitStatusCalls: emitCalls,
+    linkSource: 'api',
+    verifyFn: fakeVerify,
+    browserMode: true,
+  });
+
+  const step = paypalVerifyStep();
+  const res = await step.run(ctx);
+
+  assert.strictEqual(res.ok, false);
+  const verifyErrEmit = emitCalls.find(e => e.status === 'verify_error');
+  assert.strictEqual(verifyErrEmit, undefined, 'browserMode must suppress verify_error emit');
+  // running/verify still fires
+  const runningEmit = emitCalls.find(e => e.status === 'running' && e.phase === 'verify');
+  assert.ok(runningEmit, 'running/verify must still fire in browserMode');
+  assert.strictEqual(ctx.deps.summary.verifyError, 1, 'summary.verifyError must still be incremented in browserMode');
+  assert.strictEqual(ctx.flags.finalStatus, 'verify_error');
+});
+
+// --------------------------------------------------------------------------
+// 测试 8：browserMode=true + !v.is_free → 不 emit no_promo，但 summary++ 和 flags 仍设置
+// --------------------------------------------------------------------------
+test('browserMode=true + !v.is_free → NO emit, summary.noPromo++ still, flags set, ok:false', async () => {
+  const emitCalls = [];
+  const fakeVerify = async () => ({ ok: true, is_free: false, amount_due: 2000, currency: 'usd' });
+
+  const ctx = makeCtx({
+    emitStatusCalls: emitCalls,
+    linkSource: 'api',
+    verifyFn: fakeVerify,
+    browserMode: true,
+  });
+
+  const step = paypalVerifyStep();
+  const res = await step.run(ctx);
+
+  assert.strictEqual(res.ok, false);
+  const noPromoEmit = emitCalls.find(e => e.status === 'no_promo');
+  assert.strictEqual(noPromoEmit, undefined, 'browserMode must suppress no_promo emit');
+  assert.strictEqual(ctx.deps.summary.noPromo, 1, 'summary.noPromo must still be incremented in browserMode');
+  assert.strictEqual(ctx.flags.finalStatus, 'no_promo');
+});
+
+// --------------------------------------------------------------------------
+// 测试 9：protocol mode (browserMode falsy) — verify_error terminal emit still fires
+// --------------------------------------------------------------------------
+test('protocol mode (browserMode falsy) — verify_error terminal emit still fires', async () => {
+  const emitCalls = [];
+  const fakeVerify = async () => ({ ok: false, reason: 'timeout' });
+
+  // browserMode not passed → undefined → falsy → gate opens
+  const ctx = makeCtx({
+    emitStatusCalls: emitCalls,
+    linkSource: 'api',
+    verifyFn: fakeVerify,
+  });
+
+  const step = paypalVerifyStep();
+  const res = await step.run(ctx);
+
+  assert.strictEqual(res.ok, false);
+  const verifyErrEmit = emitCalls.find(e => e.status === 'verify_error' && e.phase === 'done');
+  assert.ok(verifyErrEmit, 'protocol mode must still emit verify_error/done');
 });

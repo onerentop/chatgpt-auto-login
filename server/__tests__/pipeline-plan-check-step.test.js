@@ -11,10 +11,12 @@ const { AccountContext } = require('../../server/pipeline/context');
 // --------------------------------------------------------------------------
 // ctx 构造辅助
 // --------------------------------------------------------------------------
-function makeCtx({ planType } = {}) {
+function makeCtx({ planType, browserMode = false } = {}) {
   const deps = {
     emitStatus: () => {},
     summary: { total: 1, success: 0, error: 0, noLink: 0, noJpProxy: 0, noPromo: 0, verifyError: 0 },
+    progress: '1/1',
+    browserMode,
     statusDB: {
       get: () => null,
       set: () => {},
@@ -206,4 +208,118 @@ test('plan-check never mutates summary (deferred to paypal-pkce step)', async ()
 
   assert.deepStrictEqual(ctx.deps.summary, originalSummary,
     'summary must not be mutated by plan-check (deferred to paypal-pkce via alreadyPlus flag)');
+});
+
+// ==========================================================================
+// P2 Part C: plan-check conditional log (browserMode vs protocol mode)
+// ==========================================================================
+
+// --------------------------------------------------------------------------
+// 测试 13：browserMode=true + Plus → 日志 "Plan: plus (Plus member)"，alreadyPlus=true
+// --------------------------------------------------------------------------
+test('browserMode=true + plus planType → logs Plan line (Plus member), alreadyPlus=true', async () => {
+  const logs = [];
+  const deps = {
+    emitStatus: () => {},
+    summary: {},
+    progress: '2/5',
+    browserMode: true,
+    statusDB: { get: () => null, set: () => {} },
+    save: async () => {},
+  };
+  const account = { email: 'b@example.com', password: 'pw' };
+  const ctx = new AccountContext(account, deps);
+  ctx.outputs.login = { accessToken: 'tok', session: {}, planType: 'plus' };
+
+  // Capture console.log
+  const origLog = console.log;
+  console.log = (...args) => { logs.push(args.join(' ')); };
+  try {
+    const step = planCheckStep();
+    const res = await step.run(ctx);
+    assert.strictEqual(res.ok, true);
+    assert.strictEqual(ctx.flags.alreadyPlus, true, 'alreadyPlus must be set in browserMode');
+    // Must log Plan line
+    const planLog = logs.find(l => l.includes('Plan:') && l.includes('Plus member'));
+    assert.ok(planLog, 'browserMode must log Plan line with Plus member');
+    // Must NOT log "Already Plus" (protocol-only log)
+    const alreadyPlusLog = logs.find(l => l.includes('Already Plus'));
+    assert.strictEqual(alreadyPlusLog, undefined, 'browserMode must NOT log "Already Plus"');
+  } finally {
+    console.log = origLog;
+  }
+});
+
+// --------------------------------------------------------------------------
+// 测试 14：browserMode=true + free planType → 日志 "Plan: free (Not Plus)"，alreadyPlus 未设
+// --------------------------------------------------------------------------
+test('browserMode=true + free planType → logs Plan line (Not Plus), alreadyPlus not set', async () => {
+  const logs = [];
+  const deps = {
+    emitStatus: () => {},
+    summary: {},
+    progress: '1/3',
+    browserMode: true,
+    statusDB: { get: () => null, set: () => {} },
+    save: async () => {},
+  };
+  const account = { email: 'c@example.com', password: 'pw' };
+  const ctx = new AccountContext(account, deps);
+  ctx.outputs.login = { accessToken: 'tok', session: {}, planType: 'free' };
+
+  const origLog = console.log;
+  console.log = (...args) => { logs.push(args.join(' ')); };
+  try {
+    const step = planCheckStep();
+    const res = await step.run(ctx);
+    assert.strictEqual(res.ok, true);
+    assert.ok(!ctx.flags.alreadyPlus, 'alreadyPlus must NOT be set for free in browserMode');
+    const planLog = logs.find(l => l.includes('Plan:') && l.includes('Not Plus'));
+    assert.ok(planLog, 'browserMode must log Plan line with Not Plus for free accounts');
+  } finally {
+    console.log = origLog;
+  }
+});
+
+// --------------------------------------------------------------------------
+// 测试 15：protocol mode + Plus → 日志 "Already Plus"，不含 "Plan:"
+// --------------------------------------------------------------------------
+test('protocol mode + plus planType → logs "Already Plus", no Plan: line', async () => {
+  const logs = [];
+  const ctx = makeCtx({ planType: 'plus', browserMode: false });
+
+  const origLog = console.log;
+  console.log = (...args) => { logs.push(args.join(' ')); };
+  try {
+    const step = planCheckStep();
+    const res = await step.run(ctx);
+    assert.strictEqual(res.ok, true);
+    assert.strictEqual(ctx.flags.alreadyPlus, true);
+    const alreadyPlusLog = logs.find(l => l.includes('Already Plus'));
+    assert.ok(alreadyPlusLog, 'protocol mode must log "Already Plus"');
+    const planLog = logs.find(l => l.includes('Plan:'));
+    assert.strictEqual(planLog, undefined, 'protocol mode must NOT log Plan: line');
+  } finally {
+    console.log = origLog;
+  }
+});
+
+// --------------------------------------------------------------------------
+// 测试 16：protocol mode + free → 無日志（no log at all for free accounts in protocol mode）
+// --------------------------------------------------------------------------
+test('protocol mode + free planType → no log, alreadyPlus not set', async () => {
+  const logs = [];
+  const ctx = makeCtx({ planType: 'free', browserMode: false });
+
+  const origLog = console.log;
+  console.log = (...args) => { logs.push(args.join(' ')); };
+  try {
+    const step = planCheckStep();
+    const res = await step.run(ctx);
+    assert.strictEqual(res.ok, true);
+    assert.ok(!ctx.flags.alreadyPlus);
+    assert.strictEqual(logs.length, 0, 'protocol mode + free must produce no log');
+  } finally {
+    console.log = origLog;
+  }
 });

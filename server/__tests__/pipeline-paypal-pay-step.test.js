@@ -571,3 +571,138 @@ test('protocol-mode unchanged: browserMode falsy, resources.browser null → lau
   assert.strictEqual(resources.chromeProc, null, 'resources.chromeProc must be nulled in protocol-mode finally');
   assert.strictEqual(resources.tempDir,    null, 'resources.tempDir must be nulled in protocol-mode finally');
 });
+
+// ==========================================================================
+// P2 browserMode gate tests (Part A): browser mode suppresses gated terminal emits
+// EXCEPT aborted (always fires in both modes).
+// Protocol mode (browserMode falsy) must be byte-identical.
+// ==========================================================================
+
+// Helper: make a browser-mode ctx with a preset browser (to skip launchChrome).
+function makeBrowserModeCtx({ autoPaymentFn, emitStatusCalls = [] } = {}) {
+  const presetBrowserObj = {
+    _closed: false,
+    contexts() {
+      return [{
+        pages: () => [{
+          _url: 'https://pay.openai.com/xyz',
+          url() { return this._url; },
+          async goto() {},
+          locator(_sel) { return { first: () => ({ waitFor: async () => {} }) }; },
+        }],
+        newPage: async function () { return this.pages()[0]; },
+      }];
+    },
+    async close() { this._closed = true; },
+  };
+
+  return makeCtx({
+    emitStatusCalls,
+    autoPaymentFn,
+    browserMode: true,
+    presetBrowser:    presetBrowserObj,
+    presetChromeProc: { pid: 9000, kill() {} },
+    presetTempDir:    '/tmp/browser-engine-dir',
+  });
+}
+
+// --------------------------------------------------------------------------
+// 测试 12：browserMode=true + notFreeTrial → 不 emit no_link，flags 仍设置, ok:false
+// --------------------------------------------------------------------------
+test('browserMode=true + notFreeTrial → NO emit no_link, flags set, ok:false', async () => {
+  const emitCalls = [];
+  const fakeAutoPayment = async () => {
+    const err = new Error('not a free trial page');
+    err.code  = 'NOT_FREE_TRIAL';
+    throw err;
+  };
+  const { ctx, summary } = makeBrowserModeCtx({ autoPaymentFn: fakeAutoPayment, emitStatusCalls: emitCalls });
+
+  const step = paypalPayStep();
+  const res  = await step.run(ctx);
+
+  assert.strictEqual(res.ok, false);
+  const noLinkEmit = emitCalls.find(e => e.status === 'no_link');
+  assert.strictEqual(noLinkEmit, undefined, 'browserMode must suppress no_link emit for NOT_FREE_TRIAL');
+  // running/payment still fires
+  const runningEmit = emitCalls.find(e => e.status === 'running' && e.phase === 'payment');
+  assert.ok(runningEmit, 'running/payment must still fire in browserMode');
+  assert.strictEqual(summary.noLink, 1, 'summary.noLink must still be incremented in browserMode');
+  assert.strictEqual(ctx.flags.finalStatus, 'no_link');
+});
+
+// --------------------------------------------------------------------------
+// 测试 13：browserMode=true + status passthrough → 不 emit terminal，flags 仍设置, ok:false
+// --------------------------------------------------------------------------
+test('browserMode=true + status passthrough → NO emit, flags set, ok:false', async () => {
+  const emitCalls = [];
+  const fakeAutoPayment = async () => ({ success: false, status: 'paypal_captcha', reason: 'r' });
+  const { ctx, summary } = makeBrowserModeCtx({ autoPaymentFn: fakeAutoPayment, emitStatusCalls: emitCalls });
+
+  const step = paypalPayStep();
+  const res  = await step.run(ctx);
+
+  assert.strictEqual(res.ok, false);
+  const captchaEmit = emitCalls.find(e => e.status === 'paypal_captcha');
+  assert.strictEqual(captchaEmit, undefined, 'browserMode must suppress status-passthrough emit');
+  assert.strictEqual(summary.error, 1, 'summary.error must still be incremented in browserMode');
+  assert.strictEqual(ctx.flags.finalStatus, 'paypal_captcha');
+});
+
+// --------------------------------------------------------------------------
+// 测试 14：browserMode=true + plain error → 不 emit error，flags 仍设置, ok:false
+// --------------------------------------------------------------------------
+test('browserMode=true + plain error → NO emit error, flags set, ok:false', async () => {
+  const emitCalls = [];
+  const fakeAutoPayment = async () => ({ success: false });
+  const { ctx, summary } = makeBrowserModeCtx({ autoPaymentFn: fakeAutoPayment, emitStatusCalls: emitCalls });
+
+  const step = paypalPayStep();
+  const res  = await step.run(ctx);
+
+  assert.strictEqual(res.ok, false);
+  const errEmit = emitCalls.find(e => e.status === 'error');
+  assert.strictEqual(errEmit, undefined, 'browserMode must suppress plain error emit');
+  assert.strictEqual(summary.error, 1, 'summary.error must still be incremented in browserMode');
+  assert.strictEqual(ctx.flags.finalStatus, 'error');
+});
+
+// --------------------------------------------------------------------------
+// 测试 15：browserMode=true + aborted → aborted/payment STILL emits (exception to gate)
+// --------------------------------------------------------------------------
+test('browserMode=true + aborted → aborted/payment STILL emits (exception to browserMode gate)', async () => {
+  const emitCalls = [];
+  const fakeAutoPayment = async () => ({ success: false, status: 'aborted' });
+  const { ctx, summary } = makeBrowserModeCtx({ autoPaymentFn: fakeAutoPayment, emitStatusCalls: emitCalls });
+
+  const step = paypalPayStep();
+  const res  = await step.run(ctx);
+
+  assert.strictEqual(res.ok, false);
+  const abortedEmit = emitCalls.find(e => e.status === 'aborted' && e.phase === 'payment');
+  assert.ok(abortedEmit, 'aborted/payment must STILL emit in browserMode (not gated)');
+  assert.strictEqual(summary.aborted, 1, 'summary.aborted must still be incremented');
+  assert.strictEqual(ctx.flags.finalStatus, 'aborted');
+});
+
+// --------------------------------------------------------------------------
+// 测试 16：protocol mode (browserMode falsy) — status passthrough emit still fires
+// --------------------------------------------------------------------------
+test('protocol mode (browserMode falsy) — status passthrough emit still fires', async () => {
+  const emitCalls = [];
+  const fakeAutoPayment = async () => ({ success: false, status: 'paypal_captcha', reason: 'r' });
+
+  // browserMode not passed → undefined → falsy → gate opens
+  const { ctx } = makeCtx({
+    emitStatusCalls: emitCalls,
+    autoPaymentFn:   fakeAutoPayment,
+    // browserMode not passed
+  });
+
+  const step = paypalPayStep();
+  const res  = await step.run(ctx);
+
+  assert.strictEqual(res.ok, false);
+  const captchaEmit = emitCalls.find(e => e.status === 'paypal_captcha' && e.phase === 'payment');
+  assert.ok(captchaEmit, 'protocol mode must still emit status passthrough');
+});

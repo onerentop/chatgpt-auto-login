@@ -80,21 +80,21 @@ function cpaStep() {
       // ====================================================================
       if (ctx.flags.alreadyPlus) {
         // engine.js:378
-        console.log(`${progress} CPA registration...`);
+        console.log(`[${progress}] CPA registration...`);
         // engine.js:379
         emitStatus({ email, status: 'running', phase: 'cpa', progress });
       } else {
         // engine.js:629
-        console.log(`${progress} Phase 4: CPA registration...`);
+        console.log(`[${progress}] Phase 4: CPA registration...`);
       }
 
       // engine.js:380-386 (alreadyPlus) / 630-636 (post-pay) — try/catch 共同逻辑
       try {
         const cpaOk = await registerCPA(ctx.deps.resources.browser, email, account);
-        if (cpaOk) console.log(`${progress} CPA OAuth done.`);
-        else console.log(`${progress} CPA OAuth may have issues, check manually.`);
+        if (cpaOk) console.log(`[${progress}] CPA OAuth done.`);
+        else console.log(`[${progress}] CPA OAuth may have issues, check manually.`);
       } catch (e) {
-        console.log(`${progress} CPA error: ${e.message}`);
+        console.log(`[${progress}] CPA error: ${e.message}`);
       }
 
       // CPA 不改变 ctx.flags.finalStatus
