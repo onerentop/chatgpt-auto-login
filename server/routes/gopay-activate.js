@@ -5,7 +5,7 @@ const fs = require('fs');
 const engine = require('../gopay-engine');
 
 const router = express.Router();
-const GOPAY_CONFIG = path.join(__dirname, '..', '..', 'gopay', 'config', 'config.json');
+const MAIN_CONFIG = path.join(__dirname, '..', '..', 'config.json');
 
 // POST /api/gopay-activate/start — start activation for one account
 router.post('/start', (req, res) => {
@@ -34,14 +34,18 @@ router.get('/status', (_req, res) => {
 // GET /api/gopay-activate/config — read gopay config (masked)
 router.get('/config', (_req, res) => {
   try {
-    const cfg = JSON.parse(fs.readFileSync(GOPAY_CONFIG, 'utf-8'));
-    if (cfg.sms?.api_key) cfg.sms.api_key = cfg.sms.api_key.slice(0, 6) + '***';
-    if (cfg.gopay?.register_proxy) {
-      const p = cfg.gopay.register_proxy;
-      const at = p.indexOf('@');
-      if (at > 0) cfg.gopay.register_proxy = '***@' + p.slice(at + 1);
-    }
-    res.json(cfg);
+    const cfg = JSON.parse(fs.readFileSync(MAIN_CONFIG, 'utf-8'));
+    const result = {
+      gopay: cfg.gopay || { defaultPin: '147258', smsProvider: 'smsbower' },
+      smsbower: cfg.phonePool?.smsbower || {},
+      smscloud: cfg.phonePool?.smscloud || {},
+      idGopay: cfg.proxy?.idGopay || {},
+    };
+    if (result.smsbower.apiKey) result.smsbower.apiKey = result.smsbower.apiKey.slice(0, 6) + '***';
+    if (result.smscloud.apiKey) result.smscloud.apiKey = result.smscloud.apiKey.slice(0, 6) + '***';
+    const tpl = result.idGopay.proxyTemplate || '';
+    if (tpl.includes('@')) result.idGopay.proxyTemplate = '***@' + tpl.split('@').pop();
+    res.json(result);
   } catch (e) {
     res.status(404).json({ error: 'Config not found', detail: e.message });
   }
@@ -58,12 +62,14 @@ router.post('/rotate-ip', async (_req, res) => {
   }
 });
 
-// POST /api/gopay-activate/config — update gopay config
+// POST /api/gopay-activate/config — update gopay config (merge into main config.json)
 router.post('/config', (req, res) => {
   try {
-    const dir = path.dirname(GOPAY_CONFIG);
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(GOPAY_CONFIG, JSON.stringify(req.body, null, 2));
+    const cfg = JSON.parse(fs.readFileSync(MAIN_CONFIG, 'utf-8'));
+    if (req.body.gopay) cfg.gopay = { ...(cfg.gopay || {}), ...req.body.gopay };
+    if (req.body.smsbower) cfg.phonePool = { ...(cfg.phonePool || {}), smsbower: { ...(cfg.phonePool?.smsbower || {}), ...req.body.smsbower } };
+    if (req.body.idGopay) cfg.proxy = { ...(cfg.proxy || {}), idGopay: { ...(cfg.proxy?.idGopay || {}), ...req.body.idGopay } };
+    fs.writeFileSync(MAIN_CONFIG, JSON.stringify(cfg, null, 2));
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: e.message });

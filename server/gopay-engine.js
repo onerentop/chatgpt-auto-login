@@ -12,7 +12,7 @@ const EventEmitter = require('events');
 
 const STRIPE_SCRIPT = path.join(__dirname, '..', 'stripe_gopay_flow.py');
 const GOPAY_SCRIPT = path.join(__dirname, '..', 'gopay_activate.py');
-const GOPAY_CONFIG = path.join(__dirname, '..', 'gopay', 'config', 'config.json');
+const MAIN_CONFIG = path.join(__dirname, '..', 'config.json');
 
 const _OTP_RE = /\b\d{4,6}\b/g;
 const _TOKEN_RE = /Bearer\s+\S+|eyJ[A-Za-z0-9_-]{20,}/g;
@@ -70,18 +70,12 @@ class GoPayEngine extends EventEmitter {
       // Phase 4 → Phase 3 → Phase 5（gopay_activate.py 内部按此顺序执行）
       // Phase 4 耗时长（注册钱包），先做；Phase 3 拿 snap token（15 分钟有效），紧接 Phase 5
       this._setPhase('gopay_activate');
+      const mainCfg = JSON.parse(fs.readFileSync(MAIN_CONFIG, 'utf-8'));
       const gopayInput = {
         access_token: accessToken,
-        pin: '147258',
+        pin: mainCfg.gopay?.defaultPin || '147258',
       };
       const gopayEnv = {};
-      try {
-        const cfg = JSON.parse(fs.readFileSync(GOPAY_CONFIG, 'utf-8'));
-        const proxy = cfg.gopay?.register_proxy || '';
-        if (proxy) {
-          gopayEnv.GOPAY_PROXY = proxy;
-        }
-      } catch { /* no config, use env default */ }
 
       const gopayResult = await this._spawnPython(GOPAY_SCRIPT, gopayInput, gopayEnv, 600000);
 
