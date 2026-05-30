@@ -14,9 +14,9 @@ const { gopayVerifyStep }   = require('./steps/gopay-verify');
 
 function buildPipeline({ login = 'protocol', payment = 'paypal' } = {}) {
   if (payment === 'gopay') {
-    // gopay 路径：无 login step（引擎外部注入 ctx.outputs.login = {accessToken, session, planType}）
-    // 顺序：plan-check → gopay-register → gopay-pay → gopay-verify
+    // gopay 的 login 恒为 protocol（纯协议注册登录 → ctx.outputs.login）
     return [
+      loginStep({ login: 'protocol' }),
       planCheckStep(),
       gopayRegisterStep(),
       gopayPayStep(),
