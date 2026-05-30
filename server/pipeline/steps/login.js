@@ -1,8 +1,11 @@
 // server/pipeline/steps/login.js
 // P1 迁移：把 ProtocolEngine.start() 中的 Phase 1（登录）行为逐行搬运到独立 step。
 //
-// 行为来源：protocol-engine.js 第 615–724 行（缓存快路径 + 协议登录 + DB 持久化）。
+// 行为来源（protocol）：protocol-engine.js 第 615–724 行（缓存快路径 + 协议登录 + DB 持久化）。
 // 以及 protocol-engine.js 第 29–78 行（runProtocolRegister / _runProtocolRegisterOnce）。
+//
+// 行为来源（browser）：server/engine.js 第 221–333 行（缓存快路径 + Playwright 登录 + DB 持久化）。
+// 浏览器策略差异详见 docs/superpowers/plans/inventory/browser-engine.md Section B1（D-L1..D-L7）。
 //
 // 禁止：不得改任何分支、重试次数、状态字符串、错误消息或顺序。
 // 若某处看起来冗余，保持原样。
@@ -10,6 +13,7 @@
 'use strict';
 
 const path = require('path');
+const os = require('os');
 const { spawn } = require('child_process');
 const { defineStep } = require('../step');
 
@@ -95,10 +99,187 @@ function _runProtocolRegisterOnce(account, engine) {
  * 测试接缝（test seam，仅供单元测试注入，生产不传）：
  *   ctx.deps.__runProtocolRegister — 替换真正的 runProtocolRegister，避免测试 spawn Python
  */
+// --------------------------------------------------------------------------
+// Browser login strategy（P2）
+// 行为来源：server/engine.js line 221-333（逐字搬运，零逻辑丢失）
+// D-L1: loginAccount(browser, account) 替换 runProtocolRegister（Python spawn）
+// D-L2: launchChrome + waitForCDP 在 Phase 1 启动；句柄写入 ctx.deps.resources
+// D-L3: emitStatus phase='login'（非 'protocol-login'）
+// D-L4: statusDB.set phase='login'（非 'protocol-login'）
+// D-L5: proxy 记账 tag='login_net_error'（非 'protocol_net_error'）
+// D-L6: 在 ctx.outputs.login 注入 planType（与协议策略对称，供 plan-check step 使用）
+// D-L7: ctx.outputs.login 携带 lastOtp（来自 loginAccount 返回；缓存路径设为 ''）
+// --------------------------------------------------------------------------
+function _buildBrowserLoginStep() {
+  return defineStep({
+    id: 'login',
+    label: '登录 + 获取 access token（browser 策略）',
+
+    // shouldSkip 永远返回 false：缓存快路径在 run() 内部处理。
+    shouldSkip: () => false,
+
+    async run(ctx) {
+      const { account } = ctx;
+      const {
+        emitStatus,
+        summary,
+        proxyMgr,
+        resources,
+        progress,
+        statusDB,
+      } = ctx.deps;
+
+      // 测试接缝：注入假实现，跳过真实 Chrome/Playwright 调用
+      // ctx.deps.__loginAccount      → 替换 loginAccount（避免测试启动真实 Chrome）
+      // ctx.deps.__launchChrome      → 替换 launchChrome
+      // ctx.deps.__waitForCDP        → 替换 waitForCDP
+      // ctx.deps.__findFreePort      → 替换 findFreePort
+      const _loginAccountFn  = ctx.deps.__loginAccount  || require('../../../login').loginAccount;
+      const _launchChromeFn  = ctx.deps.__launchChrome  || require('../../chrome').launchChrome;
+      const _waitForCDPFn    = ctx.deps.__waitForCDP    || require('../../chrome').waitForCDP;
+      const _findFreePortFn  = ctx.deps.__findFreePort  || require('../../chrome').findFreePort;
+
+      // ====================================================================
+      // engine.js:221-241
+      // Cached-login fast path: if a previous login persisted a JWT and the
+      // exp is still in the future (with 60s buffer), reconstitute loginResult
+      // from the DB and skip browser login + Chrome launch entirely.
+      // ====================================================================
+      const JWT_BUFFER_SEC = 60;
+      let loginResult = null;
+
+      if (ctx.prevPersisted.last_access_token) {
+        const { decodeJwtExp } = require('../../liveness/checker');
+        const exp = decodeJwtExp(ctx.prevPersisted.last_access_token);
+        if (exp > Date.now() / 1000 + JWT_BUFFER_SEC) {
+          let session = null;
+          try { session = JSON.parse(ctx.prevPersisted.last_session_json || '{}'); }
+          catch { session = null; }
+          if (session) {
+            // D-L7: lastOtp='' on cache hit（engine.js:234）
+            loginResult = {
+              accessToken: ctx.prevPersisted.last_access_token,
+              session,
+              lastOtp: '',
+            };
+            const minLeft = Math.floor((exp - Date.now() / 1000) / 60);
+            console.log(`[${progress}] Phase 1: reusing cached access token (exp in ${minLeft} min)`);
+            // D-L3: phase='cached-login'（与协议引擎一致）
+            emitStatus({ email: account.email, status: 'running', phase: 'cached-login', progress });
+          }
+        }
+      }
+
+      // ====================================================================
+      // engine.js:267-316
+      // Fresh login: launch Chrome, connect CDP, call loginAccount.
+      // Skipped when loginResult was reconstituted from cache above.
+      // ====================================================================
+      if (!loginResult) {
+        // D-L3: phase='login'（非 'protocol-login'）（engine.js:272-277）
+        emitStatus({ email: account.email, status: 'running', phase: 'login', progress });
+        console.log(`[${progress}] Phase 1: Login...`);
+
+        // D-L2: findFreePort + tempDir + launchChrome + waitForCDP（engine.js:249-282）
+        // 句柄写入 ctx.deps.resources，供 paypal-pay step 复用和 engine-shell cleanup 使用。
+        const port = await _findFreePortFn();
+        const tempDir = path.join(os.tmpdir(), `chatgpt-login-${Date.now()}`);
+
+        // store handles in resources BEFORE launch so engine-shell stop() can always clean up
+        resources.chromeProc = _launchChromeFn(port, tempDir, {});
+        resources.tempDir = tempDir;
+        resources.browser = await _waitForCDPFn(port);
+
+        // D-L1: loginAccount(browser, account) —— engine.js:283
+        const browser = resources.browser;
+        loginResult = await _loginAccountFn(browser, account);
+
+        // engine.js:285-316: failure / success branches
+        if (loginResult.status !== 'success' || !loginResult.accessToken) {
+          const isDeactivated = loginResult.status === 'deactivated';
+          const statusOut = isDeactivated ? 'deactivated' : 'error';
+          console.log(`[${progress}] Login ${isDeactivated ? 'account_deactivated' : 'failed'}: ${loginResult.reason || loginResult.status}`);
+
+          // T9 proxy accounting（engine.js:290-298）
+          // D-L5: tag 字符串 'login_net_error'（协议引擎用 'protocol_net_error'）
+          if (!isDeactivated && proxyMgr.isProxyNetError(loginResult.reason)) {
+            if (proxyMgr.getState().enabled) {
+              try { proxyMgr.recordBadAttempt(proxyMgr.getState().currentNode, 'main', 'login_net_error'); } catch {}
+            }
+          } else if (isDeactivated) {
+            // deactivated = 账号问题，节点工作正常（engine.js:294-298）
+            if (proxyMgr.getState().enabled) {
+              try { proxyMgr.recordGoodAttempt(proxyMgr.getState().currentNode, 'main'); } catch {}
+            }
+          }
+
+          // engine.js:304-311
+          const reason = isDeactivated ? 'account_deactivated' : `Login: ${loginResult.reason || loginResult.status}`;
+          emitStatus({
+            email: account.email,
+            status: statusOut,
+            // D-L3: phase='login'（非 'protocol-login'）；deactivated 用 'done'
+            phase: isDeactivated ? 'done' : 'login',
+            progress,
+            reason,
+          });
+          summary.error++;
+          return { ok: false, reason };
+        }
+
+        // G2: 登录成功，记录节点工作正常（engine.js:313-316）
+        if (proxyMgr.getState().enabled) {
+          try { proxyMgr.recordGoodAttempt(proxyMgr.getState().currentNode, 'main'); } catch {}
+        }
+        console.log(`[${progress}] Login OK, accessToken obtained.`);
+      }
+
+      // ====================================================================
+      // engine.js:325-333（D-L4）
+      // Post-login DB persistence: write token so the next retry can skip
+      // the browser login entirely. phase='login'（非 'protocol-login'）。
+      // ====================================================================
+      if (loginResult && loginResult.accessToken) {
+        statusDB.set(account.email, {
+          status: 'running',
+          // D-L4: phase='login'（协议引擎为 'protocol-login'）
+          phase: 'login',
+          progress,
+          accessToken: loginResult.accessToken,
+          sessionJson: JSON.stringify(loginResult.session || {}),
+        });
+      }
+
+      // ====================================================================
+      // 成功：将产物写入 ctx.outputs.login
+      // D-L6: 注入 planType（与协议策略对称，plan-check step 读取）
+      // D-L7: 携带 lastOtp（PKCE 阶段 fetchTokensViaPKCE 需要）
+      // ====================================================================
+      const session = loginResult.session;
+      const planType = session?.account?.planType || session?.chatgpt_plan_type || 'free';
+      ctx.outputs.login = {
+        accessToken: loginResult.accessToken,
+        session,
+        planType,
+        lastOtp: loginResult.lastOtp || '',  // D-L7
+      };
+
+      return { ok: true };
+    },
+  });
+}
+
+// --------------------------------------------------------------------------
+
 function loginStep(cfg = {}) {
   const strategy = cfg.login || 'protocol';
+
+  // P2 浏览器策略
+  if (strategy === 'browser') {
+    return _buildBrowserLoginStep();
+  }
+
   if (strategy !== 'protocol') {
-    // P2 扩展点：浏览器策略 TODO
     throw new Error(`loginStep: strategy '${strategy}' not implemented yet`);
   }
 

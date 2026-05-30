@@ -369,8 +369,8 @@ test('shouldSkip always returns false', () => {
 });
 
 // --------------------------------------------------------------------------
-// 测试 12：未知策略时构造失败
+// 测试 12：未知策略时构造失败（P2 已实现 browser，用真正未知的 tag 触发）
 // --------------------------------------------------------------------------
 test('unknown strategy throws at factory time', () => {
-  assert.throws(() => loginStep({ login: 'browser' }), /not implemented yet/);
+  assert.throws(() => loginStep({ login: 'foobar' }), /not implemented yet/);
 });
