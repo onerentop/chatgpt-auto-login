@@ -139,11 +139,17 @@
             <el-form-item label="apiKey">
               <el-input v-model="form.phonePool.smsbower.apiKey" type="password" show-password placeholder="SmsBower API Key" style="width: 360px" />
             </el-form-item>
-            <el-form-item label="serviceCode">
-              <el-input v-model="form.phonePool.smsbower.serviceCode" placeholder="ni" style="width: 120px" />
+            <el-form-item label="服务">
+              <el-select v-model="form.phonePool.smsbower.serviceCode" placeholder="先拉服务列表" filterable clearable style="width: 240px">
+                <el-option v-for="s in smsbowerServices" :key="s.code" :label="`${s.name} (${s.code})`" :value="s.code" />
+              </el-select>
+              <el-button size="small" :loading="loadingSmsbowerServices" @click="fetchSmsbowerServices" style="margin-left: 8px">拉服务列表</el-button>
             </el-form-item>
-            <el-form-item label="countryCode">
-              <el-input-number v-model="form.phonePool.smsbower.countryCode" :min="1" />
+            <el-form-item label="国家">
+              <el-select v-model="form.phonePool.smsbower.countryCode" placeholder="先拉国家列表" filterable clearable style="width: 240px">
+                <el-option v-for="c in smsbowerCountries" :key="c.id" :label="`${c.name} (id=${c.id})`" :value="c.id" />
+              </el-select>
+              <el-button size="small" :loading="loadingSmsbowerCountries" @click="fetchSmsbowerCountries" style="margin-left: 8px">拉国家列表</el-button>
             </el-form-item>
             <el-form-item label="maxPrice (USD)">
               <el-input-number v-model="form.phonePool.smsbower.maxPrice" :min="0" :step="0.01" :precision="2" />
@@ -155,11 +161,17 @@
             <el-form-item label="apiKey">
               <el-input v-model="form.phonePool.herosms.apiKey" type="password" show-password placeholder="HeroSms API Key" style="width: 360px" />
             </el-form-item>
-            <el-form-item label="serviceCode">
-              <el-input v-model="form.phonePool.herosms.serviceCode" placeholder="ni" style="width: 120px" />
+            <el-form-item label="服务">
+              <el-select v-model="form.phonePool.herosms.serviceCode" placeholder="先拉服务列表" filterable clearable style="width: 240px">
+                <el-option v-for="s in herosmsServices" :key="s.code" :label="`${s.name} (${s.code})`" :value="s.code" />
+              </el-select>
+              <el-button size="small" :loading="loadingHerosmsServices" @click="fetchHerosmsServices" style="margin-left: 8px">拉服务列表</el-button>
             </el-form-item>
-            <el-form-item label="countryCode">
-              <el-input-number v-model="form.phonePool.herosms.countryCode" :min="1" />
+            <el-form-item label="国家">
+              <el-select v-model="form.phonePool.herosms.countryCode" placeholder="先拉国家列表" filterable clearable style="width: 240px">
+                <el-option v-for="c in herosmsCountries" :key="c.id" :label="`${c.name} (id=${c.id})`" :value="c.id" />
+              </el-select>
+              <el-button size="small" :loading="loadingHerosmsCountries" @click="fetchHerosmsCountries" style="margin-left: 8px">拉国家列表</el-button>
             </el-form-item>
             <el-form-item label="maxPrice (USD)">
               <el-input-number v-model="form.phonePool.herosms.maxPrice" :min="0" :step="0.01" :precision="2" />
@@ -171,11 +183,17 @@
             <el-form-item label="apiKey">
               <el-input v-model="form.phonePool.nexsms.apiKey" type="password" show-password placeholder="NexSms API Key" style="width: 360px" />
             </el-form-item>
-            <el-form-item label="serviceCode">
-              <el-input v-model="form.phonePool.nexsms.serviceCode" placeholder="ni" style="width: 120px" />
+            <el-form-item label="服务">
+              <el-select v-model="form.phonePool.nexsms.serviceCode" placeholder="先拉服务列表" filterable clearable style="width: 240px">
+                <el-option v-for="s in nexsmsServices" :key="s.code" :label="`${s.name} (${s.code})`" :value="s.code" />
+              </el-select>
+              <el-button size="small" :loading="loadingNexsmsServices" @click="fetchNexsmsServices" style="margin-left: 8px">拉服务列表</el-button>
             </el-form-item>
-            <el-form-item label="countryId">
-              <el-input-number v-model="form.phonePool.nexsms.countryId" :min="1" />
+            <el-form-item label="国家">
+              <el-select v-model="form.phonePool.nexsms.countryId" placeholder="先拉国家列表" filterable clearable style="width: 240px">
+                <el-option v-for="c in nexsmsCountries" :key="c.id" :label="`${c.name} (id=${c.id})`" :value="c.id" />
+              </el-select>
+              <el-button size="small" :loading="loadingNexsmsCountries" @click="fetchNexsmsCountries" style="margin-left: 8px">拉国家列表</el-button>
             </el-form-item>
             <el-form-item label="maxPrice (USD)">
               <el-input-number v-model="form.phonePool.nexsms.maxPrice" :min="0" :step="0.01" :precision="2" />
@@ -441,6 +459,22 @@ const smscloudBalance = ref(null)
 const loadingSmscloudServices = ref(false)
 const loadingSmscloudCountries = ref(false)
 const testingSmscloudBalance = ref(false)
+// smsbower 动态数据
+const smsbowerServices = ref([])
+const smsbowerCountries = ref([])
+const loadingSmsbowerServices = ref(false)
+const loadingSmsbowerCountries = ref(false)
+// herosms 动态数据
+const herosmsServices = ref([])
+const herosmsCountries = ref([])
+const loadingHerosmsServices = ref(false)
+const loadingHerosmsCountries = ref(false)
+// nexsms 动态数据
+const nexsmsServices = ref([])
+const nexsmsCountries = ref([])
+const loadingNexsmsServices = ref(false)
+const loadingNexsmsCountries = ref(false)
+
 const allNodeTags = ref([])
 const jpKddiTagSet = ref(new Set())
 const usTagSet = ref(new Set())
@@ -859,6 +893,60 @@ async function fetchSmscloudCountries() {
   } finally {
     loadingSmscloudCountries.value = false
   }
+}
+
+// SmsBower
+async function fetchSmsbowerServices() {
+  loadingSmsbowerServices.value = true
+  try {
+    const { data } = await api.post('/phone-pool/smsbower/services', { apiKey: form.phonePool.smsbower.apiKey })
+    smsbowerServices.value = data.services || []
+  } catch (e) { console.error(e) }
+  loadingSmsbowerServices.value = false
+}
+async function fetchSmsbowerCountries() {
+  loadingSmsbowerCountries.value = true
+  try {
+    const { data } = await api.post('/phone-pool/smsbower/countries', { apiKey: form.phonePool.smsbower.apiKey })
+    smsbowerCountries.value = data.countries || []
+  } catch (e) { console.error(e) }
+  loadingSmsbowerCountries.value = false
+}
+
+// HeroSMS
+async function fetchHerosmsServices() {
+  loadingHerosmsServices.value = true
+  try {
+    const { data } = await api.post('/phone-pool/herosms/services', { apiKey: form.phonePool.herosms.apiKey })
+    herosmsServices.value = data.services || []
+  } catch (e) { console.error(e) }
+  loadingHerosmsServices.value = false
+}
+async function fetchHerosmsCountries() {
+  loadingHerosmsCountries.value = true
+  try {
+    const { data } = await api.post('/phone-pool/herosms/countries', { apiKey: form.phonePool.herosms.apiKey })
+    herosmsCountries.value = data.countries || []
+  } catch (e) { console.error(e) }
+  loadingHerosmsCountries.value = false
+}
+
+// NexSMS
+async function fetchNexsmsServices() {
+  loadingNexsmsServices.value = true
+  try {
+    const { data } = await api.post('/phone-pool/nexsms/services', { apiKey: form.phonePool.nexsms.apiKey })
+    nexsmsServices.value = data.services || []
+  } catch (e) { console.error(e) }
+  loadingNexsmsServices.value = false
+}
+async function fetchNexsmsCountries() {
+  loadingNexsmsCountries.value = true
+  try {
+    const { data } = await api.post('/phone-pool/nexsms/countries', { apiKey: form.phonePool.nexsms.apiKey })
+    nexsmsCountries.value = data.countries || []
+  } catch (e) { console.error(e) }
+  loadingNexsmsCountries.value = false
 }
 
 async function testSmscloudBalance() {

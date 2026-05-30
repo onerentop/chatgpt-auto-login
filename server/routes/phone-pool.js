@@ -178,4 +178,63 @@ router.post('/oapi/test', async (req, res) => {
   }
 });
 
+// SMS-Activate compatible API (smsbower + herosms)
+async function fetchSmsActivateApi(baseUrl, apiKey, action) {
+  const url = `${baseUrl}?api_key=${encodeURIComponent(apiKey)}&action=${action}`;
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  return resp.json();
+}
+
+// SmsBower
+router.post('/smsbower/services', async (req, res) => {
+  try {
+    const data = await fetchSmsActivateApi('https://smsbower.page/stubs/handler_api.php', req.body.apiKey, 'getServicesList');
+    res.json({ services: data.services || [] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/smsbower/countries', async (req, res) => {
+  try {
+    const data = await fetchSmsActivateApi('https://smsbower.page/stubs/handler_api.php', req.body.apiKey, 'getCountries');
+    const countries = Array.isArray(data) ? data.map(c => ({ id: c.id, name: c.eng || c.chn || c.rus || String(c.id) }))
+      : Object.values(data).map(c => ({ id: c.id, name: c.eng || c.chn || c.rus || String(c.id) }));
+    res.json({ countries });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// HeroSMS (same API format, different base URL)
+router.post('/herosms/services', async (req, res) => {
+  try {
+    const data = await fetchSmsActivateApi('https://hero-sms.com/stubs/handler_api.php', req.body.apiKey, 'getServicesList');
+    res.json({ services: data.services || [] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/herosms/countries', async (req, res) => {
+  try {
+    const data = await fetchSmsActivateApi('https://hero-sms.com/stubs/handler_api.php', req.body.apiKey, 'getCountries');
+    const countries = Array.isArray(data) ? data.map(c => ({ id: c.id, name: c.eng || c.chn || c.rus || String(c.id) }))
+      : Object.values(data).map(c => ({ id: c.id, name: c.eng || c.chn || c.rus || String(c.id) }));
+    res.json({ countries });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// NexSMS (REST API format)
+router.post('/nexsms/services', async (req, res) => {
+  try {
+    const resp = await fetch(`https://api.nexsms.net/api/services?apiKey=${encodeURIComponent(req.body.apiKey)}`);
+    const data = await resp.json();
+    res.json({ services: (data.data || []).map(s => ({ code: s.code, name: s.name })) });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/nexsms/countries', async (req, res) => {
+  try {
+    const resp = await fetch(`https://api.nexsms.net/api/countries?apiKey=${encodeURIComponent(req.body.apiKey)}`);
+    const data = await resp.json();
+    res.json({ countries: (data.data || []).map(c => ({ id: c.id, name: c.name })) });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 module.exports = router
