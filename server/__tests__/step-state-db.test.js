@@ -45,3 +45,10 @@ test('list returns all steps for an email', async () => {
 test('get returns null for missing', () => {
   assert.strictEqual(stepStateDB.get('a@x.com', 'nope'), null);
 });
+
+test('reset deletes all steps for an email', async () => {
+  stepStateDB.reset('a@x.com');
+  await save.flush();
+  assert.strictEqual(stepStateDB.list('a@x.com').length, 0);
+  assert.strictEqual(stepStateDB.get('a@x.com', 'login'), null);
+});
