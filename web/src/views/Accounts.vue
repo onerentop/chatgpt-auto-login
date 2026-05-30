@@ -144,6 +144,7 @@
             @delete="del"
             @auth-download="onAuthDownload"
             @copy="onCopy"
+            @open-steps="openStepsDrawer"
           />
         </el-collapse-item>
       </el-collapse>
@@ -160,6 +161,7 @@
         @delete="del"
         @auth-download="onAuthDownload"
         @copy="onCopy"
+        @open-steps="openStepsDrawer"
       />
     </SectionCard>
 
@@ -187,6 +189,9 @@
         <el-button type="primary" data-hotkey="submit" @click="saveEdit">{{ editMode ? '保存' : '添加' }}</el-button>
       </template>
     </el-dialog>
+
+    <!-- Step visualization drawer -->
+    <AccountStepDrawer v-model="drawerOpen" :email="drawerEmail" :live="false" />
   </div>
 </template>
 
@@ -205,11 +210,21 @@ import PageHeader from '../components/ui/PageHeader.vue'
 import SectionCard from '../components/ui/SectionCard.vue'
 import ContextActionBar from '../components/ui/ContextActionBar.vue'
 import AccountsTable from '../components/AccountsTable.vue'
+import AccountStepDrawer from '../components/AccountStepDrawer.vue'
 import { ALIVE_TIER, PLAN_PRIORITY } from '../sortHelpers'
 
 // 平铺视图下指向单个 AccountsTable；分组视图下指向 ref map（每组一个）。
 const flatTableRef = ref(null)
 const groupRefs = ref({})
+
+// Step drawer state
+const drawerOpen = ref(false)
+const drawerEmail = ref('')
+
+function openStepsDrawer(email) {
+  drawerEmail.value = email
+  drawerOpen.value = true
+}
 const accounts = ref([])
 // selected 数组用于既有按钮逻辑（导出/下载/测活/删除）；其底层来源已迁移到
 // globalSelectedSet（跨组跨视图的真实选中集），两者通过 syncSelectedFromGlobal

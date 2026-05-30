@@ -129,11 +129,12 @@
         </span>
       </template>
     </el-table-column>
-    <el-table-column label="操作" width="240">
+    <el-table-column label="操作" width="280">
       <template #default="{ row }">
         <el-button size="small" text type="success" :disabled="!row._hasAuth" @click.stop="emit('auth-download', { email: row.email, format: 'cpa' })">CPA</el-button>
         <el-button size="small" text type="primary" :disabled="!row._hasAuth" @click.stop="emit('auth-download', { email: row.email, format: 'sub2api' })">Sub</el-button>
-        <el-button size="small" text type="primary" @click="emit('edit', row)">编辑</el-button>
+        <el-button size="small" text type="primary" @click.stop="emit('edit', row)">编辑</el-button>
+        <el-button size="small" text type="info" @click.stop="emit('open-steps', row.email)">步骤</el-button>
         <el-popconfirm title="确定删除?" @confirm="emit('delete', row.email)">
           <template #reference><el-button size="small" text type="danger">删除</el-button></template>
         </el-popconfirm>
@@ -155,7 +156,7 @@ const props = defineProps({
   getHistoryLogs: { type: Function, default: () => () => [] },
   getRealtimeLogs: { type: Function, default: () => () => [] },
 })
-const emit = defineEmits(['selection-change', 'row-click', 'edit', 'delete', 'auth-download', 'copy'])
+const emit = defineEmits(['selection-change', 'row-click', 'edit', 'delete', 'auth-download', 'copy', 'open-steps'])
 
 const tableRef = ref(null)
 

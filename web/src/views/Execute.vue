@@ -82,6 +82,7 @@
           @row-action="onRowAction"
           @auth-download="onAuthDownload"
           @row-click="onRowClick"
+          @open-steps="openStepsDrawer"
         />
       </el-collapse-item>
     </el-collapse>
@@ -100,6 +101,7 @@
       @row-action="onRowAction"
       @auth-download="onAuthDownload"
       @row-click="onRowClick"
+      @open-steps="openStepsDrawer"
       style="margin-top:8px"
     />
 
@@ -118,6 +120,9 @@
         </template>
       </el-dropdown>
     </ContextActionBar>
+
+    <!-- Step visualization drawer — live=true so stepStore updates in real time during runs -->
+    <AccountStepDrawer v-model="stepsDrawerOpen" :email="stepsDrawerEmail" :live="true" />
   </div>
 </template>
 
@@ -129,6 +134,7 @@ import { socketState } from '../socket'
 import { statusType, statusLabel, PLUS_STATUSES, ERROR_STATUSES, DEFAULT_EXPANDED_STATUSES, groupAccountsByStatus, isFailedToRetry, EXECUTE_STATUS_FILTER_OPTIONS, GROUP_ORDER } from '../status'
 import { getSelectionSet, clearSelection } from '../selection'
 import AccountTableRows from '../components/AccountTableRows.vue'
+import AccountStepDrawer from '../components/AccountStepDrawer.vue'
 import PageHeader from '../components/ui/PageHeader.vue'
 import SectionCard from '../components/ui/SectionCard.vue'
 import ContextActionBar from '../components/ui/ContextActionBar.vue'
@@ -137,6 +143,15 @@ import { beginPipeline } from '../stores/pipelineStore'
 const running = ref(false)
 const accounts = ref([])
 const autoExpandedEmail = ref('')
+
+// Step drawer state — live=true so socket step-status events update in real time
+const stepsDrawerOpen = ref(false)
+const stepsDrawerEmail = ref('')
+
+function openStepsDrawer(email) {
+  stepsDrawerEmail.value = email
+  stepsDrawerOpen.value = true
+}
 const expandedKeys = ref([...DEFAULT_EXPANDED_STATUSES])
 // v2.34.0: 分组视图开关；v2.43.4: 默认 false（进页面平铺，用户手动开分组）
 const groupingEnabled = ref(false)

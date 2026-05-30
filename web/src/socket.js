@@ -1,6 +1,7 @@
 import { reactive } from 'vue'
 import { io } from 'socket.io-client'
 import { recordAccountStatus, endPipeline } from './stores/pipelineStore'
+import { recordStepStatus } from './stores/stepStore'
 
 let socket = null
 
@@ -121,6 +122,8 @@ export function connectSocket() {
   socket.on('liveness-log', (data) => {
     pushLivenessLog(data.email, data.level || 'info', data.message);
   });
+
+  socket.on('step-status', (d) => recordStepStatus(d))
 
   socket.on('gopay-log', (msg) => {
     socketState.gopayLogs.push(msg)

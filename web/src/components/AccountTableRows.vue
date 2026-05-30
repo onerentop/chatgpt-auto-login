@@ -51,7 +51,7 @@
         <span v-else style="color:var(--app-text-mute)">-</span>
       </template>
     </el-table-column>
-    <el-table-column label="操作" width="80">
+    <el-table-column label="操作" width="120">
       <template #default="{ row }">
         <el-button
           v-if="row._status === 'idle' || isFailedToRetry(row._status)"
@@ -59,6 +59,7 @@
           :disabled="running"
           @click="emit('row-action', { email: row.email, action: row._status === 'idle' ? 'execute' : 'retry' })"
         >{{ row._status === 'idle' ? '执行' : '重试' }}</el-button>
+        <el-button size="small" text type="info" @click.stop="emit('open-steps', row.email)">步骤</el-button>
       </template>
     </el-table-column>
     <el-table-column type="expand">
@@ -107,7 +108,7 @@ const props = defineProps({
   getHistoryLogs: { type: Function, required: true },
   getRealtimeLogs: { type: Function, required: true },
 })
-const emit = defineEmits(['group-selection-change', 'expand-change', 'row-action', 'auth-download', 'row-click'])
+const emit = defineEmits(['group-selection-change', 'expand-change', 'row-action', 'auth-download', 'row-click', 'open-steps'])
 
 // v2.33.0: el-table :row-class-name 钩子，按 row._status 上色
 function rowClass({ row }) {
