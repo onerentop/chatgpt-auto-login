@@ -44,6 +44,8 @@
               <el-radio value="smscloud">smscloud</el-radio>
               <el-radio value="oapi">oapi (CDK 池)</el-radio>
               <el-radio value="smsbower">smsbower</el-radio>
+              <el-radio value="herosms">herosms</el-radio>
+              <el-radio value="nexsms">nexsms</el-radio>
             </el-radio-group>
           </el-form-item>
 
@@ -148,6 +150,38 @@
             </el-form-item>
           </template>
 
+          <!-- herosms 配置 -->
+          <template v-if="form.phonePool.provider === 'herosms'">
+            <el-form-item label="apiKey">
+              <el-input v-model="form.phonePool.herosms.apiKey" type="password" show-password placeholder="HeroSms API Key" style="width: 360px" />
+            </el-form-item>
+            <el-form-item label="serviceCode">
+              <el-input v-model="form.phonePool.herosms.serviceCode" placeholder="ni" style="width: 120px" />
+            </el-form-item>
+            <el-form-item label="countryCode">
+              <el-input-number v-model="form.phonePool.herosms.countryCode" :min="1" />
+            </el-form-item>
+            <el-form-item label="maxPrice (USD)">
+              <el-input-number v-model="form.phonePool.herosms.maxPrice" :min="0" :step="0.01" :precision="2" />
+            </el-form-item>
+          </template>
+
+          <!-- nexsms 配置 -->
+          <template v-if="form.phonePool.provider === 'nexsms'">
+            <el-form-item label="apiKey">
+              <el-input v-model="form.phonePool.nexsms.apiKey" type="password" show-password placeholder="NexSms API Key" style="width: 360px" />
+            </el-form-item>
+            <el-form-item label="serviceCode">
+              <el-input v-model="form.phonePool.nexsms.serviceCode" placeholder="ni" style="width: 120px" />
+            </el-form-item>
+            <el-form-item label="countryId">
+              <el-input-number v-model="form.phonePool.nexsms.countryId" :min="1" />
+            </el-form-item>
+            <el-form-item label="maxPrice (USD)">
+              <el-input-number v-model="form.phonePool.nexsms.maxPrice" :min="0" :step="0.01" :precision="2" />
+            </el-form-item>
+          </template>
+
           <el-divider content-position="left">GoPay 激活</el-divider>
           <el-form-item label="GoPay PIN">
             <el-input v-model="form.gopayPin" placeholder="147258" style="width: 160px" />
@@ -156,6 +190,8 @@
             <el-select v-model="form.gopaySmsProvider" style="width: 180px">
               <el-option label="smsbower" value="smsbower" />
               <el-option label="smscloud" value="smscloud" />
+              <el-option label="herosms" value="herosms" />
+              <el-option label="nexsms" value="nexsms" />
             </el-select>
             <span style="margin-left:8px;color:#909399;font-size:12px">GoPay 注册用印尼号，独立于主流水线 provider</span>
           </el-form-item>
@@ -441,7 +477,7 @@ const form = reactive({
   proxyJpEnabled: true,
   proxyJpKeyword: 'KDDI',
   proxyJpWhitelist: [],
-  phonePool: { enabled: false, maxBindingsPerPhone: 5, smsPollIntervalMs: 3000, smsMaxAttempts: 30, provider: 'local', zhusms: { cardKey: '', service: 'codex', baseUrl: 'https://zhusms.com' }, smscloud: { apiKey: '', baseUrl: 'https://smscloud.sbs/api/system', serviceCode: '', countryCode: [187] }, oapi: { baseUrl: 'https://sms.oapi.vip/api.php', apiKey: '' }, smsbower: { apiKey: '', serviceCode: 'ni', countryCode: 6, maxPrice: 0.15 } },
+  phonePool: { enabled: false, maxBindingsPerPhone: 5, smsPollIntervalMs: 3000, smsMaxAttempts: 30, provider: 'local', zhusms: { cardKey: '', service: 'codex', baseUrl: 'https://zhusms.com' }, smscloud: { apiKey: '', baseUrl: 'https://smscloud.sbs/api/system', serviceCode: '', countryCode: [187] }, oapi: { baseUrl: 'https://sms.oapi.vip/api.php', apiKey: '' }, smsbower: { apiKey: '', serviceCode: 'ni', countryCode: 6, maxPrice: 0.15 }, herosms: { apiKey: '', serviceCode: 'ni', countryCode: 6, maxPrice: 0 }, nexsms: { apiKey: '', serviceCode: 'ni', countryId: 6, maxPrice: 0 } },
   gopayPin: '147258',
   gopaySmsProvider: 'smsbower',
   proxyIdGopayEnabled: false,
@@ -490,6 +526,12 @@ onMounted(async () => {
         smsbower: cfg.phonePool.smsbower
           ? { ...{ apiKey: '', serviceCode: 'ni', countryCode: 6, maxPrice: 0.15 }, ...cfg.phonePool.smsbower }
           : { apiKey: '', serviceCode: 'ni', countryCode: 6, maxPrice: 0.15 },
+        herosms: cfg.phonePool.herosms
+          ? { ...{ apiKey: '', serviceCode: 'ni', countryCode: 6, maxPrice: 0 }, ...cfg.phonePool.herosms }
+          : { apiKey: '', serviceCode: 'ni', countryCode: 6, maxPrice: 0 },
+        nexsms: cfg.phonePool.nexsms
+          ? { ...{ apiKey: '', serviceCode: 'ni', countryId: 6, maxPrice: 0 }, ...cfg.phonePool.nexsms }
+          : { apiKey: '', serviceCode: 'ni', countryId: 6, maxPrice: 0 },
       }
     } else {
       form.phonePool = {
@@ -502,6 +544,8 @@ onMounted(async () => {
         smscloud: { apiKey: '', baseUrl: 'https://smscloud.sbs/api/system', serviceCode: '', countryCode: [187] },
         oapi: { baseUrl: 'https://sms.oapi.vip/api.php', apiKey: '' },
         smsbower: { apiKey: '', serviceCode: 'ni', countryCode: 6, maxPrice: 0.15 },
+        herosms: { apiKey: '', serviceCode: 'ni', countryCode: 6, maxPrice: 0 },
+        nexsms: { apiKey: '', serviceCode: 'ni', countryId: 6, maxPrice: 0 },
       }
     }
     form.gopayPin = cfg.gopay?.defaultPin ?? '147258'

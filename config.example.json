@@ -38,6 +38,18 @@
       "serviceCode": "ni",
       "countryCode": 6,
       "maxPrice": 0.15
+    },
+    "herosms": {
+      "apiKey": "",
+      "serviceCode": "ni",
+      "countryCode": 6,
+      "maxPrice": 0
+    },
+    "nexsms": {
+      "apiKey": "",
+      "serviceCode": "ni",
+      "countryId": 6,
+      "maxPrice": 0
     }
   },
   "proxy": {
