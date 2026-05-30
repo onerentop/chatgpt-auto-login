@@ -35,6 +35,11 @@ const { registerToCPA } = require('../cpa');
 // ========== Paths ==========
 const ROOT = path.join(__dirname, '..');
 
+// ========== Pipeline infrastructure ==========
+const { PipelineRunner } = require('./pipeline/runner');
+const { AccountContext } = require('./pipeline/context');
+const { buildPipeline } = require('./pipeline');
+
 // ========== PipelineEngine ==========
 function getDB() { return require('./db'); }
 
@@ -119,6 +124,13 @@ class PipelineEngine extends EventEmitter {
 
   /**
    * Run the full pipeline starting from the given account index.
+   *
+   * Rewritten as a thin runner-driven shell (P2): all business logic lives in
+   * server/pipeline/steps/. This method mirrors protocol-engine.js start()
+   * but preserves all browser-specific behaviors (findChrome fail-fast,
+   * browser field mapping, 5-7s delay, no consecutiveErrors cooldown,
+   * per-account Chrome cleanup, loop-end emit conditional, allResults summary).
+   *
    * @param {number} startFrom - Zero-based account index to start from.
    */
   async start(startFrom = 0, filterEmails = null) {
@@ -131,36 +143,51 @@ class PipelineEngine extends EventEmitter {
     this._abortController = new AbortController();
     this._runId = `run_${Date.now()}`;
 
+    // =========================================================================
+    // runner-loop: LogCapture (engine.js:138-155)
+    // Phase tagging reads the runner's active step id, same as protocol-engine.
+    // =========================================================================
     let currentEmail = '';
-    let currentPhase = '';
-
-    // Cleanup old logs
     try { getDB().logsDB.cleanup(); } catch (e) { console.log(`[WARN] logsDB.cleanup: ${e.message?.slice(0, 60)}`); }
 
-    // Hook console.log → emit 'log' events + write to per-account log files
     const logHandler = (message) => {
-      const entry = {
-        email: currentEmail,
-        phase: currentPhase,
-        message,
-        timestamp: new Date().toISOString(),
-      };
+      const ts = new Date().toISOString();
+      const phase = this._runner?._activeCtx?.currentStepId || '';
+      const entry = { email: currentEmail, phase, message, timestamp: ts };
       this.emit('log', entry);
-
-      // Save to DB
       if (currentEmail) {
-        try { getDB().logsDB.add(currentEmail, currentPhase, message, entry.timestamp, this._runId); } catch (e) { console.log(`[WARN] logsDB.add: ${e.message?.slice(0, 60)}`); }
+        try { getDB().logsDB.add(currentEmail, phase, message, ts, this._runId); } catch (e) { console.log(`[WARN] logsDB.add: ${e.message?.slice(0, 60)}`); }
       }
     };
     this.logCapture.onLog(logHandler);
     this.logCapture.start();
 
+    // =========================================================================
+    // resources bag: thin proxy through to this._* fields.
+    // stop() reads this._chromeProc / this._browser / this._tempDir / this._gw
+    // directly, so we proxy reads/writes here to keep stop() unchanged.
+    // Steps write into the bag; stop() cleans up the canonical this._ fields.
+    // =========================================================================
+    const engine = this;
+    const resources = {
+      get chromeProc()  { return engine._chromeProc; },
+      set chromeProc(v) { engine._chromeProc = v; },
+      get browser()     { return engine._browser; },
+      set browser(v)    { engine._browser = v; },
+      get tempDir()     { return engine._tempDir; },
+      set tempDir(v)    { engine._tempDir = v; },
+      get gw()          { return engine._gw; },
+      set gw(v)         { engine._gw = v; },
+    };
+
     const allResults = [];
-    let gw = null;
 
     try {
-      // Load accounts
-      const { accountsDB } = require('./db');
+      // =========================================================================
+      // runner-loop: load accounts (engine.js:163-171)
+      // Fields include loginType, totp_secret, client_id, refresh_token.
+      // =========================================================================
+      const { accountsDB, stepStateDB } = require('./db');
       const accounts = accountsDB.list().map(a => ({
         email: a.email,
         password: a.password,
@@ -168,11 +195,17 @@ class PipelineEngine extends EventEmitter {
         totp_secret: a.totp_secret || '',
         client_id: a.client_id || '',
         refresh_token: a.refresh_token || '',
+        // Preserve login_type field name that AccountContext + login step expect
+        login_type: a.login_type,
       }));
       if (accounts.length === 0) throw new Error('No accounts in database');
+
+      // runner-loop: findChrome fail-fast (engine.js:173)
+      // Browser engine always needs Chrome; fail-fast here rather than silently
+      // crashing per-account inside the payment step.
       if (!findChrome()) throw new Error('Chrome not found!');
 
-      // Filter by selected emails if provided
+      // runner-loop: filterEmails (engine.js:177-181)
       let filtered = accounts;
       if (filterEmails && filterEmails.length > 0) {
         const emailSet = new Set(filterEmails.map(e => e.toLowerCase()));
@@ -182,23 +215,36 @@ class PipelineEngine extends EventEmitter {
 
       console.log(`Loaded ${filtered.length} accounts to process.`);
 
-      // Determine payment-link source from config; default 'api' (direct ChatGPT call).
-      // 'discord' falls back to the legacy WebSocket bot path.
-      const rootCfgForSource = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf-8'));
-      const linkSource = rootCfgForSource.paymentLinkSource || 'api';
+      // runner-loop: runtimeCfg + linkSource (engine.js:187-189)
+      const runtimeCfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf-8'));
+      const linkSource = runtimeCfg.paymentLinkSource || 'api';
       console.log(`Payment link source: ${linkSource}`);
 
-      // Connect Discord Gateway only when needed.
+      // runner-loop: Discord connect-before-loop (engine.js:192-198)
       if (linkSource === 'discord') {
-        currentPhase = 'discord-connect';
         console.log('Connecting to Discord Gateway...');
-        gw = await connectGateway();
-        this._gw = gw;
+        this._gw = await connectGateway();
+        // resources.gw proxies through to this._gw via getter/setter above
         console.log('Discord connected!');
       }
 
-      // Process each account
+      // =========================================================================
+      // Instantiate PipelineRunner (single instance, reused per account).
+      // =========================================================================
+      this._runner = new PipelineRunner({
+        statusDB: getDB().statusDB,
+        stepStateDB,
+        save: getDB().save,
+        log: (email, stepId, msg) => console.log(msg),
+      });
+      // Forward step-status events (additive — does not replace existing events)
+      this._runner.on('step-status', d => this.emit('step-status', d));
+
+      // === Sequential: each account runs login → plan-check → … → cpa before next ===
+      console.log(`[Browser-Engine] Starting ${filtered.length} accounts sequentially...`);
+
       for (let i = 0; i < filtered.length; i++) {
+        // runner-loop: stopFlag check (engine.js:201-205)
         if (this.stopFlag) {
           console.log('Stop requested, breaking out of loop.');
           break;
@@ -209,52 +255,11 @@ class PipelineEngine extends EventEmitter {
         const progress = `${i + 1}/${filtered.length}`;
         const p = `[${progress}]`;
 
-        // Snapshot the persisted row BEFORE any emitStatus call wipes status
-        // to 'running'. The cache-check further down reads this snapshot, not
-        // the live DB row, so the user's previous failure (verify_error etc.)
-        // remains visible after we transition into the new run.
-        const prevPersisted = statusDB.get(account.email) || {};
+        console.log(`${p} === ${account.email} (browser) ===`);
 
-        // Cached-login fast path: if a previous login persisted a JWT and the
-        // exp is still in the future (with 60s buffer), reconstitute
-        // loginResult from the DB and skip the browser login entirely.
-        const JWT_BUFFER_SEC_LOGIN = 60;
-        let loginResult = null;
-        if (prevPersisted.last_access_token) {
-          const { decodeJwtExp } = require('./liveness/checker');
-          const exp = decodeJwtExp(prevPersisted.last_access_token);
-          if (exp > Date.now() / 1000 + JWT_BUFFER_SEC_LOGIN) {
-            let session = null;
-            try { session = JSON.parse(prevPersisted.last_session_json || '{}'); }
-            catch { session = null; }
-            if (session) {
-              loginResult = {
-                accessToken: prevPersisted.last_access_token,
-                session,
-                lastOtp: '',
-              };
-              const minLeft = Math.floor((exp - Date.now() / 1000) / 60);
-              console.log(`${p} Phase 1: reusing cached access token (exp in ${minLeft} min)`);
-              this.emitStatus({ email: account.email, status: 'running', phase: 'cached-login', progress });
-            }
-          }
-        }
-
-        console.log(`${p} === ${account.email} ===`);
-
-        // findFreePort: prevents Playwright from silently latching onto another
-        // chrome already listening on a fixed debug port (e.g. superpowers-chrome
-        // MCP holds 9222), which would route the entire payment flow into the
-        // wrong browser.
-        const port = await findFreePort();
-        const tempDir = path.join(os.tmpdir(), `chatgpt-login-${Date.now()}`);
-        this._chromeProc = null;
-        this._browser = null;
-        this._tempDir = tempDir;
-        let finalResult = { email: account.email, status: 'error', paymentLink: '', reason: '' };
-        let browser = null;
-
-        // Rotate proxy node before each account (if proxy enabled)
+        // runner-loop: proxy rotate per account (engine.js:249-265)
+        // NOTE: placed BEFORE AccountContext construction and BEFORE _runAccount,
+        // to preserve the original ordering (rotate → then steps start).
         if (proxyMgr.getState().enabled) {
           try {
             const node = await proxyMgr.rotate();
@@ -264,440 +269,147 @@ class PipelineEngine extends EventEmitter {
           }
         }
 
-        try {
-          if (this.stopFlag) break;
-          if (!loginResult) {
-          // Phase 1: Login & get accessToken
-          currentPhase = 'login';
-          this.emitStatus( {
-            email: account.email,
-            status: 'running',
-            phase: 'login',
-            progress,
-          });
-          console.log(`${p} Phase 1: Login...`);
-          // v2.42: 不再显式传 proxyServer，launchChrome 默认读 process.env.HTTPS_PROXY
-          this._chromeProc = launchChrome(port, tempDir, {});
-          this._browser = await waitForCDP(port);
-          browser = this._browser;
-          loginResult = await loginAccount(browser, account);
+        // AccountContext MUST be constructed BEFORE any step writes to statusDB
+        // (prevPersisted snapshot is load-bearing for cached-login and cached-link).
+        // Per-account deps assembled here and passed into ctx.
+        //
+        // summary: a throwaway counter object that shared steps harmlessly increment.
+        // The real summary is built from allResults at the end (engine.js:692-701
+        // semantics). Browser engine does NOT use summary counters from steps for
+        // the emitted complete-summary.
+        const summaryCounters = {};
+        const deps = {
+          emitStatus: this.emitStatus.bind(this),
+          summary: summaryCounters,
+          progress,
+          proxyMgr,
+          resources,
+          runtimeCfg,
+          linkSource,
+          statusDB: getDB().statusDB,
+          stepStateDB,
+          save: getDB().save,
+          abortController: this._abortController,
+          log: (email, stepId, msg) => console.log(msg),
+          // browserMode=true: tells paypal-pay step's finally to skip chrome cleanup
+          // (engine-shell owns Chrome lifecycle per account in browser mode).
+          browserMode: true,
+        };
 
-          if (loginResult.status !== 'success' || !loginResult.accessToken) {
-            const isDeactivated = loginResult.status === 'deactivated';
-            const statusOut = isDeactivated ? 'deactivated' : 'error';
-            console.log(`${p} Login ${isDeactivated ? 'account_deactivated' : 'failed'}: ${loginResult.reason || loginResult.status}`);
-            // T9: 失败 reason 是网络类才算节点错误；deactivated / 密码错误等不算
-            if (!isDeactivated && proxyMgr.isProxyNetError(loginResult.reason)) {
-              if (proxyMgr.getState().enabled) {
-                try { proxyMgr.recordBadAttempt(proxyMgr.getState().currentNode, 'main', 'login_net_error'); } catch {}
-              }
-            } else if (isDeactivated) {
-              // deactivated 是账号问题，节点工作正常
-              if (proxyMgr.getState().enabled) {
-                try { proxyMgr.recordGoodAttempt(proxyMgr.getState().currentNode, 'main'); } catch {}
-              }
-            }
-            finalResult.status = statusOut;
-            finalResult.reason = isDeactivated ? 'account_deactivated' : `Login: ${loginResult.reason || loginResult.status}`;
-            allResults.push(finalResult);
+        // prevPersisted snapshot captured in AccountContext constructor BEFORE
+        // any step writes to statusDB (engine.js:209-216 semantics).
+        const ctx = new AccountContext({
+          email: account.email,
+          password: account.password,
+          totp_secret: account.totp_secret,
+          client_id: account.client_id,
+          refresh_token: account.refresh_token,
+          login_type: account.login_type,
+        }, deps);
+
+        // Sync stopFlag into runner before each account
+        this._runner.stopFlag = this.stopFlag;
+
+        const steps = buildPipeline({ login: 'browser', payment: 'paypal' });
+
+        // Per-account Chrome cleanup: always run, even if steps throw.
+        // paypal-pay step's finally is a no-op in browserMode, so the
+        // engine-shell owns Chrome cleanup here (engine.js:647-657).
+        try {
+          const result = await this._runner._runAccount(ctx, steps);
+
+          // ===================================================================
+          // Loop-end emit (engine.js:659-670 semantics) — CONDITIONAL:
+          //
+          // result.completed === true  → the pipeline ran to the end without
+          //   stoppedAt (success path through browser-pkce, or
+          //   phone_pool_empty/phone_verify_fail specials that are emitted
+          //   inside browser-pkce but still return {ok:true}).
+          //   ctx.flags.finalStatus is set by browser-pkce step.
+          //   We emit the terminal /done here (not inside the step) because
+          //   browser-pkce does NOT emit its own terminal done for these cases.
+          //
+          // result.stoppedAt is set → a step already emitted its own terminal
+          //   status via emitStatus (login failure → error/deactivated,
+          //   paypal-fetch → no_jp_proxy/no_link, paypal-verify → verify_error
+          //   /no_promo, paypal-pay → aborted/no_link/error).
+          //   DO NOT emit again — that would double-emit.
+          // ===================================================================
+          if (result.completed === true) {
+            const finalStatus = ctx.flags.finalStatus || 'error';
+            const finalReason = ctx.flags.finalReason || '';
+            const finalPaymentLink = ctx.flags.finalPaymentLink || '';
 
             this.emitStatus({
               email: account.email,
-              status: statusOut,
-              phase: isDeactivated ? 'done' : 'login',
+              status: finalStatus,
+              phase: 'done',
               progress,
-              reason: finalResult.reason,
-            });
-            continue;
-          }
-          // G2: 登录成功
-          if (proxyMgr.getState().enabled) {
-            try { proxyMgr.recordGoodAttempt(proxyMgr.getState().currentNode, 'main'); } catch {}
-          }
-          console.log(`${p} Login OK, accessToken obtained.`);
-          } // end if (!loginResult)
-
-          // Persist the freshly-obtained token so the next retry can skip
-          // the browser login entirely. status: 'running' explicitly passed;
-          // without it, statusDB.set's destructuring default would revert
-          // status to 'idle' and the running-account would flicker off the
-          // UI for one frame.
-          if (loginResult && loginResult.accessToken) {
-            statusDB.set(account.email, {
-              status: 'running',
-              phase: 'login',
-              progress,
-              accessToken: loginResult.accessToken,
-              sessionJson: JSON.stringify(loginResult.session || {}),
+              paymentLink: finalPaymentLink || undefined,
+              reason: finalReason || undefined,
             });
           }
 
-          // Check plan type from session
-          const planType =
-            loginResult.session?.account?.planType ||
-            loginResult.session?.chatgpt_plan_type ||
-            'free';
-          const isPlusOrAbove = ['plus', 'pro', 'team', 'enterprise'].includes(planType.toLowerCase());
-          console.log(`${p} Plan: ${planType} (${isPlusOrAbove ? 'Plus member' : 'Not Plus'})`);
+          // Record for summary (engine.js:659-660 + 692-701 semantics)
+          const finalStatus = ctx.flags.finalStatus || 'error';
+          allResults.push({ email: account.email, status: finalStatus });
+          console.log(`${p} ${account.email} → ${finalStatus}`);
 
-          if (isPlusOrAbove) {
-            statusDB.clearPaymentLink(account.email);
-            statusDB.clearAccessToken(account.email);
-            console.log(`${p} Already Plus!`);
-            finalResult = { email: account.email, status: 'plus_no_rt', paymentLink: '', reason: '' };
-
-            const latestCfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf-8'));
-            if (latestCfg.enableOAuth) {
-              console.log(`${p} Running PKCE for already-Plus account...`);
-              this.emitStatus({ email: account.email, status: 'running', phase: 'pkce', progress });
-              const pkceTokens = await fetchTokensViaPKCE(browser, account, loginResult.lastOtp).catch((e) => { console.log(`  [PKCE] Failed: ${e.message}`); return null; });
-              if (pkceTokens?.refresh_token) {
-                saveCPAAuthFile(account.email, pkceTokens.access_token, pkceTokens);
-                finalResult.status = 'plus';
-              } else if (pkceTokens?.phonePoolEmpty) {
-                console.log(`${p} PKCE: phone pool exhausted for this account`);
-                this.emitStatus({ email: account.email, status: 'phone_pool_empty', phase: 'pkce', progress, reason: '号池已用尽或全部满' });
-                saveCPAAuthFile(account.email, loginResult.accessToken, loginResult.session);
-                finalResult.status = 'phone_pool_empty';
-              } else if (pkceTokens?.phoneVerifyFail) {
-                console.log(`${p} PKCE: phone verify failed (${pkceTokens.phoneVerifyFail})`);
-                this.emitStatus({ email: account.email, status: 'phone_verify_fail', phase: 'pkce', progress, reason: pkceTokens.phoneVerifyFail });
-                saveCPAAuthFile(account.email, loginResult.accessToken, loginResult.session);
-                finalResult.status = 'phone_verify_fail';
-              } else {
-                // needsPhone (pool disabled) 或其它非成功路径 → plus_no_rt 兜底（保持既有行为）
-                if (pkceTokens?.needsPhone) console.log(`${p} PKCE requires phone verification (pool disabled)`);
-                else if (pkceTokens && !pkceTokens.refresh_token) console.log(`${p} PKCE returned no refresh_token`);
-                saveCPAAuthFile(account.email, pkceTokens?.access_token || loginResult.accessToken, pkceTokens || loginResult.session);
-              }
-            } else {
-              saveCPAAuthFile(account.email, loginResult.accessToken, loginResult.session);
-            }
-
-            if (latestCfg.enableCPA) {
-              console.log(`${p} CPA registration...`);
-              this.emitStatus({ email: account.email, status: 'running', phase: 'cpa', progress });
-              try {
-                const cpaOk = await registerToCPA(browser, account.email, account);
-                if (cpaOk) console.log(`${p} CPA OAuth done.`);
-                else console.log(`${p} CPA OAuth may have issues, check manually.`);
-              } catch (e) {
-                console.log(`${p} CPA error: ${e.message}`);
-              }
-            }
-          } else {
-            // Not Plus → full payment flow
-            // Phase 2: payment link fetch (retry up to 3 times on transient errors)
-            currentPhase = linkSource === 'discord' ? 'discord' : 'checkout';
-            console.log(`${p} Phase 2: payment link via ${linkSource}...`);
-            // Cache check: skip Phase 2 fetch + Phase 2.5 verify when this
-            // account previously failed in Phase 3+ and has a usable Stripe
-            // link in the DB. Phase 3's NOT_FREE_TRIAL detector handles
-            // stale links (becomes status='no_link', which is not in
-            // REUSE_STATUSES → next retry forces full refetch).
-            const REUSE_STATUSES = new Set(['error', 'aborted', 'paypal_captcha', 'verify_error']);
-            let usedCachedLink = false;
-
-            this.emitStatus({ email: account.email, status: 'running', phase: currentPhase, progress });
-            let discord;  // keep variable name to minimize downstream diff
-            if (prevPersisted.payment_link && REUSE_STATUSES.has(prevPersisted.status)) {
-              discord = { link: prevPersisted.payment_link, pk: prevPersisted.payment_link_pk || '', title: 'cached', raw: '' };
-              usedCachedLink = true;
-              console.log(`${p} Phase 2: reusing cached payment link (was ${prevPersisted.status} at ${prevPersisted.payment_link_at})`);
-            }
-            if (!usedCachedLink) {
-              for (let dRetry = 0; dRetry < 3; dRetry++) {
-                try {
-                  if (dRetry > 0) console.log(`${p} Link fetch retry ${dRetry + 1}/3...`);
-                  if (linkSource === 'discord') {
-                    discord = await getPaymentLink(gw, loginResult.accessToken);
-                  } else {
-                    discord = await fetchCheckoutLink(loginResult.accessToken);
-                  }
-                  break;
-                } catch (de) {
-                  console.log(`${p} Link fetch error: ${de.message?.slice(0, 60)}`);
-                  if (dRetry < 2 && (de.message?.includes('Timeout') || de.message?.includes('fetch'))) {
-                    await new Promise(r => setTimeout(r, 2000));
-                    continue;
-                  }
-                  throw de;
-                }
-              }
-            }
-
-            if (discord.noJpProxy) {
-              // === Phase 2.5 分支 A: JP 不可用 ===
-              console.log(`${p} No JP proxy — skipping account`);
-              finalResult = {
-                email: account.email,
-                status: 'no_jp_proxy',
-                paymentLink: '',
-                reason: 'JP checkout channel unavailable',
-              };
-            } else if (!discord.link) {
-              // === 分支 B: 拿不到 link（现有 no_link 行为）===
-              console.log(`${p} No link: ${discord.raw.slice(0, 150)}`);
-              finalResult = {
-                email: account.email,
-                status: 'no_link',
-                paymentLink: '',
-                reason: discord.raw.slice(0, 200),
-              };
-            } else {
-              // === 分支 C: 拿到 link → Phase 2.5 Stripe 验证 ===
-              console.log(`${p} ${discord.title}`);
-              console.log(`${p} Link: ${discord.link.slice(0, 80)}...`);
-              // Persist link to DB immediately so verify_error / Phase 3 retries
-              // can skip Phase 2 next time. Guard with !usedCachedLink so a
-              // cached-link rerun doesn't refresh payment_link_at.
-              if (!usedCachedLink) {
-                statusDB.set(account.email, {
-                  status: 'running', phase: 'verify', progress,
-                  paymentLink: discord.link, paymentLinkPk: discord.pk || '',
-                });
-              }
-              // Discord path: bot is authority for $0 eligibility (it only returns $0 links).
-              // API path: enforce Phase 2.5 verify to fail-fast on non-$0 links.
-              let v;
-              if (linkSource === 'discord') {
-                console.log(`${p} Phase 2.5: skipped (Discord path — bot is eligibility authority)`);
-                v = { ok: true, is_free: true, coupons: [] };
-              } else {
-                currentPhase = 'verify';
-                console.log(`${p} Phase 2.5: Verifying $0 via Stripe init...`);
-                this.emitStatus({ email: account.email, status: 'running', phase: 'verify', progress });
-                v = await verifyCheckoutIsFree(discord.link, discord.pk);
-              }
-
-              if (!v.ok) {
-                // C1: Stripe init 失败
-                console.log(`${p} Verify failed: ${v.reason}`);
-                finalResult = {
-                  email: account.email,
-                  status: 'verify_error',
-                  paymentLink: discord.link,
-                  reason: `Stripe init: ${v.reason}`,
-                };
-              } else if (!v.is_free) {
-                // C2: link 不是 $0
-                console.log(`${p} Not free: amount_due=${v.amount_due} ${v.currency}`);
-                finalResult = {
-                  email: account.email,
-                  status: 'no_promo',
-                  paymentLink: discord.link,
-                  reason: `amount_due=${v.amount_due} ${v.currency}`,
-                };
-              } else {
-                // C3: 验证通过 → 进入 Phase 3（原有 Phase 3 + Phase 4 代码块整体放在这里，不变）
-                console.log(`${p} ✓ Verified $0 + coupons=[${v.coupons.join(',')}]`);
-                finalResult = { email: account.email, status: 'error', paymentLink: discord.link, reason: '' };
-
-                // Phase 3: Open payment link & auto-fill
-                currentPhase = 'payment';
-                console.log(`${p} Phase 3: Opening payment page...`);
-                this.emitStatus({ email: account.email, status: 'running', phase: 'payment', progress });
-                // v2.57: cached access_token 路径跳过了 Phase 1，browser 未 init —— 懒启动让 Phase 3 跑 page
-                if (!browser) {
-                  console.log(`${p} Launching chrome (cached login skipped Phase 1 chrome init)...`);
-                  this._chromeProc = launchChrome(port, tempDir, {});
-                  this._browser = await waitForCDP(port);
-                  browser = this._browser;
-                }
-                const ctx = browser.contexts()[0];
-                const pages = ctx.pages();
-                const page = pages.length > 0 ? pages[0] : await ctx.newPage();
-                await page.goto(discord.link, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
-
-                // Node-level connectivity failure: if the page landed on
-                // chrome-error (ERR_CONNECTION_CLOSED, ERR_TIMED_OUT, etc.)
-                // or stayed on about:blank, the current sing-box node can't
-                // reach pay.openai.com. Blacklist it, rotate, and retry once
-                // before giving up. Mirrors protocol-engine.js so browser
-                // mode doesn't burn an account on a single bad node.
-                let pageUrl = page.url();
-                if (pageUrl.startsWith('chrome-error://') || pageUrl === 'about:blank') {
-                  const badNode = proxyMgr.getState().currentNode;
-                  console.log(`${p} Payment page unreachable via ${badNode} (${pageUrl.slice(0, 40)}); counting + rotating + retrying`);
-                  if (proxyMgr.getState().enabled) {
-                    try { proxyMgr.recordBadAttempt(badNode, 'main', 'payment_unreachable'); } catch {}
-                    try { const n = await proxyMgr.rotate(); console.log(`${p} Retrying payment on ${n}`); } catch {}
-                  }
-                  await page.goto(discord.link, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
-                  pageUrl = page.url();
-                  if (pageUrl.startsWith('chrome-error://') || pageUrl === 'about:blank') {
-                    if (proxyMgr.getState().enabled) {
-                      try { proxyMgr.recordBadAttempt(proxyMgr.getState().currentNode, 'main', 'payment_unreachable'); } catch {}
-                    }
-                    throw new Error(`Payment page unreachable after node rotation (${pageUrl.slice(0, 40)})`);
-                  }
-                  if (proxyMgr.getState().enabled) {
-                    try { proxyMgr.recordGoodAttempt(proxyMgr.getState().currentNode, 'main'); } catch {}
-                  }
-                } else {
-                  if (proxyMgr.getState().enabled) {
-                    try { proxyMgr.recordGoodAttempt(proxyMgr.getState().currentNode, 'main'); } catch {}
-                  }
-                }
-
-                // Pre-warm: let Stripe paint the PayPal accordion before
-                // autoPayment's readiness checks run. Soft timeout — failure
-                // just means slow load; autoPayment's waitForPageReady will
-                // still wait on the actual required elements.
-                try { await page.locator('text=PayPal').first().waitFor({ state: 'visible', timeout: 15000 }); } catch {}
-                await randomDelay(2000, 3000);
-
-                console.log(`${p} Phase 3: Auto-filling payment...`);
-                let paymentOk = false;
-                let paymentReason = '';
-                let paymentStatus = '';
-                try {
-                  const freshCfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf-8'));
-                  const phoneSlot = freshCfg.phoneSlots?.[0] || { phone: freshCfg.phone, smsApiUrl: freshCfg.smsApiUrl };
-                  const payResult = await autoPayment(page, { phone: phoneSlot.phone, smsApiUrl: phoneSlot.smsApiUrl, email: account.email }, { signal: this._abortController.signal }) || {};
-                  paymentOk = !!payResult.success;
-                  paymentReason = payResult.reason || '';
-                  paymentStatus = payResult.status || '';
-                } catch (e) {
-                  if (e.code === 'NOT_FREE_TRIAL') {
-                    console.log(`${p} ${e.message}`);
-                    finalResult.status = 'no_link';
-                    finalResult.reason = e.message;
-                    allResults.push(finalResult);
-                    this.emitStatus({ email: account.email, status: 'no_link', phase: 'done', progress, reason: e.message });
-                    summary.noLink = (summary.noLink || 0) + 1;
-                    continue;
-                  }
-                  console.log(`${p} Auto-fill error: ${e.message}`);
-                  paymentReason = e.message?.slice(0, 100) || 'exception';
-                }
-
-                if (paymentOk) {
-                  statusDB.clearPaymentLink(account.email);
-                  statusDB.clearAccessToken(account.email);
-                  finalResult.status = 'plus_no_rt';
-                  console.log(`${p} Payment succeeded (redirect_status=succeeded)`);
-                } else if (paymentStatus === 'aborted') {
-                  finalResult.status = 'aborted';
-                  finalResult.reason = 'Stopped by user';
-                  console.log(`${p} Payment aborted by user`);
-                  this.emitStatus({ email: account.email, status: 'aborted', phase: 'payment', progress, reason: 'Stopped by user' });
-                } else {
-                  finalResult.status = paymentStatus || 'error';
-                  finalResult.reason = paymentReason || 'Payment not completed';
-                  console.log(`${p} Payment failed: ${finalResult.reason}, skipping auth file generation`);
-                }
-
-                // Phase 4: OAuth (PKCE) + CPA (only on payment success)
-                if (paymentOk) {
-                  currentPhase = 'oauth';
-                  const latestCfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf-8'));
-
-                  if (latestCfg.enableOAuth) {
-                    console.log(`${p} Phase 4: PKCE OAuth...`);
-                    this.emitStatus({ email: account.email, status: 'running', phase: 'pkce', progress });
-                    const pkceTokens = await fetchTokensViaPKCE(browser, account, loginResult.lastOtp).catch((e) => { console.log(`  [PKCE] Failed: ${e.message}`); return null; });
-                    if (pkceTokens?.refresh_token) {
-                      console.log(`${p} PKCE success, saving with refresh_token`);
-                      saveCPAAuthFile(account.email, pkceTokens.access_token, pkceTokens);
-                      finalResult.status = 'plus';
-                    } else if (pkceTokens?.phonePoolEmpty) {
-                      console.log(`${p} PKCE: phone pool exhausted for this account`);
-                      this.emitStatus({ email: account.email, status: 'phone_pool_empty', phase: 'pkce', progress, reason: '号池已用尽或全部满' });
-                      // v2.38.0 final-review fix: 付款成功但 PKCE 没拿到 RT 仍要保存 login session
-                      // 避免 access_token 丢失（与 needsPhone fallback 行为对齐）
-                      saveCPAAuthFile(account.email, loginResult.accessToken, loginResult.session);
-                      finalResult.status = 'phone_pool_empty';
-                    } else if (pkceTokens?.phoneVerifyFail) {
-                      console.log(`${p} PKCE: phone verify failed (${pkceTokens.phoneVerifyFail})`);
-                      this.emitStatus({ email: account.email, status: 'phone_verify_fail', phase: 'pkce', progress, reason: pkceTokens.phoneVerifyFail });
-                      // v2.38.0 final-review fix: 同上
-                      saveCPAAuthFile(account.email, loginResult.accessToken, loginResult.session);
-                      finalResult.status = 'phone_verify_fail';
-                    } else {
-                      // needsPhone (pool disabled) 或其它非成功路径 → plus_no_rt 兜底（保持既有行为）
-                      if (pkceTokens?.needsPhone) console.log(`${p} PKCE requires phone verification (pool disabled)`);
-                      else if (pkceTokens && !pkceTokens.refresh_token) console.log(`${p} PKCE returned no refresh_token`);
-                      else console.log(`${p} PKCE failed, saving without refresh_token`);
-                      saveCPAAuthFile(account.email, pkceTokens?.access_token || loginResult.accessToken, pkceTokens || loginResult.session);
-                    }
-                  } else {
-                    saveCPAAuthFile(account.email, loginResult.accessToken, loginResult.session);
-                  }
-
-                  if (latestCfg.enableCPA) {
-                    console.log(`${p} Phase 4: CPA registration...`);
-                    try {
-                      const cpaOk = await registerToCPA(browser, account.email, account);
-                      if (cpaOk) console.log(`${p} CPA OAuth done.`);
-                      else console.log(`${p} CPA OAuth may have issues, check manually.`);
-                    } catch (e) {
-                      console.log(`${p} CPA error: ${e.message}`);
-                    }
-                  }
-                }
-              }
-            }
-          }
-        } catch (error) {
-          console.log(`${p} ERROR: ${error.message}`);
-          if (!finalResult.status) finalResult.status = 'error';
-          finalResult.reason = error.message.slice(0, 200);
         } finally {
+          // Per-account Chrome cleanup (engine.js:647-657)
+          // Mirror stop() rationale: killTree first to clean renderer/GPU
+          // subprocesses on Windows, then kill() as belt-and-suspenders,
+          // then rmSync the temp profile dir.
           if (this._browser) try { await this._browser.close(); } catch {}
-          // Mirror stop() (line 92-93): kill() alone leaves Chrome's renderer/GPU
-          // subprocesses on Windows (process-utils.js header), so a phantom
-          // about:blank window survives after the account loop completes.
           if (this._chromeProc) try { killTree(this._chromeProc.pid); } catch {}
           if (this._chromeProc) try { this._chromeProc.kill(); } catch {}
-          try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {}
+          if (this._tempDir) try { fs.rmSync(this._tempDir, { recursive: true, force: true }); } catch {}
           this._browser = null;
           this._chromeProc = null;
           this._tempDir = null;
         }
 
-        allResults.push(finalResult);
-        console.log(`${p} ${account.email} → ${finalResult.status}`);
-
-        // Emit final account status
-        this.emitStatus( {
-          email: account.email,
-          status: finalResult.status,
-          phase: 'done',
-          progress,
-          paymentLink: finalResult.paymentLink || undefined,
-          reason: finalResult.reason || undefined,
-        });
-
-        // Random delay between accounts
+        // runner-loop: delay (engine.js:673-677)
+        // Browser engine: 5-7s. NO consecutiveErrors cooldown (browser has none).
         if (i < filtered.length - 1 && !this.stopFlag) {
           const wait = 5 + Math.floor(Math.random() * 3);
           console.log(`  Waiting ${wait}s...`);
           await randomDelay(wait * 1000, wait * 1000 + 500);
         }
       }
+
     } catch (err) {
       // Emit directly to avoid console.log loops if logger is misbehaving
-      const msg = `[Engine] FATAL: ${err.message}`;
+      const msg = `[Browser-Engine] FATAL: ${err.message}`;
       this.emit('log', { email: '', phase: 'error', message: msg, timestamp: new Date().toISOString() });
-      this.emit('log', { email: '', phase: 'error', message: `[Engine] Stack: ${err.stack?.split('\n').slice(0, 3).join(' | ')}`, timestamp: new Date().toISOString() });
+      this.emit('log', { email: '', phase: 'error', message: `[Browser-Engine] Stack: ${err.stack?.split('\n').slice(0, 3).join(' | ')}`, timestamp: new Date().toISOString() });
     } finally {
-      if (gw) gw.cleanup();
+      // runner-loop + engine-shell: finally cleanup (engine.js:684-716)
+      // stop() cleans this._browser/_chromeProc/_gw/_tempDir via this._ fields.
+      // resources bag proxies through to these, so any step that set
+      // resources.chromeProc etc. is already reflected in this._chromeProc here.
+      if (this._browser) try { await this._browser.close(); } catch {}
+      if (this._chromeProc) try { killTree(this._chromeProc.pid); } catch {}
+      if (this._chromeProc) try { this._chromeProc.kill(); } catch {}
+      if (this._gw) try { this._gw.cleanup(); } catch {}
+      if (this._tempDir) try { fs.rmSync(this._tempDir, { recursive: true, force: true }); } catch {}
+      this._browser = null; this._chromeProc = null; this._gw = null; this._tempDir = null;
 
-      // Stop log capture
+      // Stop log capture (engine.js:689-690)
       this.logCapture.stop();
       this.logCapture.offLog(logHandler);
 
-      // Build summary
+      // Build summary from allResults (engine.js:692-701)
+      // aborted is always present (even 0), matching browser engine behavior.
       const summary = {
         total: allResults.length,
-        success: allResults.filter((r) => r.status === 'plus' || r.status === 'plus_no_rt').length,
-        noLink: allResults.filter((r) => r.status === 'no_link').length,
-        error: allResults.filter((r) => r.status === 'error' || r.status === 'deactivated').length,
-        noJpProxy: allResults.filter((r) => r.status === 'no_jp_proxy').length,
-        noPromo: allResults.filter((r) => r.status === 'no_promo').length,
-        verifyError: allResults.filter((r) => r.status === 'verify_error').length,
-        aborted: allResults.filter((r) => r.status === 'aborted').length,
+        success: allResults.filter(r => r.status === 'plus' || r.status === 'plus_no_rt').length,
+        noLink: allResults.filter(r => r.status === 'no_link').length,
+        error: allResults.filter(r => r.status === 'error' || r.status === 'deactivated').length,
+        noJpProxy: allResults.filter(r => r.status === 'no_jp_proxy').length,
+        noPromo: allResults.filter(r => r.status === 'no_promo').length,
+        verifyError: allResults.filter(r => r.status === 'verify_error').length,
+        aborted: allResults.filter(r => r.status === 'aborted').length,
       };
 
       console.log('========================================');
@@ -707,10 +419,10 @@ class PipelineEngine extends EventEmitter {
 
       this.emit('complete', { summary });
 
-      // Flush logs to DB
+      // Flush logs to DB (engine.js:711)
       try { getDB().logsDB.flush(); } catch (e) { console.log(`[WARN] logsDB.flush: ${e.message?.slice(0, 60)}`); }
 
-      // Reset state
+      // Reset state (engine.js:714-715)
       this.status = 'idle';
       this.stopFlag = false;
     }

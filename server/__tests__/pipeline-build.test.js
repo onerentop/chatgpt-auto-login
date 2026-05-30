@@ -8,6 +8,12 @@ test('paypal pipeline declares the 6 user-facing steps in order', () => {
     ['login', 'plan-check', 'paypal-fetch', 'paypal-verify', 'paypal-pay', 'paypal-pkce']);
 });
 
+test('browser paypal pipeline declares the 7 browser-specific steps in order', () => {
+  const steps = buildPipeline({ login: 'browser', payment: 'paypal' });
+  assert.deepStrictEqual(steps.map(s => s.id),
+    ['login', 'plan-check', 'paypal-fetch', 'paypal-verify', 'paypal-pay', 'browser-pkce', 'cpa']);
+});
+
 test('gopay pipeline declares its 5 steps in order', () => {
   const steps = buildPipeline({ login: 'protocol', payment: 'gopay' });
   assert.deepStrictEqual(steps.map(s => s.id),
