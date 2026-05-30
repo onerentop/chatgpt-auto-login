@@ -258,8 +258,8 @@ async function loginAccount(browser, account) {
 
       console.log(`  [4/10] Entering email...`);
       await page.waitForLoadState('domcontentloaded');
-      const emailInput = page.locator('input[type="email"], #identifierId').first();
-      await emailInput.waitFor({ state: 'visible', timeout: 15000 });
+      const emailInput = page.locator('input[type="email"]:not([disabled]), #identifierId:not([disabled])').first();
+      await emailInput.waitFor({ state: 'visible', timeout: 60000 });
       await emailInput.click();
       await typeHumanLike(page, account.email);
       await randomDelay(800, 1500);
