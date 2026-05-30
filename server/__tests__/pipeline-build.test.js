@@ -22,7 +22,7 @@ test('every step satisfies the contract', () => {
   }
 });
 
-test('placeholder run throws (not silently passing)', async () => {
-  const steps = buildPipeline({ login: 'protocol', payment: 'paypal' });
+test('gopay placeholder run throws (not silently passing)', async () => {
+  const steps = buildPipeline({ login: 'protocol', payment: 'gopay' });
   await assert.rejects(() => steps[0].run({}), /not migrated yet/);
 });

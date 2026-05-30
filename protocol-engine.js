@@ -551,23 +551,50 @@ class ProtocolEngine extends EventEmitter {
     this.stopFlag = false;
     this._abortController = new AbortController();
 
-    // LogCapture: hijack console.log to emit 'log' events (same as PipelineEngine)
+    // =========================================================================
+    // resources bag: thin proxy through to this._* fields.
+    // stop() reads this._pyProc / this._chromeProc / this._browser / this._tempDir / this._gw
+    // directly, so we proxy reads/writes here to keep stop() unchanged.
+    // Steps write into the bag; stop() cleans up the canonical this._ fields.
+    // =========================================================================
+    const engine = this;  // capture for use in getter/setter proxy below
+    const resources = {
+      get pyProc()      { return engine._pyProc; },
+      set pyProc(v)     { engine._pyProc = v; },
+      get chromeProc()  { return engine._chromeProc; },
+      set chromeProc(v) { engine._chromeProc = v; },
+      get browser()     { return engine._browser; },
+      set browser(v)    { engine._browser = v; },
+      get tempDir()     { return engine._tempDir; },
+      set tempDir(v)    { engine._tempDir = v; },
+      get gw()          { return engine._gw; },
+      set gw(v)         { engine._gw = v; },
+    };
+
+    // =========================================================================
+    // runner-loop: LogCapture (inventory 554–566)
+    // Phase tagging now reads the runner's active step id for richer log metadata.
+    // =========================================================================
     const { LogCapture } = require('./server/logger');
     this._logCapture = new LogCapture();
     let currentEmail = '';
     const logHandler = (message) => {
       const ts = new Date().toISOString();
-      this.emit('log', { email: currentEmail, phase: '', message, timestamp: ts });
+      const phase = this._runner?._activeCtx?.currentStepId || '';
+      this.emit('log', { email: currentEmail, phase, message, timestamp: ts });
       if (currentEmail) {
-        try { const { logsDB } = require('./server/db'); logsDB.add(currentEmail, '', message, ts); } catch {}
+        try { const { logsDB } = require('./server/db'); logsDB.add(currentEmail, phase, message, ts); } catch {}
       }
     };
     this._logCapture.onLog(logHandler);
     this._logCapture.start();
 
-    const { accountsDB } = require('./server/db');
+    // =========================================================================
+    // runner-loop: load accounts + filter (inventory 569–577)
+    // =========================================================================
+    const { accountsDB, stepStateDB } = require('./server/db');
     let accounts = accountsDB.list().map(a => ({
-      email: a.email, password: a.password, loginType: a.login_type,
+      email: a.email, password: a.password, login_type: a.login_type,
       client_id: a.client_id || '', refresh_token: a.refresh_token || '',
     }));
 
@@ -575,12 +602,15 @@ class ProtocolEngine extends EventEmitter {
       const set = new Set(filterEmails.map(e => e.toLowerCase()));
       accounts = accounts.filter(a => set.has(a.email.toLowerCase()));
     }
+    // runner-loop: No accounts fatal (inventory 578)
     if (accounts.length === 0) throw new Error('No accounts');
 
+    // runner-loop: runtimeCfg (inventory 580)
     const runtimeCfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf-8'));
+    // runner-loop: summary (inventory 581)
     const summary = { total: accounts.length, success: 0, noLink: 0, error: 0, noJpProxy: 0, noPromo: 0, verifyError: 0 };
 
-    // Rate-limit / anti-bot cooldown configuration
+    // runner-loop: cooldown constants (inventory 584–589)
     const COOLDOWN_THRESHOLD = 3;          // N consecutive failures triggers cooldown
     const COOLDOWN_MS_MIN = 300000;        // 5 min
     const COOLDOWN_MS_MAX = 600000;        // 10 min
@@ -588,64 +618,55 @@ class ProtocolEngine extends EventEmitter {
     const ACCOUNT_DELAY_MAX = 45000;       // 45s between accounts
     let consecutiveErrors = 0;
 
+    // =========================================================================
+    // Instantiate PipelineRunner (single instance, reused per account).
+    // Deps template is shared for all accounts; per-account fields (emitStatus,
+    // summary, progress, resources, runtimeCfg, linkSource, abortController)
+    // are passed into each AccountContext's deps at construction time.
+    // =========================================================================
+    const { PipelineRunner } = require('./server/pipeline/runner');
+    const { AccountContext } = require('./server/pipeline/context');
+    const { buildPipeline } = require('./server/pipeline');
+
+    const runnerDeps = {
+      statusDB,
+      stepStateDB,
+      save,
+      log: (email, stepId, msg) => console.log(msg),
+    };
+    this._runner = new PipelineRunner(runnerDeps);
+    // Forward step-status events (ADDITIVE new event — does not replace existing events)
+    this._runner.on('step-status', d => this.emit('step-status', d));
+
     try {
       // === Sequential: each account runs login → Discord → payment → done before next ===
       console.log(`[Proto-Engine] Starting ${accounts.length} accounts sequentially...`);
 
-      // Determine payment-link source from runtime config. Default 'api'.
+      // runner-loop: linkSource + Discord connect (inventory 596–603)
       const linkSource = runtimeCfg.paymentLinkSource || 'api';
       console.log(`[Proto-Engine] Payment link source: ${linkSource}`);
 
       if (linkSource === 'discord') {
         console.log('[Proto-Engine] Connecting to Discord Gateway...');
         this._gw = await connectGateway();
+        // Mirror into resources bag so paypal-fetch step can read/write resources.gw
+        // (resources.gw proxies through to this._gw via the getter/setter above)
         console.log('[Proto-Engine] Discord connected!');
       }
 
       for (let i = 0; i < accounts.length; i++) {
+        // runner-loop: stopFlag check (inventory 606)
         if (this.stopFlag) break;
         const account = accounts[i];
         const progress = `${i + 1}/${accounts.length}`;
         currentEmail = account.email;
+        // runner-loop: errorsBefore (inventory 610)
         const errorsBefore = summary.error;
 
-        // Snapshot the persisted row BEFORE any emitStatus call wipes it to
-        // status='running'. The cache-check below reads this snapshot, not
-        // the live DB row, so the user's previous failure (verify_error etc.)
-        // is still visible after we transition into the new run.
-        const prevPersisted = statusDB.get(account.email) || {};
-
-        // Cached-login fast path: if a previous login persisted a JWT and the
-        // exp is still in the future (with 60s buffer), reconstitute `result`
-        // from the DB and skip Phase 1 entirely. Combined with the v2.25
-        // payment-link cache below, a retry that hits both caches goes
-        // directly to Phase 3 PayPal — saving 30-60s of OTP+auth0 churn.
-        const JWT_BUFFER_SEC = 60;
-        let result = null;
-        if (prevPersisted.last_access_token) {
-          const { decodeJwtExp } = require('./server/liveness/checker');
-          const exp = decodeJwtExp(prevPersisted.last_access_token);
-          if (exp > Date.now() / 1000 + JWT_BUFFER_SEC) {
-            let session = null;
-            try { session = JSON.parse(prevPersisted.last_session_json || '{}'); }
-            catch { session = null; }
-            if (session) {
-              result = {
-                accessToken: prevPersisted.last_access_token,
-                session,
-                planType: session?.account?.planType || session?.chatgpt_plan_type || 'free',
-              };
-              const minLeft = Math.floor((exp - Date.now() / 1000) / 60);
-              console.log(`[${progress}] Phase 1: reusing cached access token (exp in ${minLeft} min)`);
-              this.emitStatus({ email: account.email, status: 'running', phase: 'cached-login', progress });
-            }
-          }
-        }
-
+        // runner-loop: proxy rotate per account (inventory 649–656)
+        // NOTE: placed BEFORE AccountContext construction and BEFORE _runAccount,
+        // to preserve the original ordering (rotate → then steps start).
         console.log(`[${progress}] === ${account.email} (protocol) ===`);
-        // Rotate proxy node before each account (if proxy enabled).
-        // Hoisted OUT of `if (!result)` so cache-hit accounts also get a
-        // fresh node for Phase 3 PayPal — matches server/engine.js parity.
         if (proxyMgr.getState().enabled) {
           try {
             const node = await proxyMgr.rotate();
@@ -655,311 +676,38 @@ class ProtocolEngine extends EventEmitter {
           }
         }
 
-        // Step 1: Protocol login (skipped when result was reconstituted above)
-        if (!result) {
-          this.emitStatus({ email: account.email, status: 'running', phase: 'protocol-login', progress });
+        // AccountContext MUST be constructed BEFORE any step writes to statusDB
+        // (prevPersisted snapshot is load-bearing for cached-login and cached-link).
+        // Per-account deps assembled here and passed into ctx.
+        const deps = {
+          emitStatus: this.emitStatus.bind(this),
+          summary,
+          progress,
+          proxyMgr,
+          resources,
+          runtimeCfg,
+          linkSource,
+          statusDB,
+          stepStateDB,
+          save,
+          abortController: this._abortController,
+          log: (email, stepId, msg) => console.log(msg),
+        };
+        const ctx = new AccountContext({
+          email: account.email,
+          password: account.password,
+          client_id: account.client_id,
+          refresh_token: account.refresh_token,
+          login_type: account.login_type,
+        }, deps);
 
-          try {
-            result = await runProtocolRegister(account, this);
-            if (result.status === 'tls_failure') {
-              const badNode = proxyMgr.getState().currentNode;
-              console.log(`[${progress}] TLS errors persisted on ${badNode}; counting + rotating + retrying once`);
-              if (proxyMgr.getState().enabled) {
-                try { proxyMgr.recordBadAttempt(badNode, 'main', 'tls_failure'); } catch {}
-                try {
-                  const newNode = await proxyMgr.rotate();
-                  console.log(`[${progress}] Retrying on ${newNode}`);
-                } catch (e) {
-                  console.log(`[${progress}] Rotate failed: ${e.message?.slice(0, 60)}`);
-                }
-              }
-              result = await runProtocolRegister(account, this);
-              if (result.status === 'tls_failure') {
-                console.log(`[${progress}] TLS still failing after rotation — giving up on this account`);
-                if (proxyMgr.getState().enabled) {
-                  try { proxyMgr.recordBadAttempt(proxyMgr.getState().currentNode, 'main', 'tls_failure'); } catch {}
-                }
-                this.emitStatus({ email: account.email, status: 'error', phase: 'protocol-login', progress, reason: result.error });
-                summary.error++;
-                continue;
-              }
-            }
-            // G1: 任何"业务返回"（success / deactivated 等）都代表节点工作正常
-            if (proxyMgr.getState().enabled) {
-              try { proxyMgr.recordGoodAttempt(proxyMgr.getState().currentNode, 'main'); } catch {}
-            }
-            if (result.status === 'deactivated') {
-              console.log(`[${progress}] Account deactivated/deleted by OpenAI`);
-              this.emitStatus({ email: account.email, status: 'deactivated', phase: 'done', progress, reason: 'account_deactivated' });
-              summary.error++;
-              continue;
-            }
-            console.log(`[${progress}] Protocol login OK: ${result.accessToken}`);
-          } catch (e) {
-            console.log(`[${progress}] Protocol login failed: ${e.message?.slice(0, 500)}`);
-            // T8: 网络类异常算节点失败；业务异常不算
-            if (proxyMgr.isProxyNetError(e.message) && proxyMgr.getState().enabled) {
-              try { proxyMgr.recordBadAttempt(proxyMgr.getState().currentNode, 'main', 'protocol_net_error'); } catch {}
-            }
-            this.emitStatus({ email: account.email, status: 'error', phase: 'protocol-login', progress, reason: e.message });
-            summary.error++;
-            continue;
-          }
-        }
+        // Sync stopFlag into runner before each account
+        this._runner.stopFlag = this.stopFlag;
 
-        // After Phase 1 (cached or fresh), persist the token to DB so the
-        // next retry can skip Phase 1 entirely. Without this, the
-        // cached-login fast-path above would never have anything to read.
-        if (result) {
-          // status: 'running' explicitly passed; without it, statusDB.set's
-          // destructuring default would revert status to 'idle' and the
-          // running-account would flicker off the UI for one frame.
-          statusDB.set(account.email, {
-            status: 'running',
-            phase: 'protocol-login',
-            progress,
-            accessToken: result.accessToken,
-            sessionJson: JSON.stringify(result.session || {}),
-          });
-        }
+        const steps = buildPipeline({ login: 'protocol', payment: 'paypal' });
+        await this._runner._runAccount(ctx, steps);
 
-        // Check if already Plus
-        const isPlusOrAbove = ['plus', 'pro', 'team', 'enterprise'].includes((result.planType || 'free').toLowerCase());
-        if (isPlusOrAbove) {
-          statusDB.clearPaymentLink(account.email);
-          statusDB.clearAccessToken(account.email);
-          console.log(`[${progress}] Already Plus`);
-          if (runtimeCfg.enableOAuth) {
-            console.log(`[${progress}] Running PKCE via protocol...`);
-            await this._finalizePkce(account, result, progress);
-          } else {
-            saveCPAAuthFile(account.email, result.accessToken, result.session);
-            this.emitStatus({ email: account.email, status: 'plus_no_rt', phase: 'done', progress });
-          }
-          summary.success++;
-          continue;
-        }
-
-        // Step 2: Payment link (retry up to 3 times on transient errors)
-        const phaseTag = linkSource === 'discord' ? 'discord' : 'checkout';
-        this.emitStatus({ email: account.email, status: 'running', phase: phaseTag, progress });
-        console.log(`[${progress}] ${phaseTag === 'discord' ? 'Discord' : 'Checkout'}: ${account.email}...`);
-        let link;
-        let fetchResult = null;
-
-        // Reconnect Gateway only when using Discord path
-        if (linkSource === 'discord' && this._gw?.ws?.readyState !== 1) {
-          console.log(`[${progress}] Gateway disconnected, reconnecting...`);
-          try { this._gw?.cleanup(); } catch {}
-          this._gw = await connectGateway();
-          console.log(`[${progress}] Gateway reconnected`);
-        }
-
-        // Cache check: if this account failed in Phase 3+ on a previous run,
-        // it may have a usable Stripe link still in the DB. Reuse it to skip
-        // Phase 2 (fetch) + Phase 2.5 (verify). Phase 3's NOT_FREE_TRIAL
-        // detector handles stale links by throwing → status='no_link', which
-        // won't be in REUSE_STATUSES on the next retry → forced full refetch.
-        const REUSE_STATUSES = new Set(['error', 'aborted', 'paypal_captcha', 'verify_error']);
-        let usedCachedLink = false;
-        if (prevPersisted.payment_link && REUSE_STATUSES.has(prevPersisted.status)) {
-          link = prevPersisted.payment_link;
-          fetchResult = { link, pk: prevPersisted.payment_link_pk || '', title: 'cached', raw: '' };
-          usedCachedLink = true;
-          console.log(`[${progress}] Phase 2: reusing cached payment link (was ${prevPersisted.status} at ${prevPersisted.payment_link_at})`);
-        }
-
-        let linkFetchOk = usedCachedLink;
-        if (!usedCachedLink) {
-          for (let dRetry = 0; dRetry < 3; dRetry++) {
-            try {
-              if (dRetry > 0) console.log(`[${progress}] Link fetch retry ${dRetry + 1}/3...`);
-              if (linkSource === 'discord') {
-                fetchResult = await getPaymentLink(this._gw, result.accessToken);
-              } else {
-                fetchResult = await fetchCheckoutLink(result.accessToken);
-              }
-              link = fetchResult.link;
-              if (link) console.log(`[${progress}] ${fetchResult.title || 'Link obtained'}`);
-              console.log(`[${progress}] Link: ${link || 'none'}`);
-              if (fetchResult.noJpProxy) {
-                console.log(`[${progress}] No JP proxy — skipping account`);
-                this.emitStatus({ email: account.email, status: 'no_jp_proxy', phase: 'done', progress, reason: 'JP checkout channel unavailable' });
-                summary.noJpProxy++;
-              } else if (!link) {
-                console.log(`[${progress}] ${(fetchResult.raw || 'No link').slice(0, 500)}`);
-                this.emitStatus({ email: account.email, status: 'no_link', phase: 'done', progress, reason: fetchResult.raw });
-                summary.noLink++;
-              }
-              linkFetchOk = true;
-              break;
-            } catch (e) {
-              console.log(`[${progress}] Link fetch error: ${e.message?.slice(0, 60)}`);
-              if (dRetry < 2 && (e.message?.includes('Timeout') || e.message?.includes('fetch'))) {
-                await new Promise(r2 => setTimeout(r2, 2000));
-                continue;
-              }
-              this.emitStatus({ email: account.email, status: 'error', phase: phaseTag, progress, reason: e.message });
-              summary.error++;
-              linkFetchOk = true;
-              break;
-            }
-          }
-        }
-        if (!link) continue;
-
-        // Persist link to DB immediately so verify_error / Phase 3 retries
-        // can skip Phase 2 next time. This is intentionally BEFORE verify —
-        // if verify fails, the link is still cached for the next retry to
-        // try (verify_error is one of REUSE_STATUSES).
-        if (link && !usedCachedLink) {
-          statusDB.set(account.email, {
-            status: 'running', phase: 'verify', progress,
-            paymentLink: link, paymentLinkPk: fetchResult.pk || '',
-          });
-        }
-
-        // Phase 2.5: Stripe init 验证 (API path only; Discord skips — bot is authority)
-        if (linkSource !== 'discord') {
-          this.emitStatus({ email: account.email, status: 'running', phase: 'verify', progress });
-          console.log(`[${progress}] Phase 2.5: Verifying $0 via Stripe init...`);
-          const v = await verifyCheckoutIsFree(link, fetchResult.pk);
-          if (!v.ok) {
-            console.log(`[${progress}] Verify failed: ${v.reason}`);
-            this.emitStatus({ email: account.email, status: 'verify_error', phase: 'done', progress, paymentLink: link, reason: `Stripe init: ${v.reason}` });
-            summary.verifyError++;
-            continue;
-          }
-          if (!v.is_free) {
-            console.log(`[${progress}] Not free: amount_due=${v.amount_due} ${v.currency}`);
-            this.emitStatus({ email: account.email, status: 'no_promo', phase: 'done', progress, paymentLink: link, reason: `amount_due=${v.amount_due} ${v.currency}` });
-            summary.noPromo++;
-            continue;
-          }
-          console.log(`[${progress}] ✓ Verified $0 + coupons=[${v.coupons.join(',')}]`);
-        }
-
-        // Step 3: Payment (fresh Chrome for each account)
-        // findFreePort: avoid colliding with any chrome already listening on
-        // 9222 (e.g. superpowers-chrome MCP), which would otherwise silently
-        // make Playwright connect to the wrong browser and run the entire
-        // payment flow in the wrong incognito session.
-        const port = await findFreePort();
-        const tempDir = path.join(os.tmpdir(), `proto-pay-${Date.now()}-${i}`);
-        let chromeProc = null, browser = null;
-        try {
-          this.emitStatus({ email: account.email, status: 'running', phase: 'payment', progress });
-          console.log(`[${progress}] Opening payment: ${link}`);
-          // v2.42: 不再显式传 proxyServer，launchChrome 默认读 process.env.HTTPS_PROXY
-          chromeProc = launchChrome(port, tempDir, {});
-          browser = await waitForCDP(port);
-          this._chromeProc = chromeProc;
-          this._browser = browser;
-          this._tempDir = tempDir;
-
-          const ctx = browser.contexts()[0];
-          const page = ctx.pages()[0] || await ctx.newPage();
-          await page.goto(link, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
-
-          // If the page landed on chrome-error (ERR_CONNECTION_CLOSED, etc.) the
-          // current proxy node can't reach pay.openai.com. Blacklist it, rotate,
-          // and retry once on a fresh route before giving up.
-          let pageUrl = page.url();
-          if (pageUrl.startsWith('chrome-error://') || pageUrl === 'about:blank') {
-            const badNode = proxyMgr.getState().currentNode;
-            console.log(`[${progress}] Payment page unreachable via ${badNode} (${pageUrl.slice(0, 40)}); counting + rotating + retrying`);
-            if (proxyMgr.getState().enabled) {
-              try { proxyMgr.recordBadAttempt(badNode, 'main', 'payment_unreachable'); } catch {}
-              try { const n = await proxyMgr.rotate(); console.log(`[${progress}] Retrying payment on ${n}`); } catch {}
-            }
-            await page.goto(link, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
-            pageUrl = page.url();
-            if (pageUrl.startsWith('chrome-error://') || pageUrl === 'about:blank') {
-              if (proxyMgr.getState().enabled) {
-                try { proxyMgr.recordBadAttempt(proxyMgr.getState().currentNode, 'main', 'payment_unreachable'); } catch {}
-              }
-              throw new Error(`Payment page unreachable after node rotation (${pageUrl.slice(0, 40)})`);
-            }
-            // 重试后真实页面打开 → 算 G3 成功
-            if (proxyMgr.getState().enabled) {
-              try { proxyMgr.recordGoodAttempt(proxyMgr.getState().currentNode, 'main'); } catch {}
-            }
-          } else {
-            // G3: 一次到位也算成功
-            if (proxyMgr.getState().enabled) {
-              try { proxyMgr.recordGoodAttempt(proxyMgr.getState().currentNode, 'main'); } catch {}
-            }
-          }
-
-          try { await page.locator('text=PayPal').first().waitFor({ state: 'visible', timeout: 15000 }); } catch {}
-          await randomDelay(2000, 3000);
-
-          console.log(`[${progress}] Auto-filling payment...`);
-          let paymentResult = { success: false };
-          try {
-            // v2.43.3: 每账号重读 config.json (mirror PipelineEngine server/engine.js:548-550).
-            //   让用户运行时改 config (e.g. 切手机号池) 不用重启 batch。
-            //   path / fs / ROOT 已 import (line 6/7/23)。
-            const freshCfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf-8'));
-            const slot = freshCfg.phoneSlots?.[0] || { phone: freshCfg.phone, smsApiUrl: freshCfg.smsApiUrl };
-            paymentResult = await autoPayment(page, { phone: slot.phone, smsApiUrl: slot.smsApiUrl, email: account.email }, { signal: this._abortController.signal }) || { success: false };
-          } catch (e) {
-            if (e.code === 'NOT_FREE_TRIAL') {
-              // Link is not a $0 trial — treat as no_link (same outcome as Discord
-              // failing to produce a link). Don't fill cards on a paid subscription page.
-              console.log(`[${progress}] ${e.message}`);
-              paymentResult = { success: false, notFreeTrial: true, reason: e.message };
-            } else {
-              console.log(`[${progress}] Payment error: ${e.message?.slice(0, 60)}`);
-            }
-          }
-
-          if (paymentResult.success) {
-            statusDB.clearPaymentLink(account.email);
-            statusDB.clearAccessToken(account.email);
-            if (runtimeCfg.enableOAuth) {
-              console.log(`[${progress}] Running PKCE via protocol...`);
-              await this._finalizePkce(account, result, progress);
-            } else {
-              saveCPAAuthFile(account.email, result.accessToken, result.session);
-              this.emitStatus({ email: account.email, status: 'plus_no_rt', phase: 'done', progress });
-            }
-            summary.success++;
-          } else if (paymentResult.status === 'aborted') {
-            console.log(`[${progress}] Payment aborted by user`);
-            this.emitStatus({ email: account.email, status: 'aborted', phase: 'payment', progress, reason: 'Stopped by user' });
-            summary.aborted = (summary.aborted || 0) + 1;
-          } else if (paymentResult.notFreeTrial) {
-            this.emitStatus({ email: account.email, status: 'no_link', phase: 'done', progress, reason: paymentResult.reason });
-            summary.noLink++;
-          } else if (paymentResult.status) {
-            const reason = paymentResult.reason || 'Payment not completed';
-            console.log(`[${progress}] Payment incomplete: ${reason}`);
-            this.emitStatus({ email: account.email, status: paymentResult.status, phase: 'payment', progress, reason });
-            summary.error++;
-          } else {
-            const reason = paymentResult.reason || 'Payment not completed';
-            console.log(`[${progress}] Payment incomplete: ${reason}`);
-            this.emitStatus({ email: account.email, status: 'error', phase: 'payment', progress, reason });
-            summary.error++;
-          }
-        } catch (e) {
-          console.log(`[${progress}] ${account.email} error: ${e.message?.slice(0, 500)}`);
-          this.emitStatus({ email: account.email, status: 'error', phase: 'payment', progress, reason: e.message });
-          summary.error++;
-        } finally {
-          if (browser) try { await browser.close(); } catch {}
-          // Windows: chromeProc.kill() = SIGTERM, which Chrome's GUI/renderer
-          // subprocesses ignore (see process-utils.js header). Without killTree,
-          // the parent chrome.exe lingers and Chrome auto-opens an about:blank
-          // tab to replace the CDP-closed page — visible as a phantom window.
-          if (chromeProc) try { killTree(chromeProc.pid); } catch {}
-          if (chromeProc) try { chromeProc.kill(); } catch {}
-          try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {}
-          this._browser = null; this._chromeProc = null; this._tempDir = null;
-        }
-
-        // Track consecutive failures for rate-limit cooldown
+        // runner-loop: consecutiveErrors tracking (inventory 962–968)
         if (summary.error > errorsBefore) {
           consecutiveErrors++;
           console.log(`[${progress}] consecutive errors: ${consecutiveErrors}/${COOLDOWN_THRESHOLD}`);
@@ -967,6 +715,7 @@ class ProtocolEngine extends EventEmitter {
           consecutiveErrors = 0;
         }
 
+        // runner-loop: cooldown / delay (inventory 970–989)
         if (i < accounts.length - 1) {
           if (consecutiveErrors >= COOLDOWN_THRESHOLD) {
             const cd = COOLDOWN_MS_MIN + Math.floor(Math.random() * (COOLDOWN_MS_MAX - COOLDOWN_MS_MIN));
@@ -978,21 +727,24 @@ class ProtocolEngine extends EventEmitter {
             }
             consecutiveErrors = 0;
           } else {
-            {
-              const delayMs = ACCOUNT_DELAY_MIN + Math.floor(Math.random() * (ACCOUNT_DELAY_MAX - ACCOUNT_DELAY_MIN));
-              for (let elapsed = 0; elapsed < delayMs; elapsed += 1000) {
-                if (this.stopFlag) break;
-                await new Promise(r => setTimeout(r, 1000));
-              }
+            const delayMs = ACCOUNT_DELAY_MIN + Math.floor(Math.random() * (ACCOUNT_DELAY_MAX - ACCOUNT_DELAY_MIN));
+            for (let elapsed = 0; elapsed < delayMs; elapsed += 1000) {
+              if (this.stopFlag) break;
+              await new Promise(r => setTimeout(r, 1000));
             }
           }
         }
       }
 
     } catch (e) {
+      // runner-loop: fatal catch (inventory 992–994)
       console.log(`[Proto-Engine] Fatal: ${e.message}`);
       summary.error = summary.total;  // All accounts failed due to gateway
     } finally {
+      // runner-loop + engine-shell: finally cleanup (inventory 995–1006)
+      // stop() cleans this._browser/_chromeProc/_gw/_tempDir/_pyProc via this._ fields.
+      // resources bag proxies through to these, so any step that set resources.chromeProc
+      // etc. is already reflected in this._chromeProc etc. here.
       if (this._browser) try { await this._browser.close(); } catch {}
       if (this._chromeProc) try { killTree(this._chromeProc.pid); } catch {}
       if (this._chromeProc) try { this._chromeProc.kill(); } catch {}
