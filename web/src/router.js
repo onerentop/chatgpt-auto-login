@@ -21,9 +21,7 @@ const routes = [
   },
   {
     path: '/phone-pool',
-    name: 'PhonePool',
-    component: () => import('./views/PhonePool.vue'),
-    meta: { title: '号池' },
+    redirect: '/config',
   },
   {
     path: '/config',

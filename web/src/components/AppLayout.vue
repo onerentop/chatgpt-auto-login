@@ -44,9 +44,6 @@
           <el-menu-item index="/execute">
             <el-icon><VideoPlay /></el-icon><span>执行控制</span>
           </el-menu-item>
-          <el-menu-item index="/phone-pool">
-            <el-icon><Iphone /></el-icon><span>号池</span>
-          </el-menu-item>
           <el-menu-item index="/config">
             <el-icon><Setting /></el-icon><span>配置设置</span>
           </el-menu-item>

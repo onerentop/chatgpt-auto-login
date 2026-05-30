@@ -49,6 +49,60 @@
             </el-radio-group>
           </el-form-item>
 
+          <!-- 本地号池管理 -->
+          <template v-if="form.phonePool.provider === 'local'">
+            <el-form-item label="号池管理">
+              <div style="width:600px">
+                <div style="margin-bottom:8px;display:flex;gap:8px">
+                  <el-button size="small" @click="showLocalImport = true">批量导入</el-button>
+                  <el-button size="small" @click="exportLocalPool">导出</el-button>
+                  <el-button size="small" @click="loadLocalPool">刷新</el-button>
+                  <span style="color:#909399;font-size:12px;line-height:24px;margin-left:8px">共 {{ localPoolItems.length }} 个号 / 已用 {{ localTotalBindings }} 个绑定</span>
+                </div>
+                <el-table :data="localPoolItems" stripe border size="small" max-height="320" style="width:100%">
+                  <el-table-column type="expand">
+                    <template #default="{ row }">
+                      <div style="padding:4px 12px;color:#606266">
+                        已绑定: <el-tag v-for="e in row.boundEmails" :key="e" size="small" style="margin:2px">{{ e }}</el-tag>
+                        <span v-if="!row.boundEmails?.length" style="color:#909399">（无）</span>
+                      </div>
+                    </template>
+                  </el-table-column>
+                  <el-table-column prop="phone" label="手机号" width="150" />
+                  <el-table-column label="SMS URL" min-width="200">
+                    <template #default="{ row }">
+                      <el-tooltip :content="row.smsApiUrl" placement="top">
+                        <span style="font-family:monospace;font-size:11px">{{ row.smsApiUrl?.slice(0, 40) }}{{ row.smsApiUrl?.length > 40 ? '…' : '' }}</span>
+                      </el-tooltip>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="绑定" width="80">
+                    <template #default="{ row }">
+                      <el-tag :type="row.bindings_used >= form.phonePool.maxBindingsPerPhone ? 'danger' : 'success'" size="small">
+                        {{ row.bindings_used }} / {{ form.phonePool.maxBindingsPerPhone }}
+                      </el-tag>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="" width="60">
+                    <template #default="{ row }">
+                      <el-popconfirm :title="`删除 ${row.phone}？`" @confirm="deleteLocalPhone(row.phone)">
+                        <template #reference><el-button size="small" text type="danger">删除</el-button></template>
+                      </el-popconfirm>
+                    </template>
+                  </el-table-column>
+                </el-table>
+              </div>
+            </el-form-item>
+            <el-dialog v-model="showLocalImport" title="批量导入手机号" width="600px">
+              <el-input v-model="localImportText" type="textarea" :rows="10" placeholder="每行一条，格式：&#10;+14642840651|http://a.62-us.com/api/get_sms?key=..." />
+              <div style="margin-top:4px;color:#909399;font-size:12px">手机号 E.164 格式（+ 开头），竖线分隔 SMS URL</div>
+              <template #footer>
+                <el-button @click="showLocalImport = false">取消</el-button>
+                <el-button type="primary" :loading="localImporting" @click="doLocalImport">导入</el-button>
+              </template>
+            </el-dialog>
+          </template>
+
           <template v-if="form.phonePool.provider === 'zhusms'">
             <el-form-item label="zhusms 卡密">
               <el-input v-model="form.phonePool.zhusms.cardKey" placeholder="ZS-XXXXXXXX" />
@@ -440,7 +494,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, onBeforeUnmount, watch } from 'vue'
+import { ref, reactive, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '../api'
@@ -459,6 +513,40 @@ const smscloudBalance = ref(null)
 const loadingSmscloudServices = ref(false)
 const loadingSmscloudCountries = ref(false)
 const testingSmscloudBalance = ref(false)
+// 本地号池数据
+const localPoolItems = ref([])
+const localTotalBindings = computed(() => localPoolItems.value.reduce((s, r) => s + (r.bindings_used || 0), 0))
+const showLocalImport = ref(false)
+const localImportText = ref('')
+const localImporting = ref(false)
+
+async function loadLocalPool() {
+  try {
+    const { data } = await api.get('/phone-pool')
+    localPoolItems.value = data.items || []
+  } catch {}
+}
+async function doLocalImport() {
+  if (!localImportText.value.trim()) return
+  localImporting.value = true
+  try {
+    const { data } = await api.post('/phone-pool/import', { text: localImportText.value })
+    ElMessage.success(`导入：新增 ${data.added}，跳过 ${data.skipped}`)
+    showLocalImport.value = false
+    localImportText.value = ''
+    await loadLocalPool()
+  } catch (e) { ElMessage.error(e?.response?.data?.error || '导入失败') }
+  finally { localImporting.value = false }
+}
+function exportLocalPool() { window.open('/api/phone-pool/export') }
+async function deleteLocalPhone(phone) {
+  try {
+    await api.delete(`/phone-pool/${encodeURIComponent(phone)}`)
+    ElMessage.success('已删除')
+    await loadLocalPool()
+  } catch (e) { ElMessage.error('删除失败') }
+}
+
 // smsbower 动态数据
 const smsbowerServices = ref([])
 const smsbowerCountries = ref([])
@@ -601,6 +689,7 @@ onMounted(async () => {
   // Defer turning on dirty-tracking until next tick so the form-restoration
   // mutations above don't trip the watcher.
   loaded.value = true
+  loadLocalPool()
 })
 
 watch(
