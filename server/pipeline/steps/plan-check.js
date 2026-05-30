@@ -51,6 +51,8 @@ function planCheckStep() {
       );
 
       if (isPlusOrAbove) {
+        // protocol-engine.js:731 — 原文逐字：日志 "Already Plus"（经 LogCapture 进 logsDB/UI）
+        console.log(`[${ctx.deps.progress}] Already Plus`);
         // 设旗，供下游步骤路由。
         // 已-Plus 的终止动作（clearPaymentLink + clearAccessToken + _finalizePkce/saveCPAAuthFile
         // + summary.success++）由 paypal-pkce step 在 alreadyPlus 分支中统一处理（BY DESIGN）。

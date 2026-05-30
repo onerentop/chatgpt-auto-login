@@ -523,6 +523,8 @@ function paypalPkceStep() {
       //   if (runtimeCfg.enableOAuth) { _finalizePkce(...) } else { saveCPAAuthFile + emitStatus plus_no_rt/done }
       // ====================================================================
       if (runtimeCfg.enableOAuth) {
+        // protocol-engine.js:733 / :921 — 原文逐字日志（经 LogCapture 进 logsDB/UI）
+        console.log(`[${progress}] Running PKCE via protocol...`);
         await _finalizePkce(ctx, account, loginResult, progress);
       } else {
         saveCPAAuthFile(account.email, loginResult.accessToken, loginResult.session);
