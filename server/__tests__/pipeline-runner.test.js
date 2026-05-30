@@ -105,3 +105,31 @@ test('output is stashed on ctx.outputs', async () => {
   await runner._runAccount(ctx, steps);
   assert.strictEqual(ctx.outputs.s1.token, 't');
 });
+
+test('malformed result (missing ok) is treated as failure, not silent success', async () => {
+  const { runner, deps, events } = harness();
+  let s2ran = false;
+  const steps = [
+    defineStep({ id: 's1', label: 'S1', run: async () => { /* forgot to return ok */ } }),
+    defineStep({ id: 's2', label: 'S2', run: async () => { s2ran = true; return { ok: true }; } }),
+  ];
+  const ctx = new AccountContext({ email: 'a@x.com' }, deps);
+  const res = await runner._runAccount(ctx, steps);
+  assert.strictEqual(s2ran, false, 'downstream must not run after malformed result');
+  assert.strictEqual(res.stoppedAt, 's1');
+  assert.ok(events.some(e => e.stepId === 's1' && e.status === 'failed' && /malformed/.test(e.reason)));
+});
+
+test('forced step success lets downstream continue normally', async () => {
+  const { runner, deps } = harness();
+  const calls = [];
+  const steps = [
+    defineStep({ id: 's1', label: 'S1', shouldSkip: () => true, run: async () => { calls.push('s1'); return { ok: true }; } }),
+    defineStep({ id: 's2', label: 'S2', shouldSkip: () => true, run: async () => { calls.push('s2'); return { ok: true }; } }),
+    defineStep({ id: 's3', label: 'S3', run: async () => { calls.push('s3'); return { ok: true }; } }),
+  ];
+  const ctx = new AccountContext({ email: 'a@x.com' }, deps);
+  const res = await runner._runAccount(ctx, steps, { forceStepId: 's2' });
+  assert.deepStrictEqual(calls, ['s2', 's3'], 's1 skipped, s2 forced, s3 downstream runs');
+  assert.strictEqual(res.completed, true);
+});
