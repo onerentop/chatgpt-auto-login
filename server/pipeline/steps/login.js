@@ -406,6 +406,18 @@ function loginStep(cfg = {}) {
             return { ok: false, reason: 'deactivated' };
           }
 
+          // 非 success 状态（如 'error'）视为登录失败（适用于测试接缝直接 resolve 非 success 对象的场景）
+          if (result.status && result.status !== 'success') {
+            const reason = result.error || result.detail || result.status;
+            console.log(`[${progress}] Protocol login failed (status=${result.status}): ${reason}`);
+            emitStatus({ email: account.email, status: 'error', phase: 'protocol-login', progress, reason });
+            summary.error++;
+            ctx.flags.finalStatus = 'error';
+            ctx.flags.finalReason = reason;
+            ctx.flags.finalPaymentLink = '';
+            return { ok: false, reason };
+          }
+
           // protocol-engine.js:697
           console.log(`[${progress}] Protocol login OK: ${result.accessToken}`);
         } catch (e) {
@@ -445,10 +457,15 @@ function loginStep(cfg = {}) {
       // ====================================================================
       // 成功：将产物写入 ctx.outputs.login
       // ====================================================================
+      const session = result.session;
+      const planType = result.planType ||
+        session?.account?.planType ||
+        session?.chatgpt_plan_type ||
+        'free';
       ctx.outputs.login = {
         accessToken: result.accessToken,
-        session: result.session,
-        planType: result.planType,
+        session,
+        planType,
       };
 
       return { ok: true };

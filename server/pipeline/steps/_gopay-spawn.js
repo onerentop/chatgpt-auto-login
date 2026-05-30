@@ -41,16 +41,42 @@ function redactLine(line) {
 
 // ==========================================================================
 // 测试接缝：允许注入假 spawn（镜像 paypal-pkce.js 的 __setRunProtocolPhoneVerify 模式）
+//
+// 两种注入模式：
+//   低层模式（legacy）：fn(cmd, args, opts) → ChildProcess（原来的行为）
+//   高层模式（new）：  fn(scriptPath, input, opts) → Promise<result>
+//     — 当 fn.length <= 2 或 fn.length === 3 且 fn.__highLevel 标记时，
+//       直接取代整个 spawnGopay 的逻辑（不走 _nodeSpawn）。
+//
+// 实际上：测试只需要传一个高层 async 函数即可，无需标记；
+// 我们通过检测 _spawnHighLevel 标志来区分两种模式。
 // ==========================================================================
 let _spawnImpl = _nodeSpawn;
+let _spawnHighLevel = null;   // 高层接缝：(scriptPath, input, opts) => Promise<result>
 
 /**
- * 注入替代 spawn 实现（仅供单元测试使用）。
- * 生产代码永远不调用此函数。
- * @param {Function|null} fn  传 null 恢复原生 spawn
+ * 注入替代实现（仅供单元测试使用）。生产代码永远不调用此函数。
+ *
+ * @param {Function|null} fn
+ *   - 传 null → 恢复原生行为
+ *   - 若 fn 返回 Promise（高层模式）：直接替换 spawnGopay 逻辑
+ *     签名: (scriptPath, input, opts?) => Promise<{status, ...}>
+ *   - 若 fn 是 Node spawn 签名（低层模式）：替换底层 _spawnImpl
+ *     签名: (cmd, args, opts) => ChildProcess
+ *
+ * 实现策略：统一存为 _spawnHighLevel，若为 null 则用原 _nodeSpawn。
+ * 高层函数直接被 spawnGopay 调用，绕过整个 ChildProcess 逻辑。
  */
 function __setSpawnImpl(fn) {
-  _spawnImpl = fn || _nodeSpawn;
+  if (fn == null) {
+    _spawnImpl = _nodeSpawn;
+    _spawnHighLevel = null;
+  } else {
+    // 统一视为高层接缝：(scriptPath, input, opts?) => Promise<result>
+    // 旧低层接缝（返回 ChildProcess）的测试若需要继续用，请改用高层封装。
+    _spawnHighLevel = fn;
+    _spawnImpl = _nodeSpawn; // 不用于高层模式，但保持一致
+  }
 }
 
 // ==========================================================================
@@ -76,6 +102,11 @@ function __setSpawnImpl(fn) {
  * @returns {Promise<{status:string, [key:string]:any}>}  Python 最终输出对象
  */
 function spawnGopay(scriptPath, input, opts = {}) {
+  // 高层接缝：直接委托给注入的高层实现（测试专用）
+  if (_spawnHighLevel) {
+    return _spawnHighLevel(scriptPath, input, opts);
+  }
+
   const { timeoutMs = 600000, signal, onLog = console.log } = opts;
 
   return new Promise((resolve) => {

@@ -1,70 +1,30 @@
-// GoPay Plus 激活引擎 — runner 驱动 gopay 管线
+// GoPay Plus 激活引擎 — 批量 start()，runner 驱动 login(protocol)→gopay 管线
 //
-// 外部契约（保持不变）：
-//   runOne(account)  — 执行一个账号的 GoPay 激活流程
-//   state getter     — { running, phase, currentAccount, results, logCount }
-//   events           — 'log', 'result'
-//   stop()           — 中止当前运行
+// 外部契约：
+//   start(startFrom=0, filterEmails=null) — 批量激活（从 accountsDB 加载 emails 选中账号）
+//   state getter — { running, phase, currentAccount, results, logCount }
+//   events — 'account-status' / 'step-status' / 'complete' / 'log'
+//   stop() — 中止
 //
-// 内部实现（P3 迁移）：
-//   用 PipelineRunner._runAccount 驱动 buildPipeline({payment:'gopay'}) 的 4 步管线
-//   （plan-check → gopay-register → gopay-pay → gopay-verify），
-//   取代原来直接 _spawnPython(GOPAY_SCRIPT, ...) 的单次 Python 调用。
-//   PipelineRunner._recordStep 会写 account_step_state，步骤抽屉可读取。
+//   login 步（protocol）做协议注册登录 → ctx.outputs.login.accessToken → gopay 三步沿用。
 'use strict';
 
 const path = require('path');
 const fs = require('fs');
 const EventEmitter = require('events');
 
-const { PipelineRunner }  = require('./pipeline/runner');
-const { AccountContext }  = require('./pipeline/context');
-const { buildPipeline }   = require('./pipeline/index');
+const { PipelineRunner } = require('./pipeline/runner');
+const { AccountContext } = require('./pipeline/context');
+const { buildPipeline }  = require('./pipeline/index');
+const proxyMgr = require('./proxy');
+const { killTree } = require('./process-utils');
 
-// DB 依赖懒加载：gopay-engine 可在 initDB() 完成前被 require（测试/单机场景）。
-// 用 getter 推迟访问；若 DB 尚未初始化则透明降级为 no-op shim，避免 db.prepare() 在
-// db===null 时 crash（AccountContext 构造器在 prevPersisted 读取时会触发 statusDB.get()）。
-function _safeDb() {
-  try {
-    const db = require('./db');
-    // 探活：如果 db 真的可用，statusDB.get 不会抛；否则降级
-    db.statusDB.get('__probe__');
-    return db;
-  } catch {
-    return null;
-  }
-}
-
-const _noopStatusDB = {
-  get:              () => null,
-  set:              () => {},
-  reset:            () => {},
-  clearAccessToken: () => {},
-  clearPaymentLink: () => {},
-  setAlive:         () => {},
-  clearAlive:       () => {},
-};
-const _noopStepStateDB = {
-  get:   () => null,
-  list:  () => [],
-  set:   () => {},
-  reset: () => {},
-};
-const _noopSave = async () => {};
-
-function _getDbDeps() {
-  const db = _safeDb();
-  if (db) return { statusDB: db.statusDB, stepStateDB: db.stepStateDB, save: db.save };
-  return { statusDB: _noopStatusDB, stepStateDB: _noopStepStateDB, save: _noopSave };
-}
-
-const MAIN_CONFIG   = path.join(__dirname, '..', 'config.json');
+const MAIN_CONFIG = path.join(__dirname, '..', 'config.json');
 
 const _OTP_RE   = /\b\d{4,6}\b/g;
 const _TOKEN_RE = /Bearer\s+\S+|eyJ[A-Za-z0-9_-]{20,}/g;
-
 function redactLine(line) {
-  return line
+  return String(line)
     .replace(_TOKEN_RE, '[REDACTED_TOKEN]')
     .replace(_OTP_RE, (m, offset, str) => {
       const before = str.slice(Math.max(0, offset - 15), offset).toLowerCase();
@@ -79,11 +39,14 @@ class GoPayEngine extends EventEmitter {
     this._running = false;
     this._currentAccount = null;
     this._phase = 'idle';
-    this._childProc = null;   // kept for stop() compat (harmless; spawn now inside steps)
     this._aborted = false;
     this._abortController = null;
+    this._pyProc = null;
+    this._runner = null;
+    this._logCapture = null;
     this._results = [];
     this._logs = [];
+    this._injectDeps = null;
   }
 
   get state() {
@@ -96,99 +59,165 @@ class GoPayEngine extends EventEmitter {
     };
   }
 
-  async runOne(account) {
-    if (this._running) throw new Error('Engine already running');
-    this._running = true;
-    this._aborted = false;
-    this._currentAccount = account.email || account.id;
-    this._logs = [];
-
+  emitStatus(data) {
     try {
-      const accessToken = account.accessToken || account.access_token;
-      if (!accessToken) throw new Error('No access token');
-
-      // AbortController：stop() 通过 abort() 通知 runner/steps 中止
-      this._abortController = new AbortController();
-
-      // deps 构造：把 step 发出的 emitStatus 映射到引擎 phase 状态 + log
-      const self = this;
-      const { statusDB, stepStateDB, save } = _getDbDeps();
-
-      const deps = {
-        emitStatus(d) {
-          // step 在 running/done 事件中携带 phase，映射到引擎 _phase 状态
-          if (d.phase && d.phase !== 'done') {
-            self._setPhase(d.phase);
-          }
-        },
-        summary: {},          // gopay 路径不用计数器
-        progress: '1/1',
-        runtimeCfg: JSON.parse(fs.readFileSync(MAIN_CONFIG, 'utf-8')),
-        abortController: this._abortController,
-        statusDB,
-        stepStateDB,
-        save,
-        log: (_email, _stepId, msg) => this._emitLog(msg),
-      };
-
-      const ctx = new AccountContext(
-        { email: account.email || account.id },
-        deps,
-      );
-
-      // 注入外部已获取的 login 输出（GoPay 无 login step）
-      ctx.outputs.login = {
-        accessToken,
-        session:  account.session  || {},
-        planType: account.planType || 'free',
-      };
-
-      const runner = new PipelineRunner(deps);
-      // 透传 step-status 事件（供未来 socket 接线；目前无前端消费，harmless）
-      runner.on('step-status', (d) => this.emit('step-status', d));
-
-      const steps = buildPipeline({ payment: 'gopay' });
-      const result = await runner._runAccount(ctx, steps);
-
-      // 确定终止状态
-      const finalStatus = ctx.flags.finalStatus ||
-        (result.completed ? 'plus_gopay' : 'error');
-
-      this._addResult(account, finalStatus, ctx.flags.finalReason || null, {
-        phone:             ctx.outputs['gopay-pay']?.phone,
-        transactionStatus: ctx.outputs['gopay-pay']?.transaction_status,
-      });
-
-    } catch (err) {
-      this._addResult(account, 'error', err.message);
-    } finally {
-      this._running = false;
-      this._currentAccount = null;
-      this._phase = 'idle';
-      this._childProc = null;
-      this._abortController = null;
+      const st = proxyMgr.getState();
+      data = { ...data, proxyNode: st.currentNode || '', exitIp: st.exitIp || '' };
+    } catch {}
+    if (data.email) this._currentAccount = data.email;
+    if (data.phase) this._phase = data.phase;
+    this.emit('account-status', data);
+    try {
+      const { statusDB } = require('./db');
+      statusDB.set(data.email, data);
+    } catch (e) {
+      console.log(`[GoPay] statusDB.set failed for ${data.email}: ${e.message?.slice(0, 60)}`);
     }
   }
 
   stop() {
     this._aborted = true;
-    // 优先通过 AbortController 通知 runner/steps（spawnGopay 监听 signal）
-    if (this._abortController) {
-      try { this._abortController.abort(); } catch {}
-    }
-    // _childProc kill 保留（backward compat；_childProc 目前由 steps 内部管理，通常为 null）
-    if (this._childProc) {
-      try { this._childProc.kill(); } catch {}
-    }
+    if (this._runner) this._runner.stopFlag = true;
+    if (this._abortController) { try { this._abortController.abort(); } catch {} }
+    const py = this._pyProc; this._pyProc = null;
+    if (py) { try { killTree(py.pid); } catch {} try { py.kill(); } catch {} }
+    try { const { statusDB } = require('./db'); statusDB.resetRunning?.(); } catch {}
   }
 
-  _setPhase(phase) {
-    this._phase = phase;
-    this._emitLog(`Phase: ${phase}`);
+  async start(startFrom = 0, filterEmails = null) {
+    if (this._running) throw new Error('GoPay engine already running');
+    this._running = true;
+    this._aborted = false;
+    this._currentAccount = null;
+    this._logs = [];
+    this._abortController = new AbortController();
+
+    const engine = this;
+    const resources = {
+      get pyProc() { return engine._pyProc; },
+      set pyProc(v) { engine._pyProc = v; },
+      get chromeProc() { return null; }, set chromeProc(_v) {},
+      get browser() { return null; }, set browser(_v) {},
+      get tempDir() { return null; }, set tempDir(_v) {},
+    };
+
+    const { LogCapture } = require('./logger');
+    this._logCapture = new LogCapture();
+    let currentEmail = '';
+    const logHandler = (message) => {
+      const ts = new Date().toISOString();
+      const phase = this._runner?._activeCtx?.currentStepId || '';
+      const safe = redactLine(message);
+      this._logs.push(safe);
+      this.emit('log', { email: currentEmail, phase, message: safe, timestamp: ts });
+      if (currentEmail) {
+        try { const { logsDB } = require('./db'); logsDB.add(currentEmail, phase, safe, ts); } catch {}
+      }
+    };
+    this._logCapture.onLog(logHandler);
+    this._logCapture.start();
+
+    const { accountsDB, statusDB, stepStateDB, save } = require('./db');
+    let accounts = accountsDB.list().map(a => ({
+      email: a.email, password: a.password, login_type: a.login_type,
+      client_id: a.client_id || '', refresh_token: a.refresh_token || '',
+    }));
+    if (filterEmails?.length > 0) {
+      const set = new Set(filterEmails.map(e => e.toLowerCase()));
+      accounts = accounts.filter(a => set.has(a.email.toLowerCase()));
+    }
+    if (accounts.length === 0) {
+      this._running = false;
+      if (this._logCapture) { this._logCapture.offLog(logHandler); this._logCapture.stop(); }
+      throw new Error('No accounts');
+    }
+
+    let runtimeCfg = {};
+    try { runtimeCfg = JSON.parse(fs.readFileSync(MAIN_CONFIG, 'utf-8')); } catch {}
+    const summary = { total: accounts.length, success: 0, error: 0, noLink: 0, noJpProxy: 0, noPromo: 0, verifyError: 0 };
+
+    const ACCOUNT_DELAY_MIN = 15000, ACCOUNT_DELAY_MAX = 45000;
+    const COOLDOWN_THRESHOLD = 3, COOLDOWN_MS_MIN = 300000, COOLDOWN_MS_MAX = 600000;
+    let consecutiveErrors = 0;
+
+    this._runner = new PipelineRunner({ statusDB, stepStateDB, save, log: () => {} });
+    this._runner.on('step-status', d => this.emit('step-status', d));
+
+    try {
+      for (let i = 0; i < accounts.length; i++) {
+        if (this._aborted) break;
+        const account = accounts[i];
+        const progress = `${i + 1}/${accounts.length}`;
+        currentEmail = account.email;
+        const errorsBefore = summary.error;
+
+        console.log(`[${progress}] === ${account.email} (gopay) ===`);
+        if (proxyMgr.getState().enabled) {
+          try { const node = await proxyMgr.rotate(); console.log(`[${progress}] Proxy rotated → ${node}`); }
+          catch (e) { console.log(`[${progress}] Proxy rotate failed: ${e.message?.slice(0, 60)}`); }
+        }
+
+        const deps = {
+          emitStatus: this.emitStatus.bind(this),
+          summary,
+          progress,
+          proxyMgr,
+          resources,
+          runtimeCfg,
+          statusDB,
+          stepStateDB,
+          save,
+          abortController: this._abortController,
+          log: (_e, _s, msg) => console.log(msg),
+          ...(this._injectDeps || {}),
+        };
+        const ctx = new AccountContext({
+          email: account.email, password: account.password,
+          client_id: account.client_id, refresh_token: account.refresh_token,
+          login_type: account.login_type,
+        }, deps);
+
+        this._runner.stopFlag = this._aborted;
+        const steps = buildPipeline({ login: 'protocol', payment: 'gopay' });
+        const result = await this._runner._runAccount(ctx, steps);
+
+        const finalStatus = ctx.flags.finalStatus || (result.completed ? 'plus_gopay' : 'error');
+        this._addResult(account, finalStatus, ctx.flags.finalReason || null, {
+          phone: ctx.outputs['gopay-pay']?.phone,
+          transactionStatus: ctx.outputs['gopay-pay']?.transaction_status,
+        });
+
+        if (summary.error > errorsBefore) consecutiveErrors++; else consecutiveErrors = 0;
+
+        if (i < accounts.length - 1) {
+          const cd = consecutiveErrors >= COOLDOWN_THRESHOLD
+            ? COOLDOWN_MS_MIN + Math.floor(Math.random() * (COOLDOWN_MS_MAX - COOLDOWN_MS_MIN))
+            : ACCOUNT_DELAY_MIN + Math.floor(Math.random() * (ACCOUNT_DELAY_MAX - ACCOUNT_DELAY_MIN));
+          if (consecutiveErrors >= COOLDOWN_THRESHOLD) consecutiveErrors = 0;
+          for (let elapsed = 0; elapsed < cd; elapsed += 1000) {
+            if (this._aborted) break;
+            await new Promise(r => setTimeout(r, 1000));
+          }
+        }
+      }
+    } catch (e) {
+      console.log(`[GoPay-Engine] Fatal: ${e.message}`);
+    } finally {
+      const py = this._pyProc; this._pyProc = null;
+      if (py) { try { killTree(py.pid); } catch {} try { py.kill(); } catch {} }
+      if (this._logCapture) { this._logCapture.offLog(logHandler); this._logCapture.stop(); }
+      console.log(`[GoPay-Engine] Complete: ${JSON.stringify(summary)}`);
+      this.emit('complete', { summary });
+      this._running = false;
+      this._currentAccount = null;
+      this._phase = 'idle';
+      this._abortController = null;
+      this._runner = null;
+    }
   }
 
   _emitLog(msg) {
-    const safe = redactLine(String(msg));
+    const safe = redactLine(msg);
     this._logs.push(safe);
     this.emit('log', safe);
   }
@@ -196,15 +225,13 @@ class GoPayEngine extends EventEmitter {
   _addResult(account, status, detail, extra) {
     const r = {
       email: account.email || account.id,
-      status,
-      detail: detail || null,
+      status, detail: detail || null,
       timestamp: new Date().toISOString(),
       ...extra,
     };
     this._results.push(r);
     this.emit('result', r);
   }
-
 }
 
 const engine = new GoPayEngine();
