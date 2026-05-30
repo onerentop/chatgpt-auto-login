@@ -32,6 +32,22 @@
     "oapi": {
       "baseUrl": "https://sms.oapi.vip/api.php",
       "apiKey": ""
+    },
+    "smsbower": {
+      "apiKey": "",
+      "serviceCode": "ni",
+      "countryCode": 6,
+      "maxPrice": 0.15
     }
+  },
+  "proxy": {
+    "idGopay": {
+      "enabled": false,
+      "proxyTemplate": ""
+    }
+  },
+  "gopay": {
+    "defaultPin": "147258",
+    "smsProvider": "smsbower"
   }
 }
