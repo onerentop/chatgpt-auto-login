@@ -348,6 +348,63 @@ def _phase3_stripe(access_token, proxy):
     return result["midtrans_url"]
 
 
+def _do_register(cfg, provider, pin):
+    """Phase 4 注册循环（从 main() 原始代码提取，逻辑 VERBATIM）。
+
+    成功返回 (account_dict, phone_str, proxy_str)；
+    20 次全失败返回 (None, "", proxy_str)。
+    """
+    proxy = ""
+    account = None
+    phone = ""
+
+    _log("=== Phase 4: Register GoPay wallet ===")
+    for attempt in range(20):
+        proxy = _make_proxy(cfg)
+        _log(f"Attempt {attempt+1}/20, proxy: {proxy.split('@')[-1] if '@' in proxy else proxy[:30]}")
+        result = _register_one(provider, pin, proxy)
+
+        if isinstance(result, dict):
+            account = result
+            phone = account["phone"]
+            break
+        if result == "NO_STOCK":
+            provider.escalate_price()
+            _log("No stock, escalated price tier")
+            time.sleep(5)
+            continue
+        if result == "RATE_LIMITED":
+            _log("429 rate limited, rotating IP...")
+            _rotate_ip()
+            continue
+        _log("Number not usable, retrying in 3s...")
+        time.sleep(3)
+
+    return account, phone, proxy
+
+
+def _do_pay(account, access_token, pin, provider, proxy, midtrans_url):
+    """Phase 3 + Phase 5（焊死，确保 15 分钟 snap-token TTL 内完成）。
+
+    从 main() 原始代码提取，逻辑 VERBATIM。
+    若 midtrans_url 为空则先跑 Phase 3；然后立刻跑 Phase 5。
+    返回 pay_result dict；异常向上传播（GoPayFraudDenyError / Exception）。
+    """
+    phone = account["phone"]
+
+    # Phase 3: 注册完成后再获取 Midtrans URL（15 分钟有效期，紧接 Phase 5）
+    if not midtrans_url:
+        if not access_token:
+            _emit({"status": "error", "phone": phone, "detail": "no access_token or midtrans_url"})
+            return None
+        midtrans_url = _phase3_stripe(access_token, proxy)
+
+    # Phase 5: 立刻支付（snap token 刚生成，15 分钟内有效）
+    _log("=== Phase 5: Pay via GoPay ===")
+    pay_result = _phase5_pay(account, pin, midtrans_url, provider, proxy)
+    return pay_result
+
+
 def main():
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s")
 
@@ -366,49 +423,72 @@ def main():
     api_key = provider_params.get("apiKey", "")
     provider = create_sms_provider(provider_name, api_key)
 
+    mode = inp.get("mode", "full")
+
+    if mode == "register":
+        # 仅执行 Phase 4 注册，成功后 emit registered（非终止结果供 JS 层捕获）
+        account, phone, proxy = _do_register(cfg, provider, pin)
+        if not account:
+            _emit({"status": "gopay_reg_fail", "phone": "", "detail": "all 20 attempts failed"})
+            return
+        _log(f"Registration complete: {phone}")
+        _emit({
+            "status": "registered",
+            "phone": phone,
+            "account": {"local": account["local"], "aid": account["aid"], "phone": account["phone"]},
+            "proxy": proxy,
+        })
+        return
+
+    if mode == "pay":
+        # 仅执行 Phase 3 + Phase 5；account 和 proxy 由 JS 层从 stdin 传入
+        account = inp.get("account")
+        proxy = inp.get("proxy", "")
+        phone = account.get("phone", "") if account else ""
+        try:
+            pay_result = _do_pay(account, access_token, pin, provider, proxy, midtrans_url)
+            if pay_result is None:
+                # _do_pay 已经 emit error（no access_token），直接返回
+                return
+            if pay_result.get("success"):
+                _emit({
+                    "status": "success",
+                    "phone": phone,
+                    "transaction_status": pay_result.get("transaction_status", "unknown"),
+                })
+            else:
+                _emit({
+                    "status": "gopay_pay_fail",
+                    "phone": phone,
+                    "detail": pay_result.get("detail", "unknown"),
+                    "transaction_status": pay_result.get("transaction_status", ""),
+                })
+        except GoPayFraudDenyError as e:
+            _log(f"FRAUD DENIED: {e}")
+            _emit({"status": "gopay_fraud", "phone": phone, "detail": str(e)[:300]})
+        except Exception as e:
+            _log(f"Unexpected error: {e}")
+            _emit({"status": "gopay_pay_fail", "phone": phone, "detail": str(e)[:300]})
+        return
+
+    # mode == "full"（默认，向后兼容）：复现原始 main() 完整流程
     phone = ""
     account = None
     proxy = ""
 
     try:
-        # Phase 4: 先注册 GoPay 钱包（耗时长，先做）
-        _log("=== Phase 4: Register GoPay wallet ===")
-        for attempt in range(20):
-            proxy = _make_proxy(cfg)
-            _log(f"Attempt {attempt+1}/20, proxy: {proxy.split('@')[-1] if '@' in proxy else proxy[:30]}")
-            result = _register_one(provider, pin, proxy)
-
-            if isinstance(result, dict):
-                account = result
-                phone = account["phone"]
-                break
-            if result == "NO_STOCK":
-                provider.escalate_price()
-                _log("No stock, escalated price tier")
-                time.sleep(5)
-                continue
-            if result == "RATE_LIMITED":
-                _log("429 rate limited, rotating IP...")
-                _rotate_ip()
-                continue
-            _log("Number not usable, retrying in 3s...")
-            time.sleep(3)
+        account, phone, proxy = _do_register(cfg, provider, pin)
 
         if not account:
             _emit({"status": "gopay_reg_fail", "phone": "", "detail": "all 20 attempts failed"})
             return
         _log(f"Registration complete: {phone}")
 
-        # Phase 3: 注册完成后再获取 Midtrans URL（15 分钟有效期，紧接 Phase 5）
-        if not midtrans_url:
-            if not access_token:
-                _emit({"status": "error", "phone": phone, "detail": "no access_token or midtrans_url"})
-                return
-            midtrans_url = _phase3_stripe(access_token, proxy)
+        pay_result = _do_pay(account, access_token, pin, provider, proxy, midtrans_url)
 
-        # Phase 5: 立刻支付（snap token 刚生成，15 分钟内有效）
-        _log("=== Phase 5: Pay via GoPay ===")
-        pay_result = _phase5_pay(account, pin, midtrans_url, provider, proxy)
+        if pay_result is None:
+            # _do_pay 已经 emit error（no access_token），直接返回
+            return
 
         if pay_result.get("success"):
             _emit({
