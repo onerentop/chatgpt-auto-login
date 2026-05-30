@@ -50,6 +50,9 @@
           <el-menu-item index="/config">
             <el-icon><Setting /></el-icon><span>配置设置</span>
           </el-menu-item>
+          <el-menu-item index="/gopay">
+            <el-icon><Wallet /></el-icon><span>GoPay激活</span>
+          </el-menu-item>
         </el-menu>
       </aside>
 
@@ -115,7 +118,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Monitor, User, Setting, VideoPlay, Document, Moon, Sunny, Bell, Search, Iphone } from '@element-plus/icons-vue'
+import { Monitor, User, Setting, VideoPlay, Document, Moon, Sunny, Bell, Search, Iphone, Wallet } from '@element-plus/icons-vue'
 import { socketState, reconnectSocket } from '../socket'
 import CommandPalette from './ui/CommandPalette.vue'
 import PipelineHUD from './ui/PipelineHUD.vue'

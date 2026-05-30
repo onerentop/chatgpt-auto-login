@@ -89,6 +89,11 @@ initDB().then(() => {
   app.use('/api/liveness', livenessRoutes(livenessRunner, accountsDB, livenessLogsDB));
   app.use('/api/health', require('./routes/health'));
   app.use('/api/phone-pool', require('./routes/phone-pool'));
+  app.use('/api/gopay-activate', require('./routes/gopay-activate'));
+
+  const gopayEngine = require('./gopay-engine');
+  gopayEngine.on('log', (msg) => io.emit('gopay-log', msg));
+  gopayEngine.on('result', (r) => io.emit('gopay-result', r));
 
   const distPath = path.join(__dirname, '..', 'web', 'dist');
   app.use(express.static(distPath));
@@ -148,6 +153,7 @@ async function gracefulShutdown(signal) {
     if (db.logsDB?.flush) db.logsDB.flush();
     if (db.livenessLogsDB?.clear) {} // intentionally not clearing on shutdown
     require('./smscloud-deferred-cancel').stop();
+    require('./gopay-engine').stop();
     if (db.save?.flush) await db.save.flush();
   } catch (e) {
     console.error('[shutdown] flush failed:', e.message);

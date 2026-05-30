@@ -1,6 +1,6 @@
 # GoPay 印尼区 ChatGPT Plus 激活流水线设计
 
-> 状态：与用户逐段确认（2026-05-30，Section 1/2/3 全部 confirmed）。
+> 状态：Phase 3 Probe 已通过（2026-05-30），全协议验证完成。Stripe 协议层已补充。
 > 范围 = 在 `chatgpt-auto-login` 新增一条独立的印尼 GoPay 激活流水线，与现有美区 PayPal 流水线并行、互不干扰。原有 `engine.js` / `protocol-engine.js` / PayPal 流程零改动。
 > 代码最终落在 `E:\workspace\projects\demo\chatgpt-auto-login`。GoPay 能力从 `E:\workspace\projects\gopay-deploy` 的 `opai` 包整包复制（含已验证的 register+login+consent→1Rp 修复）。
 
@@ -10,16 +10,16 @@
 
 1. Outlook 邮箱登录 ChatGPT
 2. 获取 accessToken
-3. 生成印尼 IDR 支付长链（JP 代理 + currency=IDR），提取 Midtrans snap URL 并存储
+3. 生成 IDR 支付链接 + Stripe 协议确认 + 获取 Midtrans snap URL（4 步纯协议）
 4. 注册带 1 Rp 余额的 GoPay 钱包
-5. 打开支付长链，用 GoPay 支付（输入 PIN + SMS OTP）
+5. 用 GoPay 支付 Midtrans（linking PIN+SMS → charge → challenge PIN）
 6. 验证是否成功变为 Plus 套餐
 
 ## 2. 关键决策（用户拍板）
 
 | 决策点 | 选择 |
 |---|---|
-| 支付链接来源 | 改造 `checkout_link.py`，`country=ID/currency=IDR` 产出链接，代码自动从 pay.openai.com 提取 Midtrans snap URL |
+| 支付链接来源 | 新建 `stripe_gopay_flow.py`：checkout→Stripe init→confirm(GoPay)→跟踪重定向→Midtrans snap URL。`checkout_link.py` 不改 |
 | GoPay 代码集成 | 从 gopay-deploy 整包复制 `opai` 到 `chatgpt-auto-login/gopay/`，Node spawn Python 调用 |
 | SMS provider | 配置可切换（`create_sms_provider` 工厂），默认 SmsBower + IPRoyal 印尼住宅代理 |
 | 运行入口 | 接入现有 Web 仪表盘（新 Vue 视图 + 新路由 + 新 engine） |
@@ -32,13 +32,25 @@
 ```
 Phase 1: Outlook 登录       复用 protocol_register.py（不改）  → accessToken + session
 Phase 2: Plan 检查          session.planType，已是 plus 则跳过
-Phase 3: 生成 IDR 链接       checkout_link.py 改造(country=ID,currency=IDR,JP代理)
-                            → 从 pay.openai.com 提取 Midtrans snap URL → 存 DB
+Phase 3: Stripe 协议链       stripe_gopay_flow.py（4 步纯协议，JP 代理）
+         3a. POST chatgpt.com/backend-api/payments/checkout  → cs_live + pk_live
+         3b. POST api.stripe.com/v1/payment_pages/{cs}/init  → eid, session 详情
+         3c. POST api.stripe.com/v1/payment_pages/{cs}/confirm → SetupIntent redirect
+             (payment_method=gopay, billing=ID, terms=accepted, return_url)
+         3d. GET  pm-redirects.stripe.com/authorize/...       → 302 → Midtrans snap URL
+         → 存 DB midtrans_url
 Phase 4: 注册 GoPay 钱包     gopay_activate.py 内：租印尼号→signup→PIN→login→consent→1Rp
 Phase 5: GoPay 支付         gopay_activate.py 内：同号同 provider 支付 Midtrans URL
                             linking(PIN+SMS) → charge → challenge(PIN) → settlement
 Phase 6: 验证 Plus          复用 session 检查 planType == plus
 ```
+
+**Phase 3 Probe 验证结果（2026-05-30）**：
+- Midtrans snap URL **不在** checkout API 响应里（原设计假设错误）
+- 必须经过 Stripe init → confirm → 重定向链才能获取
+- SetupIntent 金额 IDR 1（最低验证金额），首月 IDR 0（免费试用）
+- GoPay 是 Stripe 结账页的原生支付方式（与 Card 并列）
+- 全链路纯协议已验证通过，无需浏览器
 
 **核心约束**：Phase 4 注册的印尼手机号必须持有到 Phase 5 支付完成——支付时 Midtrans linking 还要用同一个号收第 4 次 SMS OTP。因此 Phase 4+5 合并为单脚本（方案 A），同进程同 provider 实例同 aid，中间不 release/cancel/done。
 
@@ -66,13 +78,12 @@ chatgpt-auto-login/
 
 | 文件 | 责任 | I/O |
 |---|---|---|
+| `stripe_gopay_flow.py` | Phase 3：Stripe 协议全链路（checkout→init→confirm→redirect→snap URL） | stdin `{access_token}`；stdout JSON log lines + 最终 `{status,midtrans_url,cs_id,snap_token}` |
 | `gopay_activate.py` | Phase 4+5 合并：注册钱包(含1Rp) + 同号支付 Midtrans URL | stdin `{midtrans_url,pin,timeout}`；stdout JSON log lines + 最终 `{status,phone,transaction_status}` |
 
 ### 4.3 改造脚本
 
-| 文件 | 改动 |
-|---|---|
-| `checkout_link.py` | `billing_details.country`/`currency` 从 stdin 读（默认仍 JP/JPY，不破坏现有调用）；成功后额外尝试提取 Midtrans snap URL，附加到输出 |
+无。`checkout_link.py` 保持不变。Phase 3 由新建的 `stripe_gopay_flow.py` 独立处理。
 
 ### 4.4 主项目新增
 
@@ -125,9 +136,22 @@ env:    HTTPS_PROXY=<印尼代理>, OPAI_CONFIG_FILE=<abs>/gopay/config/config.j
 
 内部流程：`_register_one(provider,pin,proxy,...)` → login(GoPay creds) → `accept_consents` → 轮询余额≥1 → `GoPayPayment(proxy).pay(midtrans_url, phone, "62", pin, wait_otp=provider.wait_code(aid))`。SMS provider 实例和 aid 全程复用，注册成功后**不 release**。
 
-### 6.2 `checkout_link.py` 改动
+### 6.2 `stripe_gopay_flow.py`（新建，Phase 3 全链路）
 
-`body.billing_details.country/currency` 从 stdin 读（`inp.get('country','JP')` / `inp.get('currency','JPY')`，默认不变，向后兼容）。成功提取 `pay.openai.com` 链接后，额外用 curl_cffi 跟随到结账页尝试提取 `app.midtrans.com/snap/v[34]/redirection/<uuid>`，附加 `midtrans_url` 字段到输出（提取不到则该字段为空，由 Node 侧判 `no_midtrans`）。
+```
+stdin:  {"access_token":"eyJ..."}
+stdout: {"log":"  [StripeGoPay] checkout → cs_live_..."}
+        {"log":"  [StripeGoPay] init → eid=..., gopay confirmed"}
+        {"log":"  [StripeGoPay] confirm → setup_intent seti_..., redirect"}
+        {"log":"  [StripeGoPay] redirect → midtrans snap v4"}
+        {"status":"success","midtrans_url":"https://app.midtrans.com/snap/v4/redirection/<uuid>",
+         "cs_id":"cs_live_...","snap_token":"<uuid>","amount":1,"currency":"idr"}
+        # 失败: {"status":"error","reason":"checkout_401"|"confirm_failed"|"no_redirect"|...}
+env:    HTTPS_PROXY=<JP代理 7891>
+```
+
+4 步串行：checkout → init → confirm(gopay, billing=ID, terms=accepted) → follow 302。
+`checkout_link.py` 完全不改（向后兼容）。
 
 ### 6.3 SMS provider 切换
 
@@ -170,9 +194,15 @@ Python 解释器查找 `py -3`/`python`；`cwd=gopay/app` 或 `env.PYTHONPATH=<a
 
 ## 9. 风险（头号未知数）
 
-### 9.1 Midtrans URL 提取（命门，未验证）
+### 9.1 Midtrans URL 提取（✅ 已验证通过）
 
-整个方案假设印尼 IDR 结账链接最终走 Midtrans GoPay。依据：`gopay_payment_protocol.py` 的 HAR 来源正是 `chatgpt.com.free.plus.gopay.har`（ChatGPT Plus 印尼区结账确实走 Midtrans GoPay）。但 pay.openai.com → Midtrans snap URL 的**具体提取链路未经本项目验证**。**实施第一步必须是 Phase 3 探针**：用真实 IDR accessToken 调 checkout，确认能拿到 `app.midtrans.com/snap/.../redirection/<uuid>`。探针失败则整个方案需重新设计，如实报告，不强推。
+**2026-05-30 Probe 结果**：全链路纯协议已验证。Midtrans snap URL 通过 Stripe 4 步协议获取（非直接在 checkout 响应里）：
+1. `POST /backend-api/payments/checkout` (country=ID, currency=IDR) → HTTP 200, `cs_live_...` + `pk_live_...`
+2. `POST /v1/payment_pages/{cs}/init` → PaymentIntent=null (subscription SetupIntent), `payment_method_types: ["card", "gopay"]`
+3. `POST /v1/payment_pages/{cs}/confirm` (gopay + billing ID + terms) → HTTP 200, `setup_intent.next_action.redirect_to_url.url`
+4. `GET pm-redirects.stripe.com/authorize/...` → 302 → `https://app.midtrans.com/snap/v4/redirection/{uuid}`
+
+`GET /snap/v1/transactions/{token}` 确认：`gross_amount=1 IDR`, `enabled_payments=[gopay(deeplink+tokenization), qris]`, `enforce_tokenization=true`。`POST /snap/v2/transactions/{token}/charge` 返回 `transaction_status=pending` + deeplink URL。**命门已无风险**。
 
 ### 9.2 1Rp 是否够支付（次号风险）
 

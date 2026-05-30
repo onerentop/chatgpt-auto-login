@@ -16,6 +16,8 @@ export const socketState = reactive({
     failed: 0,
     summary: null,
   },
+  gopayLogs: [],
+  gopayResults: [],
 })
 
 export function connectSocket() {
@@ -119,6 +121,15 @@ export function connectSocket() {
   socket.on('liveness-log', (data) => {
     pushLivenessLog(data.email, data.level || 'info', data.message);
   });
+
+  socket.on('gopay-log', (msg) => {
+    socketState.gopayLogs.push(msg)
+    if (socketState.gopayLogs.length > 500) socketState.gopayLogs.splice(0, socketState.gopayLogs.length - 500)
+  })
+
+  socket.on('gopay-result', (r) => {
+    socketState.gopayResults.push(r)
+  })
 
   socket.connect()
 }

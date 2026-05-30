@@ -258,6 +258,14 @@ function buildSingboxConfig(usOrOpts /* nullable | opts */, jpArg /* nullable */
   const mainAvailable = mainNodes.filter(n => !banned.has(n.tag));
   const jpAvailable = jpNodes.filter(n => !banned.has(n.tag));
 
+  // 绑定物理网卡绕过 Karing/Clash TUN — Windows 用 WLAN 接口名
+  const BIND_IFACE = process.platform === 'win32' ? 'WLAN' : '';
+  if (BIND_IFACE) {
+    for (const node of [...mainAvailable, ...jpAvailable]) {
+      node.bind_interface = BIND_IFACE;
+    }
+  }
+
   const hasUs = mainAvailable.length > 0;
   const hasJp = jpAvailable.length > 0;
   if (!hasUs && !hasJp) {
@@ -267,6 +275,33 @@ function buildSingboxConfig(usOrOpts /* nullable | opts */, jpArg /* nullable */
   const inbounds = [];
   const outbounds = [];
   const rules = [{ action: 'sniff' }];
+
+  // GoPay 印尼代理端口：gopay_activate.py 的 tls_client 通过此端口出站。
+  // sing-box route 把流量转发到 iproyal-id outbound（印尼住宅 IP）。
+  // 解决 Karing TUN fake-ip (198.20.0.0/15) 与 IPRoyal IP 冲突问题。
+  if (BIND_IFACE) {
+    try {
+      const gopayCfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'gopay', 'config', 'config.json'), 'utf-8'));
+      const proxyTpl = gopayCfg?.gopay?.proxy_template || '';
+      if (proxyTpl) {
+        const m = proxyTpl.match(/^(https?:\/\/)(.+?)@(.+?):(\d+)$/);
+        if (m) {
+          const [, , userpass, server, port] = m;
+          const [user, pass] = userpass.split(':');
+          const sid = Math.random().toString(36).slice(2, 10);
+          const resolvedPass = pass.replace('{sid}', sid);
+          inbounds.push({ type: 'mixed', tag: 'mixed-gopay', listen: '127.0.0.1', listen_port: 27890 });
+          outbounds.push({
+            type: 'http', tag: 'iproyal-id',
+            server: server, server_port: parseInt(port),
+            username: user, password: resolvedPass,
+            bind_interface: BIND_IFACE,
+          });
+          rules.push({ inbound: 'mixed-gopay', outbound: 'iproyal-id' });
+        }
+      }
+    } catch { /* no gopay config, skip */ }
+  }
 
   if (hasUs) {
     inbounds.push({ type: 'mixed', tag: MAIN_INBOUND_TAG, listen: '127.0.0.1', listen_port: mainPort });
@@ -298,10 +333,19 @@ function buildSingboxConfig(usOrOpts /* nullable | opts */, jpArg /* nullable */
     rules.push({ inbound: JP_INBOUND_TAG, outbound: JP_SELECTOR_TAG });
   }
 
-  outbounds.push({ type: 'direct', tag: 'direct' }, { type: 'block', tag: 'block' });
+  const directOut = { type: 'direct', tag: 'direct' };
+  if (BIND_IFACE) directOut.bind_interface = BIND_IFACE;
+  outbounds.push(directOut, { type: 'block', tag: 'block' });
 
   return {
     log: { level: 'warn' },
+    dns: {
+      servers: [
+        { tag: 'direct-dns', type: 'udp', server: '1.1.1.1', detour: 'direct' },
+      ],
+      rules: [],
+      final: 'direct-dns',
+    },
     inbounds,
     outbounds,
     experimental: {

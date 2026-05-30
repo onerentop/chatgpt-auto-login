@@ -31,6 +31,12 @@ const routes = [
     component: () => import('./views/Config.vue'),
     meta: { title: '配置设置' },
   },
+  {
+    path: '/gopay',
+    name: 'GoPay',
+    component: () => import('./views/GoPayActivate.vue'),
+    meta: { title: 'GoPay激活' },
+  },
 ]
 
 const router = createRouter({

@@ -18,6 +18,12 @@ const TYPE_MAP = {
   aborted: 'info',
   phone_pool_empty: 'warning',
   phone_verify_fail: 'danger',
+  no_idr_link: 'warning',
+  no_midtrans: 'warning',
+  gopay_reg_fail: 'danger',
+  gopay_pay_fail: 'danger',
+  gopay_fraud: 'danger',
+  plus_gopay: 'success',
 }
 
 const LABEL_MAP = {
@@ -38,6 +44,12 @@ const LABEL_MAP = {
   aborted: '已停止',
   phone_pool_empty: '号池已用尽',
   phone_verify_fail: '手机验证失败',
+  no_idr_link: 'IDR链接失败',
+  no_midtrans: '无Midtrans',
+  gopay_reg_fail: 'GoPay注册失败',
+  gopay_pay_fail: 'GoPay支付失败',
+  gopay_fraud: 'GoPay风控拒绝',
+  plus_gopay: 'Plus(GoPay)',
 }
 
 export function statusType(s) {
@@ -63,7 +75,7 @@ export function rowClassFor(status) {
   return `row-status-${type}`
 }
 
-export const PLUS_STATUSES = ['plus', 'plus_no_rt']
+export const PLUS_STATUSES = ['plus', 'plus_no_rt', 'plus_gopay']
 export const ERROR_STATUSES = ['error', 'no_link', 'deactivated', 'no_promo', 'canceled', 'token_expired', 'login_fail', 'phone_pool_empty', 'phone_verify_fail']
 
 export function isPlus(status) {
