@@ -104,6 +104,11 @@ test('!v.ok → emit verify_error/done with reason "Stripe init: boom", summary.
   // summary
   assert.strictEqual(ctx.deps.summary.verifyError, 1, 'summary.verifyError must be incremented');
   assert.strictEqual(ctx.deps.summary.noPromo, 0, 'summary.noPromo must NOT be incremented');
+
+  // P2 flags
+  assert.strictEqual(ctx.flags.finalStatus, 'verify_error');
+  assert.strictEqual(ctx.flags.finalReason, 'Stripe init: boom');
+  assert.strictEqual(ctx.flags.finalPaymentLink, 'https://pay.stripe.com/test');
 });
 
 // --------------------------------------------------------------------------
@@ -139,6 +144,11 @@ test('{ok:true, is_free:false, amount_due:2000, currency:"usd"} → emit no_prom
   // summary
   assert.strictEqual(ctx.deps.summary.noPromo, 1, 'summary.noPromo must be incremented');
   assert.strictEqual(ctx.deps.summary.verifyError, 0, 'summary.verifyError must NOT be incremented');
+
+  // P2 flags
+  assert.strictEqual(ctx.flags.finalStatus, 'no_promo');
+  assert.strictEqual(ctx.flags.finalReason, 'amount_due=2000 usd');
+  assert.strictEqual(ctx.flags.finalPaymentLink, 'https://pay.stripe.com/test2');
 });
 
 // --------------------------------------------------------------------------

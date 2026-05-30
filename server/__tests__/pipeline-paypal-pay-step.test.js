@@ -206,6 +206,11 @@ test('aborted: {status:"aborted"} → emit aborted/payment, summary.aborted===1,
   assert.strictEqual(summary.aborted, 1, 'summary.aborted must be 1 (lazy init)');
   // summary.error 不变
   assert.strictEqual(summary.error, 0, 'summary.error must NOT be incremented');
+
+  // P2 flags
+  assert.strictEqual(ctx.flags.finalStatus, 'aborted');
+  assert.strictEqual(ctx.flags.finalReason, 'Stopped by user');
+  assert.strictEqual(ctx.flags.finalPaymentLink, '');
 });
 
 // --------------------------------------------------------------------------
@@ -236,6 +241,11 @@ test('notFreeTrial: autoPayment throws NOT_FREE_TRIAL → emit no_link/done, sum
   // summary
   assert.strictEqual(summary.noLink, 1, 'summary.noLink must be incremented');
   assert.strictEqual(summary.error,  0, 'summary.error must NOT be incremented');
+
+  // P2 flags
+  assert.strictEqual(ctx.flags.finalStatus, 'no_link');
+  assert.strictEqual(ctx.flags.finalReason, 'not a free trial page');
+  assert.strictEqual(ctx.flags.finalPaymentLink, '');
 });
 
 // --------------------------------------------------------------------------
@@ -260,6 +270,11 @@ test('status passthrough: {status:"paypal_captcha",reason:"r"} → emit paypal_c
 
   // summary
   assert.strictEqual(summary.error, 1, 'summary.error must be incremented');
+
+  // P2 flags
+  assert.strictEqual(ctx.flags.finalStatus, 'paypal_captcha');
+  assert.strictEqual(ctx.flags.finalReason, 'r');
+  assert.strictEqual(ctx.flags.finalPaymentLink, '');
 });
 
 // --------------------------------------------------------------------------
@@ -283,6 +298,11 @@ test('plain failure: {success:false} no status → emit error/payment, summary.e
 
   // summary
   assert.strictEqual(summary.error, 1, 'summary.error must be incremented');
+
+  // P2 flags
+  assert.strictEqual(ctx.flags.finalStatus, 'error');
+  assert.strictEqual(ctx.flags.finalReason, 'Payment not completed');
+  assert.strictEqual(ctx.flags.finalPaymentLink, '');
 });
 
 // --------------------------------------------------------------------------
@@ -310,6 +330,11 @@ test('finally cleanup: waitForCDP throws → resources nulled, summary.error++, 
   assert.strictEqual(resources.browser,    null, 'resources.browser must be null after finally');
   assert.strictEqual(resources.chromeProc, null, 'resources.chromeProc must be null after finally');
   assert.strictEqual(resources.tempDir,    null, 'resources.tempDir must be null after finally');
+
+  // P2 flags (outer-catch error path)
+  assert.strictEqual(ctx.flags.finalStatus, 'error');
+  assert.ok(ctx.flags.finalReason, 'finalReason must be the error message');
+  assert.strictEqual(ctx.flags.finalPaymentLink, '');
 });
 
 // --------------------------------------------------------------------------

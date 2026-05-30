@@ -237,22 +237,34 @@ function paypalPayStep() {
           console.log(`[${progress}] Payment aborted by user`);
           emitStatus({ email: account.email, status: 'aborted', phase: 'payment', progress, reason: 'Stopped by user' });
           summary.aborted = (summary.aborted || 0) + 1;
+          ctx.flags.finalStatus = 'aborted';
+          ctx.flags.finalReason = 'Stopped by user';
+          ctx.flags.finalPaymentLink = '';
           return { ok: false, reason: 'aborted' };
         } else if (paymentResult.notFreeTrial) {
           emitStatus({ email: account.email, status: 'no_link', phase: 'done', progress, reason: paymentResult.reason });
           summary.noLink++;
+          ctx.flags.finalStatus = 'no_link';
+          ctx.flags.finalReason = paymentResult.reason;
+          ctx.flags.finalPaymentLink = '';
           return { ok: false, reason: 'not_free_trial' };
         } else if (paymentResult.status) {
           const reason = paymentResult.reason || 'Payment not completed';
           console.log(`[${progress}] Payment incomplete: ${reason}`);
           emitStatus({ email: account.email, status: paymentResult.status, phase: 'payment', progress, reason });
           summary.error++;
+          ctx.flags.finalStatus = paymentResult.status;
+          ctx.flags.finalReason = reason;
+          ctx.flags.finalPaymentLink = '';
           return { ok: false, reason };
         } else {
           const reason = paymentResult.reason || 'Payment not completed';
           console.log(`[${progress}] Payment incomplete: ${reason}`);
           emitStatus({ email: account.email, status: 'error', phase: 'payment', progress, reason });
           summary.error++;
+          ctx.flags.finalStatus = 'error';
+          ctx.flags.finalReason = reason;
+          ctx.flags.finalPaymentLink = '';
           return { ok: false, reason };
         }
       } catch (e) {
@@ -263,6 +275,9 @@ function paypalPayStep() {
         console.log(`[${progress}] ${account.email} error: ${e.message?.slice(0, 500)}`);
         emitStatus({ email: account.email, status: 'error', phase: 'payment', progress, reason: e.message });
         summary.error++;
+        ctx.flags.finalStatus = 'error';
+        ctx.flags.finalReason = e.message;
+        ctx.flags.finalPaymentLink = '';
         return { ok: false, reason: e.message };
       } finally {
         // ====================================================================

@@ -161,10 +161,19 @@ function paypalFetchStep() {
         let reason;
         if (fetchResult && fetchResult.noJpProxy) {
           reason = 'no_jp_proxy';
+          ctx.flags.finalStatus = 'no_jp_proxy';
+          ctx.flags.finalReason = 'JP checkout channel unavailable';
+          ctx.flags.finalPaymentLink = '';
         } else if (fetchResult && !fetchResult.link) {
           reason = 'no_link';
+          ctx.flags.finalStatus = 'no_link';
+          ctx.flags.finalReason = fetchResult.raw;
+          ctx.flags.finalPaymentLink = '';
         } else {
           reason = 'fetch_error';
+          ctx.flags.finalStatus = 'error';
+          ctx.flags.finalReason = '';
+          ctx.flags.finalPaymentLink = '';
         }
         return { ok: false, reason };
       }

@@ -193,6 +193,11 @@ test('login failure (error) → emit error/login, summary.error++, ok:false', as
   const errorEmit = emitCalls.find(e => e.status === 'error' && e.phase === 'login');
   assert.ok(errorEmit, 'must emit error/login (D-L3)');
   assert.ok(/bad pw/.test(errorEmit.reason), 'reason must contain original error');
+
+  // P2 flags
+  assert.strictEqual(ctx.flags.finalStatus, 'error');
+  assert.ok(/bad pw/.test(ctx.flags.finalReason));
+  assert.strictEqual(ctx.flags.finalPaymentLink, '');
 });
 
 // --------------------------------------------------------------------------
@@ -223,6 +228,11 @@ test('deactivated account → emit deactivated/done, recordGoodAttempt (not bad)
   const deactivatedEmit = emitCalls.find(e => e.status === 'deactivated' && e.phase === 'done');
   assert.ok(deactivatedEmit, 'must emit deactivated/done');
   assert.strictEqual(deactivatedEmit.reason, 'account_deactivated');
+
+  // P2 flags
+  assert.strictEqual(ctx.flags.finalStatus, 'deactivated');
+  assert.strictEqual(ctx.flags.finalReason, 'account_deactivated');
+  assert.strictEqual(ctx.flags.finalPaymentLink, '');
 });
 
 // --------------------------------------------------------------------------

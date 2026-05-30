@@ -224,6 +224,9 @@ function _buildBrowserLoginStep() {
             reason,
           });
           summary.error++;
+          ctx.flags.finalStatus = statusOut;
+          ctx.flags.finalReason = reason;
+          ctx.flags.finalPaymentLink = '';
           return { ok: false, reason };
         }
 
@@ -380,6 +383,9 @@ function loginStep(cfg = {}) {
               // protocol-engine.js:682-684
               emitStatus({ email: account.email, status: 'error', phase: 'protocol-login', progress, reason: result.error });
               summary.error++;
+              ctx.flags.finalStatus = 'error';
+              ctx.flags.finalReason = result.error;
+              ctx.flags.finalPaymentLink = '';
               return { ok: false, reason: 'tls_failure_after_rotation' };
             }
           }
@@ -394,6 +400,9 @@ function loginStep(cfg = {}) {
             console.log(`[${progress}] Account deactivated/deleted by OpenAI`);
             emitStatus({ email: account.email, status: 'deactivated', phase: 'done', progress, reason: 'account_deactivated' });
             summary.error++;
+            ctx.flags.finalStatus = 'deactivated';
+            ctx.flags.finalReason = 'account_deactivated';
+            ctx.flags.finalPaymentLink = '';
             return { ok: false, reason: 'deactivated' };
           }
 
@@ -408,6 +417,9 @@ function loginStep(cfg = {}) {
           }
           emitStatus({ email: account.email, status: 'error', phase: 'protocol-login', progress, reason: e.message });
           summary.error++;
+          ctx.flags.finalStatus = 'error';
+          ctx.flags.finalReason = e.message;
+          ctx.flags.finalPaymentLink = '';
           return { ok: false, reason: e.message };
         }
       }

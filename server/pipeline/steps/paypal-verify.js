@@ -87,6 +87,9 @@ function paypalVerifyStep() {
         console.log(`[${progress}] Verify failed: ${v.reason}`);
         emitStatus({ email: account.email, status: 'verify_error', phase: 'done', progress, paymentLink: link, reason: `Stripe init: ${v.reason}` });
         summary.verifyError++;
+        ctx.flags.finalStatus = 'verify_error';
+        ctx.flags.finalReason = `Stripe init: ${v.reason}`;
+        ctx.flags.finalPaymentLink = link;
         return { ok: false, reason: `Stripe init: ${v.reason}` };
       }
 
@@ -98,6 +101,9 @@ function paypalVerifyStep() {
         console.log(`[${progress}] Not free: amount_due=${v.amount_due} ${v.currency}`);
         emitStatus({ email: account.email, status: 'no_promo', phase: 'done', progress, paymentLink: link, reason: `amount_due=${v.amount_due} ${v.currency}` });
         summary.noPromo++;
+        ctx.flags.finalStatus = 'no_promo';
+        ctx.flags.finalReason = `amount_due=${v.amount_due} ${v.currency}`;
+        ctx.flags.finalPaymentLink = link;
         return { ok: false, reason: `amount_due=${v.amount_due} ${v.currency}` };
       }
 

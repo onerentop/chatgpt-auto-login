@@ -164,6 +164,8 @@ function browserPkceStep() {
 
       // 写入 ctx.flags 供 runner-shell 循环末尾 emitStatus done 使用
       ctx.flags.finalStatus = finalStatus;
+      ctx.flags.finalReason = '';
+      ctx.flags.finalPaymentLink = '';
 
       // 不触碰 ctx.deps.summary，不 emit terminal {status}/done
       // （runner-shell 的 P2.4 循环末尾统一 emit）

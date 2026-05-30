@@ -150,6 +150,8 @@ test('browser-pkce: enableOAuth=false → plus_no_rt, clears called, no terminal
 
     assert.strictEqual(result.ok, true);
     assert.strictEqual(ctx.flags.finalStatus, 'plus_no_rt');
+    assert.strictEqual(ctx.flags.finalReason, '');
+    assert.strictEqual(ctx.flags.finalPaymentLink, '');
 
     // clears called
     assert.deepStrictEqual(_clearPaymentLinkCalls, ['test@example.com']);
@@ -191,6 +193,8 @@ test('browser-pkce: refresh_token → finalStatus=plus, saveCPAAuthFile(pkceToke
 
     assert.strictEqual(result.ok, true);
     assert.strictEqual(ctx.flags.finalStatus, 'plus');
+    assert.strictEqual(ctx.flags.finalReason, '');
+    assert.strictEqual(ctx.flags.finalPaymentLink, '');
 
     // saveCPAAuthFile called with pkceTokens.access_token and pkceTokens object
     assert.strictEqual(_saveCPAAuthFileCalls.length, 1);
@@ -226,6 +230,8 @@ test('browser-pkce: phonePoolEmpty → emit phone_pool_empty/pkce, finalStatus=p
 
     assert.strictEqual(result.ok, true);
     assert.strictEqual(ctx.flags.finalStatus, 'phone_pool_empty');
+    assert.strictEqual(ctx.flags.finalReason, '');
+    assert.strictEqual(ctx.flags.finalPaymentLink, '');
 
     // emitStatus phone_pool_empty/pkce
     const ppEmit = emitStatusCalls.find(e => e.status === 'phone_pool_empty');
@@ -259,6 +265,8 @@ test('browser-pkce: phoneVerifyFail → emit phone_verify_fail/pkce, finalStatus
 
     assert.strictEqual(result.ok, true);
     assert.strictEqual(ctx.flags.finalStatus, 'phone_verify_fail');
+    assert.strictEqual(ctx.flags.finalReason, '');
+    assert.strictEqual(ctx.flags.finalPaymentLink, '');
 
     // emitStatus phone_verify_fail/pkce
     const pvEmit = emitStatusCalls.find(e => e.status === 'phone_verify_fail');
@@ -291,6 +299,8 @@ test('browser-pkce: needsPhone → finalStatus=plus_no_rt, saveCPAAuthFile fallb
 
     assert.strictEqual(result.ok, true);
     assert.strictEqual(ctx.flags.finalStatus, 'plus_no_rt');
+    assert.strictEqual(ctx.flags.finalReason, '');
+    assert.strictEqual(ctx.flags.finalPaymentLink, '');
 
     // saveCPAAuthFile called (fallback — pkceTokens has no access_token, use loginResult.accessToken)
     assert.strictEqual(_saveCPAAuthFileCalls.length, 1);
@@ -322,6 +332,8 @@ test('browser-pkce: alreadyPlus=true path — no crash, correct finalStatus', as
 
     assert.strictEqual(result.ok, true);
     assert.strictEqual(ctx.flags.finalStatus, 'plus');
+    assert.strictEqual(ctx.flags.finalReason, '');
+    assert.strictEqual(ctx.flags.finalPaymentLink, '');
     // clears were called
     assert.strictEqual(_clearPaymentLinkCalls.length, 1);
     assert.strictEqual(_clearAccessTokenCalls.length, 1);
@@ -349,6 +361,8 @@ test('browser-pkce: alreadyPlus=false (post-pay) path — no crash, correct fina
 
     assert.strictEqual(result.ok, true);
     assert.strictEqual(ctx.flags.finalStatus, 'plus');
+    assert.strictEqual(ctx.flags.finalReason, '');
+    assert.strictEqual(ctx.flags.finalPaymentLink, '');
     // clears were called
     assert.strictEqual(_clearPaymentLinkCalls.length, 1);
     assert.strictEqual(_clearAccessTokenCalls.length, 1);
@@ -377,6 +391,8 @@ test('browser-pkce: pkceTokens null (PKCE failed) — alreadyPlus vs post-pay, n
 
       assert.strictEqual(result.ok, true, `alreadyPlus=${alreadyPlus} should return ok:true`);
       assert.strictEqual(ctx.flags.finalStatus, 'plus_no_rt', `alreadyPlus=${alreadyPlus} finalStatus should be plus_no_rt`);
+      assert.strictEqual(ctx.flags.finalReason, '', `alreadyPlus=${alreadyPlus} finalReason should be ''`);
+      assert.strictEqual(ctx.flags.finalPaymentLink, '', `alreadyPlus=${alreadyPlus} finalPaymentLink should be ''`);
       // saveCPAAuthFile called with loginResult fallback (null?.access_token || loginResult.accessToken)
       assert.strictEqual(_saveCPAAuthFileCalls[0].accessToken, 'login-access-token');
     }

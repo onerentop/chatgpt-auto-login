@@ -256,6 +256,11 @@ test('deactivated account → ok:false, summary.error++, emits deactivated/done'
   const deactivatedEmit = emitCalls.find(e => e.status === 'deactivated' && e.phase === 'done');
   assert.ok(deactivatedEmit, 'must emit deactivated/done');
   assert.strictEqual(deactivatedEmit.reason, 'account_deactivated');
+
+  // P2 flags
+  assert.strictEqual(ctx.flags.finalStatus, 'deactivated');
+  assert.strictEqual(ctx.flags.finalReason, 'account_deactivated');
+  assert.strictEqual(ctx.flags.finalPaymentLink, '');
 });
 
 // --------------------------------------------------------------------------
@@ -276,6 +281,11 @@ test('login throws → ok:false, summary.error++, emits error/protocol-login', a
   const errorEmit = emitCalls.find(e => e.status === 'error' && e.phase === 'protocol-login');
   assert.ok(errorEmit, 'must emit error/protocol-login');
   assert.ok(/network timeout/.test(errorEmit.reason));
+
+  // P2 flags
+  assert.strictEqual(ctx.flags.finalStatus, 'error');
+  assert.ok(/network timeout/.test(ctx.flags.finalReason));
+  assert.strictEqual(ctx.flags.finalPaymentLink, '');
 });
 
 // --------------------------------------------------------------------------
@@ -305,6 +315,11 @@ test('TLS double failure → ok:false, summary.error++, emits error/protocol-log
 
   const errorEmit = emitCalls.find(e => e.status === 'error' && e.phase === 'protocol-login');
   assert.ok(errorEmit, 'must emit error/protocol-login after double TLS failure');
+
+  // P2 flags
+  assert.strictEqual(ctx.flags.finalStatus, 'error');
+  assert.strictEqual(ctx.flags.finalReason, 'TLS handshake failed');
+  assert.strictEqual(ctx.flags.finalPaymentLink, '');
 });
 
 // --------------------------------------------------------------------------

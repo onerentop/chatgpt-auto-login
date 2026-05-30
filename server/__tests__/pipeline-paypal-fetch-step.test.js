@@ -208,6 +208,11 @@ test('noJpProxy → emit no_jp_proxy/done, summary.noJpProxy++, ok:false', async
   assert.ok(noJpEmit, 'must emit no_jp_proxy/done');
   assert.strictEqual(noJpEmit.reason, 'JP checkout channel unavailable');
   assert.strictEqual(ctx.deps.summary.noJpProxy, 1, 'summary.noJpProxy must be incremented');
+
+  // P2 flags
+  assert.strictEqual(ctx.flags.finalStatus, 'no_jp_proxy');
+  assert.strictEqual(ctx.flags.finalReason, 'JP checkout channel unavailable');
+  assert.strictEqual(ctx.flags.finalPaymentLink, '');
 });
 
 // --------------------------------------------------------------------------
@@ -231,6 +236,11 @@ test('empty link → emit no_link/done, summary.noLink++, ok:false', async () =>
   const noLinkEmit = emitCalls.find(e => e.status === 'no_link' && e.phase === 'done');
   assert.ok(noLinkEmit, 'must emit no_link/done');
   assert.strictEqual(ctx.deps.summary.noLink, 1, 'summary.noLink must be incremented');
+
+  // P2 flags
+  assert.strictEqual(ctx.flags.finalStatus, 'no_link');
+  assert.strictEqual(ctx.flags.finalReason, 'no promo available');
+  assert.strictEqual(ctx.flags.finalPaymentLink, '');
 });
 
 // --------------------------------------------------------------------------
@@ -255,6 +265,11 @@ test('fetch throws non-transient error → emit error/checkout, summary.error++,
   assert.ok(errorEmit, 'must emit error/checkout');
   assert.ok(/Connection refused/.test(errorEmit.reason), 'reason must include error message');
   assert.strictEqual(ctx.deps.summary.error, 1, 'summary.error must be incremented');
+
+  // P2 flags（error 路径 finalReason='' 因 gate 内 fetchResult===null 时无 e.message 可用）
+  assert.strictEqual(ctx.flags.finalStatus, 'error');
+  assert.strictEqual(ctx.flags.finalReason, '');
+  assert.strictEqual(ctx.flags.finalPaymentLink, '');
 });
 
 // --------------------------------------------------------------------------
