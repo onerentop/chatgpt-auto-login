@@ -46,9 +46,9 @@ def _emit(payload):
 
 
 def _load_config():
-    cfg_path = os.environ.get("OPAI_CONFIG_FILE", "")
+    cfg_path = os.environ.get("GOPAY_CONFIG_FILE", "")
     if not cfg_path:
-        cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gopay", "config", "config.json")
+        cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
     if not os.path.exists(cfg_path):
         return {}
     with open(cfg_path) as f:
@@ -76,11 +76,14 @@ def _rotate_ip():
 
 
 def _make_proxy(cfg):
-    """返回 GoPay 代理地址。优先用 sing-box 17890（已绑 WLAN 转发到 IPRoyal，绕 TUN）。"""
+    """返回 GoPay 代理地址。优先用 sing-box 27890（已绑 WLAN 转发到 IPRoyal，绕 TUN）。"""
     direct = os.environ.get("GOPAY_PROXY", "")
     if direct:
         return direct
-    return f"http://127.0.0.1:{SINGBOX_GOPAY_PORT}"
+    id_cfg = cfg.get("proxy", {}).get("idGopay", {})
+    if id_cfg.get("enabled") and id_cfg.get("proxyTemplate"):
+        return f"http://127.0.0.1:{SINGBOX_GOPAY_PORT}"
+    return ""
 
 
 def _register_one(provider, pin, proxy):
@@ -351,10 +354,17 @@ def main():
     inp = json.loads(sys.stdin.read())
     access_token = inp.get("access_token", "")
     midtrans_url = inp.get("midtrans_url", "")
-    pin = inp.get("pin", "147258")
 
     cfg = _load_config()
-    provider = create_sms_provider()
+    gopay_cfg = cfg.get("gopay", {})
+    pool_cfg = cfg.get("phonePool", {})
+
+    pin = inp.get("pin", "") or gopay_cfg.get("defaultPin", "147258")
+
+    provider_name = gopay_cfg.get("smsProvider", "smsbower")
+    provider_params = pool_cfg.get(provider_name, {})
+    api_key = provider_params.get("apiKey", "")
+    provider = create_sms_provider(provider_name, api_key)
 
     phone = ""
     account = None
