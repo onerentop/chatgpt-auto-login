@@ -9,17 +9,31 @@ const MAIN_CONFIG = path.join(__dirname, '..', '..', 'config.json');
 module.exports = function gopayActivateRoutes(io) {
   const router = express.Router();
 
-  // POST /api/gopay-activate/start — start activation for one account
-  router.post('/start', (req, res) => {
-    const { email, accessToken, planType } = req.body;
-    if (!accessToken) return res.status(400).json({ error: 'accessToken required' });
-
-    if (engine.state.running) {
-      return res.status(409).json({ error: 'Engine already running' });
+  // POST /api/gopay-activate/start — 批量激活选中账号（emails 省略=全部）
+  router.post('/start', async (req, res) => {
+    const { emails } = req.body || {};
+    if (emails !== undefined && emails !== null) {
+      if (!Array.isArray(emails)) return res.status(400).json({ error: 'emails must be an array or omitted' });
+      for (const e of emails) {
+        if (typeof e !== 'string' || !e.trim()) return res.status(400).json({ error: 'emails must contain non-empty strings' });
+      }
     }
+    // 互斥：主 Execute 引擎运行中 → 409
+    try {
+      const { getEngine } = require('../engine-singleton');
+      const exec = getEngine();
+      if (exec && exec.getStatus && exec.getStatus() !== 'idle') {
+        return res.status(409).json({ error: '主激活(PayPal)正在运行，请先停止' });
+      }
+    } catch {}
+    // 互斥：GoPay 自身运行中 → 409
+    if (engine.state.running) return res.status(409).json({ error: 'GoPay 激活已在运行' });
 
-    engine.runOne({ email, accessToken, access_token: accessToken, planType }).catch(() => {});
-    res.json({ ok: true, message: 'Started' });
+    engine.start(0, emails || null).catch((err) => {
+      io.emit('gopay-log', `Activation error: ${err.message}`);
+      io.emit('execution-complete', { summary: { total: 0, success: 0, error: 1 } });
+    });
+    res.json({ ok: true, message: 'Started', accounts: emails ? emails.length : 'all' });
   });
 
   // POST /api/gopay-activate/stop — abort current run
@@ -78,10 +92,16 @@ module.exports = function gopayActivateRoutes(io) {
     }
   });
 
-  // Wire step-status from the engine singleton to Socket.IO.
-  // gopay-log / gopay-result are already forwarded in server/index.js (after mount);
-  // only step-status is wired here to avoid double-binding the other events.
+  // Wire engine events to Socket.IO — removeAllListeners first to avoid double-binding
+  // (factory runs once per server start, but guard against future hot-reload scenarios).
+  engine.removeAllListeners('step-status');
+  engine.removeAllListeners('account-status');
+  engine.removeAllListeners('complete');
+  engine.removeAllListeners('log');
   engine.on('step-status', (d) => io.emit('step-status', d));
+  engine.on('account-status', (d) => io.emit('account-status', d));
+  engine.on('complete', (d) => io.emit('execution-complete', d));
+  engine.on('log', (d) => io.emit('gopay-log', typeof d === 'string' ? d : (d.message || '')));
 
   return router;
 };

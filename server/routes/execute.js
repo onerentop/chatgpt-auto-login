@@ -27,6 +27,13 @@ module.exports = function (io) {
     if (engine && engine.getStatus() !== 'idle') {
       return res.status(409).json({ error: 'Pipeline is already running' });
     }
+    // 反向互斥：GoPay 激活运行中 → 拒绝 PayPal
+    try {
+      const gopayEngine = require('../gopay-engine');
+      if (gopayEngine.state && gopayEngine.state.running) {
+        return res.status(409).json({ error: 'GoPay 激活正在运行，请先停止' });
+      }
+    } catch {}
 
     const { emails } = req.body || {};
     // Validate emails: must be undefined/null (run all), or an array of non-empty strings
@@ -83,6 +90,13 @@ module.exports = function (io) {
     if (engine && engine.getStatus() !== 'idle') {
       return res.status(409).json({ error: 'Pipeline is already running' });
     }
+    // 反向互斥：GoPay 激活运行中 → 拒绝 PayPal
+    try {
+      const gopayEngine = require('../gopay-engine');
+      if (gopayEngine.state && gopayEngine.state.running) {
+        return res.status(409).json({ error: 'GoPay 激活正在运行，请先停止' });
+      }
+    } catch {}
 
     // Tear down prior engine like POST '/' does
     if (engine) {
