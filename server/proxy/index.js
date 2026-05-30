@@ -281,8 +281,9 @@ function buildSingboxConfig(usOrOpts /* nullable | opts */, jpArg /* nullable */
   // 解决 Karing TUN fake-ip (198.20.0.0/15) 与 IPRoyal IP 冲突问题。
   if (BIND_IFACE) {
     try {
-      const gopayCfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'gopay', 'config', 'config.json'), 'utf-8'));
-      const proxyTpl = gopayCfg?.gopay?.proxy_template || '';
+      const mainCfg = readCfg();
+      const idCfg = mainCfg.proxy?.idGopay || {};
+      const proxyTpl = idCfg.enabled ? (idCfg.proxyTemplate || '') : '';
       if (proxyTpl) {
         const m = proxyTpl.match(/^(https?:\/\/)(.+?)@(.+?):(\d+)$/);
         if (m) {
