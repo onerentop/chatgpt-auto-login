@@ -1,5 +1,8 @@
 const express = require('express');
-const { accountsDB } = require('../db');
+const fs = require('fs');
+const path = require('path');
+const { accountsDB, stepStateDB, logsDB } = require('../db');
+const { buildPipeline } = require('../pipeline');
 const router = express.Router();
 
 // GET / — list all accounts
@@ -96,6 +99,50 @@ router.post('/batch-delete', (req, res) => {
     }
     const out = accountsDB.bulkDelete(emails);
     res.json(out);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET /:email/steps — per-step status + logs for one account
+router.get('/:email/steps', (req, res) => {
+  try {
+    const email = decodeURIComponent(req.params.email);
+
+    // Derive pipeline variant from config.json
+    let protocolMode = false;
+    let paymentMode = 'paypal';
+    try {
+      const cfg = JSON.parse(fs.readFileSync(path.join(__dirname, '../../config.json'), 'utf-8'));
+      protocolMode = !!cfg.protocolMode;
+    } catch { /* no config, default to protocol=false */ }
+
+    // Accept ?mode=gopay query override for gopay pipeline
+    if (req.query.mode === 'gopay') {
+      paymentMode = 'gopay';
+    }
+
+    const pipeline = buildPipeline({
+      login: protocolMode ? 'protocol' : 'browser',
+      payment: paymentMode,
+    });
+
+    // Fetch all step-state rows and log rows for this account once
+    const allLogs = logsDB.getByEmail(email);
+
+    const steps = pipeline.map((step) => {
+      const row = stepStateDB.get(email, step.id);
+      const status     = row ? row.status      : 'pending';
+      const reason     = row ? (row.reason      || '') : '';
+      const startedAt  = row ? (row.started_at  || '') : '';
+      const finishedAt = row ? (row.finished_at || '') : '';
+
+      const logs = allLogs
+        .filter(l => l.phase === step.id)
+        .map(l => ({ message: l.message, timestamp: l.timestamp }));
+
+      return { stepId: step.id, label: step.label, status, reason, startedAt, finishedAt, logs };
+    });
+
+    res.json({ email, steps });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

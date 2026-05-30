@@ -546,7 +546,7 @@ class ProtocolEngine extends EventEmitter {
     this.emit('log', { email: '', phase: '', message: 'Protocol engine force stopped.', timestamp: new Date().toISOString() });
   }
 
-  async start(startFrom = 0, filterEmails = null) {
+  async start(startFrom = 0, filterEmails = null, opts = {}) {
     this.status = 'running';
     this.stopFlag = false;
     this._abortController = new AbortController();
@@ -705,7 +705,7 @@ class ProtocolEngine extends EventEmitter {
         this._runner.stopFlag = this.stopFlag;
 
         const steps = buildPipeline({ login: 'protocol', payment: 'paypal' });
-        await this._runner._runAccount(ctx, steps);
+        await this._runner._runAccount(ctx, steps, { forceStepId: opts.forceStepId });
 
         // runner-loop: consecutiveErrors tracking (inventory 962–968)
         if (summary.error > errorsBefore) {

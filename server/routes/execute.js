@@ -53,6 +53,7 @@ module.exports = function (io) {
 
     engine.on('log', (data) => io.emit('log', data));
     engine.on('account-status', (data) => io.emit('account-status', data));
+    engine.on('step-status', (data) => io.emit('step-status', data));
     engine.on('complete', (data) => {
       io.emit('execution-complete', data);
       io.emit('log', { email: '', phase: '', message: `Execution complete: ${JSON.stringify(data.summary)}`, timestamp: new Date().toISOString() });
@@ -65,6 +66,47 @@ module.exports = function (io) {
     });
 
     res.json({ message: 'Pipeline started', accounts: emails ? emails.length : 'all' });
+  });
+
+  // POST /api/execute/retry-step — re-run pipeline for one account starting at stepId
+  // Body: { email: string, stepId: string }
+  router.post('/retry-step', async (req, res) => {
+    const { email, stepId } = req.body || {};
+    if (typeof email !== 'string' || !email.trim()) {
+      return res.status(400).json({ error: 'email is required and must be a non-empty string' });
+    }
+    if (typeof stepId !== 'string' || !stepId.trim()) {
+      return res.status(400).json({ error: 'stepId is required and must be a non-empty string' });
+    }
+
+    let engine = getEngine();
+    if (engine && engine.getStatus() !== 'idle') {
+      return res.status(409).json({ error: 'Pipeline is already running' });
+    }
+
+    // Tear down prior engine like POST '/' does
+    if (engine) {
+      try { engine.removeAllListeners(); } catch {}
+      try { await engine.stop(); } catch {}
+    }
+
+    engine = readProtocolMode() ? new ProtocolEngine() : new PipelineEngine();
+    setEngine(engine);
+
+    engine.on('log', (data) => io.emit('log', data));
+    engine.on('account-status', (data) => io.emit('account-status', data));
+    engine.on('step-status', (data) => io.emit('step-status', data));
+    engine.on('complete', (data) => {
+      io.emit('execution-complete', data);
+      io.emit('log', { email: '', phase: '', message: `Execution complete: ${JSON.stringify(data.summary)}`, timestamp: new Date().toISOString() });
+    });
+
+    engine.start(0, [email], { forceStepId: stepId }).catch((err) => {
+      io.emit('log', { email: '', phase: 'error', message: `Retry error: ${err.message}`, timestamp: new Date().toISOString() });
+      io.emit('execution-complete', { summary: { total: 0, success: 0, error: 1 } });
+    });
+
+    res.json({ message: 'Retry started', email, stepId });
   });
 
   router.post('/stop', (req, res) => {

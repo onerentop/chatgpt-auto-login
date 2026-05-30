@@ -133,7 +133,7 @@ class PipelineEngine extends EventEmitter {
    *
    * @param {number} startFrom - Zero-based account index to start from.
    */
-  async start(startFrom = 0, filterEmails = null) {
+  async start(startFrom = 0, filterEmails = null, opts = {}) {
     if (this.status !== 'idle') {
       throw new Error(`Engine is already ${this.status}`);
     }
@@ -316,7 +316,7 @@ class PipelineEngine extends EventEmitter {
         // paypal-pay step's finally is a no-op in browserMode, so the
         // engine-shell owns Chrome cleanup here (engine.js:647-657).
         try {
-          const result = await this._runner._runAccount(ctx, steps);
+          const result = await this._runner._runAccount(ctx, steps, { forceStepId: opts.forceStepId });
 
           // ===================================================================
           // Loop-end emit (engine.js:659-670 semantics) — CONDITIONAL:
