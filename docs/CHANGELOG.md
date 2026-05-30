@@ -1,5 +1,35 @@
 # Changelog
 
+## v2.51.0 — 2026-05-31 — 激活流水线步骤化重构（三引擎统一 + 步骤可视化）
+
+### 核心改动
+
+- **三引擎统一到共享 Step 管线**：`server/pipeline/` 新增 `PipelineRunner`、`AccountContext`、`Step` 基类、`buildPipeline({login, payment})`。`protocol-engine.js ProtocolEngine.start()` 与 `server/engine.js PipelineEngine.start()` 改为薄壳，`server/gopay-engine.js runOne()` 同样改为 runner 驱动；实际逻辑全部下沉到 `server/pipeline/steps/*.js`。
+- **步骤拆分**：协议/浏览器通用步（`login` / `plan-check` / `paypal-fetch` / `paypal-verify` / `paypal-pay` / `paypal-pkce`）+ 浏览器专有步（`browser-pkce` / `cpa`）+ GoPay 专有步（`gopay-register` / `gopay-pay` / `gopay-verify`）。PKCE+加电话逻辑（`runProtocolPKCE` / `_acquirePhoneForProtocol` / `_finalizePhoneVerify` / `_finalizePkce`）逐字搬入 `paypal-pkce.js`，Chrome 登录/PKCE 搬入 `browser-pkce.js`，CPA 凭证写盘搬入 `cpa.js`。
+- **`gopay_activate.py` 拆入口**：register（Phase 1–3）/ pay（Phase 5）两个独立入口，Phase3+5 焊死保 15 min snap TTL；保留 `full` 兼容入口。`_gopay-spawn.js` 封装 spawn helper，复用 gopay-engine spawn 模式，注入测试接缝。
+- **per-step 断点恢复**：新建 `account_step_state` 数据库表，每步开始/结束写状态。各 Step `shouldSkip(ctx)` 读取 `ctx.prevPersisted`；`retry-step` 接口传入 `forceStepId` 可强制从指定步重跑。
+- **`step-status` socket 事件**：每步状态变更推送 `{email, stepId, status, logs, error}` 到前端；`stepStore` 按 email 缓存最新步骤快照。
+- **前端 `AccountStepDrawer`**：步骤抽屉显示每步状态（pending/running/done/error/skipped）+ 折叠日志 + "重试这一步"按钮（发 `POST /api/execute/retry-step`）；挂载到 `Accounts.vue` 和 `Execute.vue` 两处。
+- 引用设计文档：`docs/superpowers/specs/2026-05-30-pipeline-step-refactor-design.md`，实施计划：`docs/superpowers/plans/2026-05-30-pipeline-step-refactor.md`，行为清单：`docs/superpowers/plans/inventory/protocol-engine.md` / `browser-engine.md`。
+
+### 零逻辑丢失保证
+
+- 每个 step 从原引擎逐行搬运（P1 protocol 清单 → `protocol-engine.md`；P2 browser 清单 → `browser-engine.md`，覆盖 24 处 browser-specific 差异）。
+- P1/P2/P3 各阶段完成后运行独立忠实性审查（特征化测试 + 手动行为勾稽），三引擎均 zero-logic-loss。
+- 共享步使用 `browserMode` flag 区分 protocol-only 与 browser-only 分支（如 paypal-pkce 的 `enableOAuth=false` 路径、browser-pkce 的 Chrome 复用 finally 清理），消除 CLAUDE.md 描述的"改一处忘改另一处"漂移风险。
+
+### 端到端验证
+
+- `npm test`：525 tests，498 pass，5 fail（均为 `buildSingboxConfig` 预存代理失败，与本次改动无关），22 skipped，0 新增失败。
+- `npm run build`：`web/dist/` 零报错，前端 `AccountStepDrawer` 正常渲染。
+- `npm run test:py`：`test_h2_*` 2 个预存失败（网络环境），其余全绿，与本次改动无关。
+
+### 对照前版（v2.50.0）
+
+- **漂移根除**：旧版 `protocol-engine.js` 和 `server/engine.js` 各自维护独立主循环，双引擎同步改动靠人工提醒（CLAUDE.md 警告）。本版主循环统一为 `PipelineRunner`，step 逻辑唯一来源，三引擎共用，改一处自动覆盖全部。
+- **步骤可观测性**：原版仅 socket `log` 事件流；本版每步独立状态/日志持久化 + 前端可视化 + 可点击重试，便于生产调试。
+- **GoPay py 入口解耦**：原 `gopay_activate.py` 单一 `full` 入口，部分阶段失败必须从头跑；本版 register/pay 拆分后 snap TTL 15 min 内可单独重跑 pay 阶段，减少重复执行。
+
 ## v2.50.0 — 2026-05-28 — oapi SMS provider 接入
 
 ### 核心改动
