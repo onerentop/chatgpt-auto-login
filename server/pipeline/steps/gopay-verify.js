@@ -45,6 +45,24 @@ function gopayVerifyStep() {
       const { emitStatus, progress } = ctx.deps;
       const { account } = ctx;
 
+      if (ctx.flags.alreadyPlus) {
+        // 账号已是 Plus：直接设 already_plus 终止状态，
+        // 镜像 gopay-engine.js:65-67 的 already_plus 早返回路径。
+        ctx.flags.finalStatus = 'already_plus';
+        ctx.flags.finalReason = '';
+
+        emitStatus({
+          email:    account.email,
+          status:   'already_plus',
+          phase:    'done',
+          progress,
+        });
+
+        return { ok: true };
+      }
+
+      // 正常激活路径（register + pay 已完成）
+
       // 读取 gopay-pay 的输出（phone 随 plus_gopay 事件一起携带）
       const payOut = ctx.outputs['gopay-pay'] || {};
       const phone  = payOut.phone;

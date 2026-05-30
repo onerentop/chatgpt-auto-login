@@ -53,10 +53,9 @@ function gopayPayStep() {
     id:    'gopay-pay',
     label: 'GoPay Midtrans 支付',
 
-    // shouldSkip: 目前没有"pay 已完成"的持久化 checkpoint。
-    // 若将来需要 resume（如 register 成功但 pay 超时后重跑），
-    // 可在此检查 ctx.prevPersisted 中是否已有 transaction_status='success'。
-    shouldSkip: () => false,
+    // shouldSkip: 若账号已是 Plus（plan-check 设 ctx.flags.alreadyPlus=true），
+    // 跳过 pay（与 gopay-register 一致，均在 alreadyPlus 时跳过）。
+    shouldSkip: (ctx) => !!ctx.flags.alreadyPlus,
 
     async run(ctx) {
       const { emitStatus, progress, abortController } = ctx.deps;

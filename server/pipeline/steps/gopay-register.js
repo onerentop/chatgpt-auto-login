@@ -49,10 +49,9 @@ function gopayRegisterStep() {
     id:    'gopay-register',
     label: 'GoPay 钱包注册',
 
-    // shouldSkip: 目前 GoPay 路径没有持久化"register 已完成"的 checkpoint。
-    // resume 颗粒度在本 step 边界（即：如果整条流水线重跑，register 会重新执行）。
-    // 等 DB/checkpoint 迁移完成后再在此处检查 ctx.prevPersisted.gopayAccount。
-    shouldSkip: () => false,
+    // shouldSkip: 若账号已是 Plus（plan-check 设 ctx.flags.alreadyPlus=true），
+    // 跳过 register（与 gopay-engine.js:65-67 的 already_plus 早返回行为一致）。
+    shouldSkip: (ctx) => !!ctx.flags.alreadyPlus,
 
     async run(ctx) {
       const { emitStatus, progress, abortController } = ctx.deps;

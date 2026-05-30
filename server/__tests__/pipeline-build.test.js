@@ -14,10 +14,10 @@ test('browser paypal pipeline declares the 7 browser-specific steps in order', (
     ['login', 'plan-check', 'paypal-fetch', 'paypal-verify', 'paypal-pay', 'browser-pkce', 'cpa']);
 });
 
-test('gopay pipeline declares its 5 steps in order', () => {
+test('gopay pipeline declares its 4 real steps in order (no login step)', () => {
   const steps = buildPipeline({ login: 'protocol', payment: 'gopay' });
   assert.deepStrictEqual(steps.map(s => s.id),
-    ['login', 'plan-check', 'gopay-register', 'gopay-pay', 'gopay-verify']);
+    ['plan-check', 'gopay-register', 'gopay-pay', 'gopay-verify']);
 });
 
 test('every step satisfies the contract', () => {
@@ -26,9 +26,4 @@ test('every step satisfies the contract', () => {
       assert.ok(s.id && s.label && typeof s.run === 'function' && typeof s.shouldSkip === 'function', `bad step ${s.id}`);
     }
   }
-});
-
-test('gopay placeholder run throws (not silently passing)', async () => {
-  const steps = buildPipeline({ login: 'protocol', payment: 'gopay' });
-  await assert.rejects(() => steps[0].run({}), /not migrated yet/);
 });

@@ -408,16 +408,63 @@ test('gopayVerifyStep: missing gopay-pay outputs → phone=undefined in emit, ok
 });
 
 // --------------------------------------------------------------------------
-// 测试 11：shouldSkip — 三个步骤均返回 false
+// 测试 11：shouldSkip — verify 永远不跳；register/pay 在 alreadyPlus 时跳过
 // --------------------------------------------------------------------------
-test('shouldSkip always returns false for all three steps', () => {
+test('shouldSkip: gopay-verify always false; register+pay false when not alreadyPlus', () => {
   const reg  = gopayRegisterStep();
   const pay  = gopayPayStep();
   const ver  = gopayVerifyStep();
 
-  assert.strictEqual(reg.shouldSkip({}), false, 'gopay-register shouldSkip must be false');
-  assert.strictEqual(pay.shouldSkip({}), false, 'gopay-pay shouldSkip must be false');
-  assert.strictEqual(ver.shouldSkip({}), false, 'gopay-verify shouldSkip must be false');
+  // 非 alreadyPlus：三步均不跳
+  assert.strictEqual(reg.shouldSkip({ flags: {} }), false, 'gopay-register shouldSkip must be false when not alreadyPlus');
+  assert.strictEqual(pay.shouldSkip({ flags: {} }), false, 'gopay-pay shouldSkip must be false when not alreadyPlus');
+  assert.strictEqual(ver.shouldSkip({ flags: {} }), false, 'gopay-verify shouldSkip must always be false');
+});
+
+// --------------------------------------------------------------------------
+// 测试 11b：shouldSkip — register/pay 在 alreadyPlus=true 时跳过；verify 仍不跳
+// --------------------------------------------------------------------------
+test('shouldSkip: register+pay skip when alreadyPlus=true; verify still runs', () => {
+  const reg  = gopayRegisterStep();
+  const pay  = gopayPayStep();
+  const ver  = gopayVerifyStep();
+
+  const ctxWithPlus = { flags: { alreadyPlus: true } };
+
+  assert.strictEqual(reg.shouldSkip(ctxWithPlus), true, 'gopay-register must skip when alreadyPlus');
+  assert.strictEqual(pay.shouldSkip(ctxWithPlus), true, 'gopay-pay must skip when alreadyPlus');
+  assert.strictEqual(ver.shouldSkip(ctxWithPlus), false, 'gopay-verify must NOT skip even when alreadyPlus');
+});
+
+// --------------------------------------------------------------------------
+// 测试 11c：gopayVerifyStep with alreadyPlus=true
+//   → finalStatus='already_plus', emit already_plus/done (no phone), ok:true
+//   → NO running/verify_plus emitted
+// --------------------------------------------------------------------------
+test('gopayVerifyStep: alreadyPlus → finalStatus=already_plus, emit already_plus/done, ok:true', async () => {
+  const { ctx, emitCalls } = makeCtx();
+  ctx.flags.alreadyPlus = true;
+
+  const step = gopayVerifyStep();
+  const res  = await step.run(ctx);
+
+  assert.strictEqual(res.ok, true, 'must return ok:true');
+  assert.strictEqual(ctx.flags.finalStatus, 'already_plus', 'finalStatus must be already_plus');
+  assert.strictEqual(ctx.flags.finalReason, '', 'finalReason must be empty string');
+
+  // already_plus/done 必须发出
+  const doneEmit = emitCalls.find(e => e.status === 'already_plus' && e.phase === 'done');
+  assert.ok(doneEmit, 'must emit already_plus/done');
+  assert.strictEqual(doneEmit.email,    'test@gopay.com');
+  assert.strictEqual(doneEmit.progress, '1/1');
+
+  // 不应发出 running/verify_plus（alreadyPlus 路径不走 verify）
+  const runningEmit = emitCalls.find(e => e.status === 'running' && e.phase === 'verify_plus');
+  assert.strictEqual(runningEmit, undefined, 'must NOT emit running/verify_plus when alreadyPlus');
+
+  // 不应发出 plus_gopay
+  const gopayDone = emitCalls.find(e => e.status === 'plus_gopay');
+  assert.strictEqual(gopayDone, undefined, 'must NOT emit plus_gopay when alreadyPlus');
 });
 
 // --------------------------------------------------------------------------

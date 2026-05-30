@@ -24,6 +24,7 @@ const TYPE_MAP = {
   gopay_pay_fail: 'danger',
   gopay_fraud: 'danger',
   plus_gopay: 'success',
+  already_plus: 'success',
 }
 
 const LABEL_MAP = {
@@ -50,6 +51,7 @@ const LABEL_MAP = {
   gopay_pay_fail: 'GoPay支付失败',
   gopay_fraud: 'GoPay风控拒绝',
   plus_gopay: 'Plus(GoPay)',
+  already_plus: '已是Plus',
 }
 
 export function statusType(s) {
@@ -75,7 +77,7 @@ export function rowClassFor(status) {
   return `row-status-${type}`
 }
 
-export const PLUS_STATUSES = ['plus', 'plus_no_rt', 'plus_gopay']
+export const PLUS_STATUSES = ['plus', 'plus_no_rt', 'plus_gopay', 'already_plus']
 export const ERROR_STATUSES = ['error', 'no_link', 'deactivated', 'no_promo', 'canceled', 'token_expired', 'login_fail', 'phone_pool_empty', 'phone_verify_fail']
 
 export function isPlus(status) {
