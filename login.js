@@ -44,7 +44,7 @@ async function loginAccount(browser, account) {
     // Wait for login dialog or page navigation
     await randomDelay(2000, 3000);
 
-    const isOutlook = account.loginType === 'outlook';
+    const isOutlook = (account.loginType || account.login_type) === 'outlook';
 
     if (isOutlook) {
       // ========== Outlook Login Path ==========
