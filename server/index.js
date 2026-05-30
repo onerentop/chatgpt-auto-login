@@ -89,7 +89,7 @@ initDB().then(() => {
   app.use('/api/liveness', livenessRoutes(livenessRunner, accountsDB, livenessLogsDB));
   app.use('/api/health', require('./routes/health'));
   app.use('/api/phone-pool', require('./routes/phone-pool'));
-  app.use('/api/gopay-activate', require('./routes/gopay-activate'));
+  app.use('/api/gopay-activate', require('./routes/gopay-activate')(io));
 
   const gopayEngine = require('./gopay-engine');
   gopayEngine.on('log', (msg) => io.emit('gopay-log', msg));

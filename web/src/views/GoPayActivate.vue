@@ -23,7 +23,16 @@
         <el-descriptions-item label="阶段">
           <el-tag type="warning" size="small">{{ phaseLabel }}</el-tag>
         </el-descriptions-item>
-        <el-descriptions-item label="当前账号">{{ status.currentAccount || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="当前账号">
+          <span style="margin-right:8px">{{ status.currentAccount || '-' }}</span>
+          <el-button
+            v-if="status.currentAccount"
+            size="small"
+            type="primary"
+            plain
+            @click="openStepsDrawer(status.currentAccount)"
+          >查看步骤</el-button>
+        </el-descriptions-item>
       </el-descriptions>
     </SectionCard>
 
@@ -47,8 +56,21 @@
         <el-table-column prop="phone" label="GoPay手机号" width="160" />
         <el-table-column prop="detail" label="详情" min-width="200" show-overflow-tooltip />
         <el-table-column prop="timestamp" label="时间" width="180" />
+        <el-table-column label="步骤" width="100" fixed="right">
+          <template #default="{ row }">
+            <el-button size="small" link type="primary" @click="openStepsDrawer(row.email)">查看步骤</el-button>
+          </template>
+        </el-table-column>
       </el-table>
     </SectionCard>
+
+    <!-- AccountStepDrawer — gopay pipeline real-time step visualization -->
+    <AccountStepDrawer
+      v-model="stepsDrawerOpen"
+      :email="drawerEmail"
+      :live="true"
+      mode="gopay"
+    />
 
     <!-- GoPay Config -->
     <SectionCard title="GoPay 配置">
@@ -82,6 +104,7 @@ import api from '../api'
 import { socketState } from '../socket'
 import PageHeader from '../components/ui/PageHeader.vue'
 import SectionCard from '../components/ui/SectionCard.vue'
+import AccountStepDrawer from '../components/AccountStepDrawer.vue'
 
 const accessToken = ref('')
 const status = ref({ running: false, phase: 'idle', currentAccount: null, results: [], logCount: 0 })
@@ -89,6 +112,15 @@ const logs = computed(() => socketState.gopayLogs)
 const results = computed(() => socketState.gopayResults)
 const config = ref(null)
 const logBox = ref(null)
+
+// Step drawer state
+const stepsDrawerOpen = ref(false)
+const drawerEmail = ref('')
+
+function openStepsDrawer(email) {
+  drawerEmail.value = email || ''
+  stepsDrawerOpen.value = true
+}
 
 const running = computed(() => status.value.running)
 const PHASE_LABELS = {

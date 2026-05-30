@@ -121,6 +121,9 @@ const props = defineProps({
   // When live=true, step-status socket events in stepStore override the
   // fetched step statuses in real time. Used by Execute.vue.
   live: { type: Boolean, default: false },
+  // mode: pipeline variant passed as ?mode=<value> to GET /accounts/:email/steps.
+  // '' (default) → config-derived paypal pipeline; 'gopay' → gopay pipeline.
+  mode: { type: String, default: '' },
 })
 
 const emit = defineEmits(['update:modelValue'])
@@ -158,7 +161,8 @@ async function fetchSteps() {
   loading.value = true
   loadError.value = ''
   try {
-    const { data } = await api.get(`/accounts/${encodeURIComponent(props.email)}/steps`)
+    const modeQuery = props.mode ? `?mode=${encodeURIComponent(props.mode)}` : ''
+    const { data } = await api.get(`/accounts/${encodeURIComponent(props.email)}/steps${modeQuery}`)
     steps.value = data.steps || []
   } catch (e) {
     loadError.value = e.response?.data?.error || '加载步骤失败'
