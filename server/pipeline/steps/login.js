@@ -125,12 +125,11 @@ function loginStep(cfg = {}) {
 
       // ====================================================================
       // protocol-engine.js:615-617
-      // Snapshot the persisted row BEFORE any emitStatus call wipes it to
-      // status='running'. The cache-check below reads this snapshot, not
-      // the live DB row, so the user's previous failure (verify_error etc.)
-      // is still visible after we transition into the new run.
+      // Use the top-of-loop snapshot captured in AccountContext constructor,
+      // BEFORE any step writes to the DB. ctx.prevPersisted is equivalent to
+      // the original `const prevPersisted = statusDB.get(account.email) || {}`
+      // taken before login persists status='running'.
       // ====================================================================
-      const prevPersisted = statusDB.get(account.email) || {};
 
       // ====================================================================
       // protocol-engine.js:624-643
@@ -140,16 +139,16 @@ function loginStep(cfg = {}) {
       // ====================================================================
       const JWT_BUFFER_SEC = 60;
       let result = null;
-      if (prevPersisted.last_access_token) {
+      if (ctx.prevPersisted.last_access_token) {
         const { decodeJwtExp } = require('../../liveness/checker');
-        const exp = decodeJwtExp(prevPersisted.last_access_token);
+        const exp = decodeJwtExp(ctx.prevPersisted.last_access_token);
         if (exp > Date.now() / 1000 + JWT_BUFFER_SEC) {
           let session = null;
-          try { session = JSON.parse(prevPersisted.last_session_json || '{}'); }
+          try { session = JSON.parse(ctx.prevPersisted.last_session_json || '{}'); }
           catch { session = null; }
           if (session) {
             result = {
-              accessToken: prevPersisted.last_access_token,
+              accessToken: ctx.prevPersisted.last_access_token,
               session,
               planType: session?.account?.planType || session?.chatgpt_plan_type || 'free',
             };

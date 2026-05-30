@@ -99,12 +99,14 @@ function paypalFetchStep() {
       // ======================================================================
       const REUSE_STATUSES = new Set(['error', 'aborted', 'paypal_captcha', 'verify_error']);
       let usedCachedLink = false;
-      const prevPersisted = ctx.getPersisted();
-      if (prevPersisted.payment_link && REUSE_STATUSES.has(prevPersisted.status)) {
-        link = prevPersisted.payment_link;
-        fetchResult = { link, pk: prevPersisted.payment_link_pk || '', title: 'cached', raw: '' };
+      // 使用 ctx.prevPersisted（账号循环顶部的快照），而非 ctx.getPersisted()（实时行）。
+      // login step 写入 status='running' 后，getPersisted().status 已变为 'running'（不在 REUSE_STATUSES 中），
+      // 导致缓存链接永远无法命中。prevPersisted 保留了本轮运行前的状态（如 verify_error），确保复用逻辑正确触发。
+      if (ctx.prevPersisted.payment_link && REUSE_STATUSES.has(ctx.prevPersisted.status)) {
+        link = ctx.prevPersisted.payment_link;
+        fetchResult = { link, pk: ctx.prevPersisted.payment_link_pk || '', title: 'cached', raw: '' };
         usedCachedLink = true;
-        console.log(`[${progress}] Phase 2: reusing cached payment link (was ${prevPersisted.status} at ${prevPersisted.payment_link_at})`);
+        console.log(`[${progress}] Phase 2: reusing cached payment link (was ${ctx.prevPersisted.status} at ${ctx.prevPersisted.payment_link_at})`);
       }
 
       // ======================================================================

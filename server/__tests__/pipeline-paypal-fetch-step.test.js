@@ -51,6 +51,10 @@ function makeCtx({
   };
 
   const ctx = new AccountContext(account, deps);
+  // AccountContext 构造函数会从 statusDB 读取快照，赋给 ctx.prevPersisted。
+  // 由于 persistedRow 在构造前已写入 statusDbRows，ctx.prevPersisted 即为 persistedRow 的副本。
+  // paypal-fetch step 现在使用 ctx.prevPersisted（而非 ctx.getPersisted()）做缓存链接判定，
+  // 以避免 login step 写入 status='running' 后缓存命中失效的回归。
   // 模拟 login step 的输出
   ctx.outputs.login = { accessToken: 'token-abc', session: {}, planType: 'free' };
   // 设置 flags
