@@ -1,4 +1,6 @@
-// v2.45.0 — protocol-engine smscloud branch 接 cache + saturate 按 meta 分流 集成测试
+// __tests__/protocol-engine-smscloud-cache.test.js
+// 迁移自 protocol-engine.js → server/pipeline/steps/paypal-pkce.js（Step 3 清理）
+// v2.45.0 — smscloud branch 接 cache + saturate 按 meta 分流 集成测试
 // SC1：两账号连续 add-phone 应复用同一 cache 号，takeOrder 仅 1 次。
 // SC2：rate-limited 时 cache 标 rejected + deferred-cancel queue 含该 orderNo。
 
@@ -27,8 +29,14 @@ function restoreCfg() {
   else try { fs.unlinkSync(CONFIG_PATH); } catch {}
 }
 
-async function freshEngine() {
-  delete require.cache[require.resolve('../protocol-engine')];
+// fakeCtx：_finalizePhoneVerify(sessionState, account, ctx) 中 engineShim 用 ctx.deps.resources.pyProc。
+function makeFakeCtx() {
+  return { deps: { resources: { pyProc: null } } };
+}
+
+async function freshPkce() {
+  // 清模块缓存，确保 smscloud-pool / db / paypal-pkce 重新初始化
+  delete require.cache[require.resolve('../server/pipeline/steps/paypal-pkce')];
   delete require.cache[require.resolve('../server/smscloud-pool')];
   delete require.cache[require.resolve('../server/db')];
   const dbMod = require('../server/db');
@@ -36,14 +44,14 @@ async function freshEngine() {
   const rawDb = dbMod.getRawDb();
   rawDb.run('DELETE FROM smscloud_phone_cache');
   rawDb.run('DELETE FROM phone_bindings');
-  const { ProtocolEngine } = require('../protocol-engine');
-  return { engine: new ProtocolEngine(), rawDb, protoMod: require('../protocol-engine') };
+  const pkce = require('../server/pipeline/steps/paypal-pkce');
+  return { pkce, rawDb };
 }
 
 test('SC1 两账号连续 add-phone：第 2 个复用 cache 号，takeOrder 只调一次', async () => {
   setupCfg();
   try {
-    const { engine, rawDb, protoMod } = await freshEngine();
+    const { pkce, rawDb } = await freshPkce();
 
     let takeOrderCalls = 0;
     delete require.cache[require.resolve('../server/smscloud-provider')];
@@ -57,13 +65,13 @@ test('SC1 两账号连续 add-phone：第 2 个复用 cache 号，takeOrder 只�
     };
     smscloud.resendSms = async (orderNo) => { resendCalls.push(orderNo); };
 
-    const orig = protoMod.__runProtocolPhoneVerify;
-    protoMod.__setRunProtocolPhoneVerify(async () => ({ status: 'ok', tokens: { access_token: 'tok' } }));
+    const orig = pkce.__runProtocolPhoneVerify;
+    pkce.__setRunProtocolPhoneVerify(async () => ({ status: 'ok', tokens: { access_token: 'tok' } }));
 
     try {
-      const r1 = await engine._finalizePhoneVerify({}, { email: 'u1@x.com' });
+      const r1 = await pkce._finalizePhoneVerify({}, { email: 'u1@x.com' }, makeFakeCtx());
       assert.ok(r1.tokens, 'account 1 success');
-      const r2 = await engine._finalizePhoneVerify({}, { email: 'u2@x.com' });
+      const r2 = await pkce._finalizePhoneVerify({}, { email: 'u2@x.com' }, makeFakeCtx());
       assert.ok(r2.tokens, 'account 2 success');
       assert.strictEqual(takeOrderCalls, 1, 'takeOrder only called once (cache reused)');
       const row = rawDb.exec("SELECT bindings_used FROM smscloud_phone_cache WHERE order_no='OO1'");
@@ -73,7 +81,7 @@ test('SC1 两账号连续 add-phone：第 2 个复用 cache 号，takeOrder 只�
     } finally {
       smscloud.takeOrder = origTake;
       smscloud.resendSms = origResend;
-      protoMod.__setRunProtocolPhoneVerify(orig);
+      pkce.__setRunProtocolPhoneVerify(orig);
     }
   } finally { restoreCfg(); }
 });
@@ -81,7 +89,7 @@ test('SC1 两账号连续 add-phone：第 2 个复用 cache 号，takeOrder 只�
 test('SC2 rate-limited → cache entry 标 rejected + deferred-cancel queue 含该 orderNo', async () => {
   setupCfg();
   try {
-    const { engine, rawDb, protoMod } = await freshEngine();
+    const { pkce, rawDb } = await freshPkce();
 
     delete require.cache[require.resolve('../server/smscloud-provider')];
     const smscloud = require('../server/smscloud-provider');
@@ -95,16 +103,16 @@ test('SC2 rate-limited → cache entry 标 rejected + deferred-cancel queue 含�
     delete require.cache[require.resolve('../server/smscloud-deferred-cancel')];
     const deferred = require('../server/smscloud-deferred-cancel');
 
-    const orig = protoMod.__runProtocolPhoneVerify;
+    const orig = pkce.__runProtocolPhoneVerify;
     let i = 0;
-    protoMod.__setRunProtocolPhoneVerify(async () => {
+    pkce.__setRunProtocolPhoneVerify(async () => {
       i++;
       if (i === 1) return { status: 'rate-limited', detail: 'rate_limit_exceeded' };
       return { status: 'ok', tokens: { access_token: 'tok' } };
     });
 
     try {
-      const r = await engine._finalizePhoneVerify({}, { email: 'u3@x.com' });
+      const r = await pkce._finalizePhoneVerify({}, { email: 'u3@x.com' }, makeFakeCtx());
       assert.ok(r.tokens, 'attempt 2 success');
       const rejected = rawDb.exec("SELECT order_no FROM smscloud_phone_cache WHERE status='rejected'");
       assert.deepStrictEqual(rejected[0].values.map(v => v[0]), ['OO1']);
@@ -113,7 +121,7 @@ test('SC2 rate-limited → cache entry 标 rejected + deferred-cancel queue 含�
       try { await require('../server/db').save?.flush?.(); } catch {}
     } finally {
       smscloud.takeOrder = origTake;
-      protoMod.__setRunProtocolPhoneVerify(orig);
+      pkce.__setRunProtocolPhoneVerify(orig);
     }
   } finally { restoreCfg(); }
 });
@@ -121,7 +129,7 @@ test('SC2 rate-limited → cache entry 标 rejected + deferred-cancel queue 含�
 test('SC3 resend 失败 → cache entry markRejected + retry 拿新号', async () => {
   setupCfg();
   try {
-    const { engine, rawDb, protoMod } = await freshEngine();
+    const { pkce, rawDb } = await freshPkce();
     delete require.cache[require.resolve('../server/smscloud-provider')];
     const smscloud = require('../server/smscloud-provider');
     const origTake = smscloud.takeOrder, origResend = smscloud.resendSms;
@@ -133,17 +141,17 @@ test('SC3 resend 失败 → cache entry markRejected + retry 拿新号', async (
     let resendCalls = 0;
     smscloud.resendSms = async () => { resendCalls++; throw new Error('cannot get another sms'); };
 
-    const orig = protoMod.__runProtocolPhoneVerify;
-    protoMod.__setRunProtocolPhoneVerify(async () => ({ status: 'ok', tokens: { access_token: 'tok' } }));
+    const orig = pkce.__runProtocolPhoneVerify;
+    pkce.__setRunProtocolPhoneVerify(async () => ({ status: 'ok', tokens: { access_token: 'tok' } }));
 
     try {
       // 账号 1 新取号 OO1
-      const r1 = await engine._finalizePhoneVerify({}, { email: 'u1@x.com' });
+      const r1 = await pkce._finalizePhoneVerify({}, { email: 'u1@x.com' }, makeFakeCtx());
       assert.ok(r1.tokens);
       assert.strictEqual(takeCalls, 1);
       assert.strictEqual(resendCalls, 0, '新取号不调 resend');
       // 账号 2 复用 OO1 → resend 失败 → markRejected → attempt 2 拿新号 OO2
-      const r2 = await engine._finalizePhoneVerify({}, { email: 'u2@x.com' });
+      const r2 = await pkce._finalizePhoneVerify({}, { email: 'u2@x.com' }, makeFakeCtx());
       assert.ok(r2.tokens);
       assert.strictEqual(takeCalls, 2, '复用失败后拿新号');
       assert.strictEqual(resendCalls, 1, 'resend 调一次（仅复用 attempt）');
@@ -153,7 +161,7 @@ test('SC3 resend 失败 → cache entry markRejected + retry 拿新号', async (
     } finally {
       smscloud.takeOrder = origTake;
       smscloud.resendSms = origResend;
-      protoMod.__setRunProtocolPhoneVerify(orig);
+      pkce.__setRunProtocolPhoneVerify(orig);
     }
   } finally { restoreCfg(); }
 });
@@ -161,7 +169,7 @@ test('SC3 resend 失败 → cache entry markRejected + retry 拿新号', async (
 test('SC4 cache 有 2 entry，第 1 个 resend 失败 → 第 2 个 resend 成功 → 不调 takeOrder', async () => {
   setupCfg();
   try {
-    const { engine, rawDb, protoMod } = await freshEngine();
+    const { pkce, rawDb } = await freshPkce();
     delete require.cache[require.resolve('../server/smscloud-provider')];
     const smscloud = require('../server/smscloud-provider');
     const origTake = smscloud.takeOrder, origResend = smscloud.resendSms;
@@ -181,11 +189,11 @@ test('SC4 cache 有 2 entry，第 1 个 resend 失败 → 第 2 个 resend 成�
       // A2 resend 成功
     };
 
-    const orig = protoMod.__runProtocolPhoneVerify;
-    protoMod.__setRunProtocolPhoneVerify(async () => ({ status: 'ok', tokens: { access_token: 'tok' } }));
+    const orig = pkce.__runProtocolPhoneVerify;
+    pkce.__setRunProtocolPhoneVerify(async () => ({ status: 'ok', tokens: { access_token: 'tok' } }));
 
     try {
-      const r = await engine._finalizePhoneVerify({}, { email: 'sc4@x.com' });
+      const r = await pkce._finalizePhoneVerify({}, { email: 'sc4@x.com' }, makeFakeCtx());
       assert.ok(r.tokens, 'tokens 拿到');
       assert.strictEqual(takeCalls, 0, '内层循环消化 cache，不触发 takeOrder');
       assert.deepStrictEqual(resendCalls, ['A1', 'A2'], '两次 resend：A1 失败 → A2 成功');
@@ -200,7 +208,7 @@ test('SC4 cache 有 2 entry，第 1 个 resend 失败 → 第 2 个 resend 成�
     } finally {
       smscloud.takeOrder = origTake;
       smscloud.resendSms = origResend;
-      protoMod.__setRunProtocolPhoneVerify(orig);
+      pkce.__setRunProtocolPhoneVerify(orig);
     }
   } finally { restoreCfg(); }
 });
@@ -214,7 +222,7 @@ test('SC5 attempt 1/2/3 跨 countryCode list 切换', async () => {
     cfg.phonePool.smscloud.countryCode = [7, 187, 44];
     fs2.writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2));
 
-    const { engine, rawDb, protoMod } = await freshEngine();
+    const { pkce, rawDb } = await freshPkce();
     delete require.cache[require.resolve('../server/smscloud-provider')];
     const smscloud = require('../server/smscloud-provider');
     const origTake = smscloud.takeOrder, origResend = smscloud.resendSms;
@@ -225,22 +233,22 @@ test('SC5 attempt 1/2/3 跨 countryCode list 切换', async () => {
     };
     smscloud.resendSms = async () => {};
 
-    const orig = protoMod.__runProtocolPhoneVerify;
+    const orig = pkce.__runProtocolPhoneVerify;
     let i = 0;
-    protoMod.__setRunProtocolPhoneVerify(async () => {
+    pkce.__setRunProtocolPhoneVerify(async () => {
       i++;
       if (i < 3) return { status: 'fraud-blocked', detail: 'fraud_guard' };
       return { status: 'ok', tokens: { access_token: 'tok' } };
     });
     try {
-      const r = await engine._finalizePhoneVerify({}, { email: 'sc5@x.com' });
+      const r = await pkce._finalizePhoneVerify({}, { email: 'sc5@x.com' }, makeFakeCtx());
       assert.ok(r.tokens, 'attempt 3 success');
       assert.deepStrictEqual(takeCountries, [7, 187, 44], 'attempt 跨 country fallback');
       try { await require('../server/db').save?.flush?.(); } catch {}
     } finally {
       smscloud.takeOrder = origTake;
       smscloud.resendSms = origResend;
-      protoMod.__setRunProtocolPhoneVerify(orig);
+      pkce.__setRunProtocolPhoneVerify(orig);
     }
   } finally { restoreCfg(); }
 });

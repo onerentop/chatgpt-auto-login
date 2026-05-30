@@ -292,6 +292,10 @@ async function _acquirePhoneForProtocol(provider, cfg, email, proxyUrl, excludeP
   };
 }
 
+// 测试接缝：允许通过 __setAcquirePhoneForProtocol 注入替代实现，镜像 runProtocolPhoneVerify 的 seam 模式。
+// _finalizePhoneVerify 内部通过此变量调用，测试可替换它避免真实 phone-pool/db 操作。
+let _acquirePhoneFn = _acquirePhoneForProtocol;
+
 // ==========================================================================
 // _finalizePhoneVerify（逐字搬自 protocol-engine.js:356-457）
 // v2.40.0: 协议模式 add_phone 主流程（retry 3 次，按 result.status 分流）
@@ -325,7 +329,7 @@ async function _finalizePhoneVerify(sessionState, account, ctx) {
   };
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    const acq = await _acquirePhoneForProtocol(provider, cfg, account.email, proxyUrl, triedPhones, attempt - 1);
+    const acq = await _acquirePhoneFn(provider, cfg, account.email, proxyUrl, triedPhones, attempt - 1);
     const { phone, smsConfig, releaseFn, meta } = acq;
     if (!phone) {
       return lastReason ? { phoneVerifyFail: lastReason } : { phonePoolEmpty: true };
@@ -549,4 +553,9 @@ module.exports = {
   __setRunProtocolPhoneVerify: (fn) => { runProtocolPhoneVerify = fn; },
   // PKCE seam（供测试注入；phone-verify seam 与 protocol-engine.js 同模式）
   __setRunProtocolPKCE: null, // 通过 ctx.deps.__runProtocolPKCE 注入，见 _finalizePkce 内注释
+  // 迁移测试接缝：暴露给从 protocol-engine.js 迁过来的测试文件使用
+  _acquirePhoneForProtocol,
+  _finalizePhoneVerify,
+  // _acquirePhoneForProtocol 接缝（供迁移测试注入替代实现，避免真实 phone-pool/db 操作）
+  __setAcquirePhoneForProtocol: (fn) => { _acquirePhoneFn = fn != null ? fn : _acquirePhoneForProtocol; },
 };
