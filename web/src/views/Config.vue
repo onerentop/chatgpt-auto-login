@@ -43,6 +43,7 @@
               <el-radio value="zhusms">zhusms 卡密</el-radio>
               <el-radio value="smscloud">smscloud</el-radio>
               <el-radio value="oapi">oapi (CDK 池)</el-radio>
+              <el-radio value="smsbower">smsbower</el-radio>
             </el-radio-group>
           </el-form-item>
 
@@ -130,6 +131,34 @@
               </el-table>
             </el-form-item>
           </template>
+
+          <!-- smsbower 配置 -->
+          <template v-if="form.phonePool.provider === 'smsbower'">
+            <el-form-item label="apiKey">
+              <el-input v-model="form.phonePool.smsbower.apiKey" type="password" show-password placeholder="SmsBower API Key" style="width: 360px" />
+            </el-form-item>
+            <el-form-item label="serviceCode">
+              <el-input v-model="form.phonePool.smsbower.serviceCode" placeholder="ni" style="width: 120px" />
+            </el-form-item>
+            <el-form-item label="countryCode">
+              <el-input-number v-model="form.phonePool.smsbower.countryCode" :min="1" />
+            </el-form-item>
+            <el-form-item label="maxPrice (USD)">
+              <el-input-number v-model="form.phonePool.smsbower.maxPrice" :min="0" :step="0.01" :precision="2" />
+            </el-form-item>
+          </template>
+
+          <el-divider content-position="left">GoPay 激活</el-divider>
+          <el-form-item label="GoPay PIN">
+            <el-input v-model="form.gopayPin" placeholder="147258" style="width: 160px" />
+          </el-form-item>
+          <el-form-item label="GoPay SMS Provider">
+            <el-select v-model="form.gopaySmsProvider" style="width: 180px">
+              <el-option label="smsbower" value="smsbower" />
+              <el-option label="smscloud" value="smscloud" />
+            </el-select>
+            <span style="margin-left:8px;color:#909399;font-size:12px">GoPay 注册用印尼号，独立于主流水线 provider</span>
+          </el-form-item>
         </el-form>
       </el-tab-pane>
 
@@ -260,6 +289,15 @@
           <div style="color: var(--el-text-color-secondary); font-size: 12px; padding: 8px 0 0 160px">
             JP 通道实时状态请到 <router-link to="/">仪表盘</router-link> 查看。
           </div>
+
+          <el-divider content-position="left">印尼通道（GoPay）</el-divider>
+          <el-form-item label="启用印尼通道">
+            <el-switch v-model="form.proxyIdGopayEnabled" />
+          </el-form-item>
+          <el-form-item label="代理模板" v-if="form.proxyIdGopayEnabled">
+            <el-input v-model="form.proxyIdGopayTemplate" placeholder="http://user:pass_country-id_session-{sid}@host:port" style="width: 480px" />
+            <div style="color:#909399;font-size:12px;margin-top:4px">{sid} 自动替换为随机 session ID（IP 轮转）</div>
+          </el-form-item>
         </el-form>
       </el-tab-pane>
 
@@ -403,7 +441,11 @@ const form = reactive({
   proxyJpEnabled: true,
   proxyJpKeyword: 'KDDI',
   proxyJpWhitelist: [],
-  phonePool: { enabled: false, maxBindingsPerPhone: 5, smsPollIntervalMs: 3000, smsMaxAttempts: 30, provider: 'local', zhusms: { cardKey: '', service: 'codex', baseUrl: 'https://zhusms.com' }, smscloud: { apiKey: '', baseUrl: 'https://smscloud.sbs/api/system', serviceCode: '', countryCode: [187] }, oapi: { baseUrl: 'https://sms.oapi.vip/api.php', apiKey: '' } },
+  phonePool: { enabled: false, maxBindingsPerPhone: 5, smsPollIntervalMs: 3000, smsMaxAttempts: 30, provider: 'local', zhusms: { cardKey: '', service: 'codex', baseUrl: 'https://zhusms.com' }, smscloud: { apiKey: '', baseUrl: 'https://smscloud.sbs/api/system', serviceCode: '', countryCode: [187] }, oapi: { baseUrl: 'https://sms.oapi.vip/api.php', apiKey: '' }, smsbower: { apiKey: '', serviceCode: 'ni', countryCode: 6, maxPrice: 0.15 } },
+  gopayPin: '147258',
+  gopaySmsProvider: 'smsbower',
+  proxyIdGopayEnabled: false,
+  proxyIdGopayTemplate: '',
 })
 
 onMounted(async () => {
@@ -445,6 +487,9 @@ onMounted(async () => {
         oapi: cfg.phonePool.oapi
           ? { ...{ baseUrl: 'https://sms.oapi.vip/api.php', apiKey: '' }, ...cfg.phonePool.oapi }
           : { baseUrl: 'https://sms.oapi.vip/api.php', apiKey: '' },
+        smsbower: cfg.phonePool.smsbower
+          ? { ...{ apiKey: '', serviceCode: 'ni', countryCode: 6, maxPrice: 0.15 }, ...cfg.phonePool.smsbower }
+          : { apiKey: '', serviceCode: 'ni', countryCode: 6, maxPrice: 0.15 },
       }
     } else {
       form.phonePool = {
@@ -456,8 +501,13 @@ onMounted(async () => {
         zhusms: { cardKey: '', service: 'codex', baseUrl: 'https://zhusms.com' },
         smscloud: { apiKey: '', baseUrl: 'https://smscloud.sbs/api/system', serviceCode: '', countryCode: [187] },
         oapi: { baseUrl: 'https://sms.oapi.vip/api.php', apiKey: '' },
+        smsbower: { apiKey: '', serviceCode: 'ni', countryCode: 6, maxPrice: 0.15 },
       }
     }
+    form.gopayPin = cfg.gopay?.defaultPin ?? '147258'
+    form.gopaySmsProvider = cfg.gopay?.smsProvider ?? 'smsbower'
+    form.proxyIdGopayEnabled = cfg.proxy?.idGopay?.enabled ?? false
+    form.proxyIdGopayTemplate = cfg.proxy?.idGopay?.proxyTemplate ?? ''
     // v2.47: 旧 number countryCode 归一为 [number] 兼容 multi-select
     if (form.phonePool.smscloud.countryCode != null && !Array.isArray(form.phonePool.smscloud.countryCode)) {
       form.phonePool.smscloud.countryCode = [form.phonePool.smscloud.countryCode]
@@ -544,6 +594,14 @@ async function handleSave() {
     delete payload.proxyJpEnabled
     delete payload.proxyJpKeyword
     delete payload.proxyJpWhitelist
+    delete payload.proxyIdGopayEnabled
+    delete payload.proxyIdGopayTemplate
+    delete payload.gopayPin
+    delete payload.gopaySmsProvider
+    payload.gopay = {
+      defaultPin: form.gopayPin,
+      smsProvider: form.gopaySmsProvider,
+    }
     payload.proxy = {
       enabled: form.proxyEnabled,
       subscriptionUrl: form.proxySubscriptionUrl,
@@ -553,6 +611,10 @@ async function handleSave() {
         enabled: form.proxyJpEnabled,
         keyword: form.proxyJpKeyword,
         whitelist: form.proxyJpWhitelist || [],
+      },
+      idGopay: {
+        enabled: form.proxyIdGopayEnabled,
+        proxyTemplate: form.proxyIdGopayTemplate,
       },
     }
     await api.put('/config', payload)
