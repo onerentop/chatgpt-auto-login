@@ -19,5 +19,4 @@ server.log
 bin/
 server-test.log
 *.pyc
-gopay/config/config.json
 gopay/**/__pycache__/
