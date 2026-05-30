@@ -397,10 +397,14 @@
           <div style="color: var(--el-text-color-secondary); font-size: 12px; padding: 8px 0 0 160px">
             JP 通道实时状态请到 <router-link to="/">仪表盘</router-link> 查看。
           </div>
+        </el-form>
+      </el-tab-pane>
 
-          <el-divider content-position="left">印尼通道（GoPay）</el-divider>
+      <el-tab-pane label="印尼通道" name="indonesia">
+        <el-form :model="form" label-width="160px" style="max-width: 600px">
           <el-form-item label="启用印尼通道">
             <el-switch v-model="form.proxyIdGopayEnabled" />
+            <span style="color:#909399;margin-left:8px;font-size:12px">GoPay 注册印尼号专用住宅代理（IPRoyal），独立于 JP sing-box 通道</span>
           </el-form-item>
           <el-form-item label="代理模板" v-if="form.proxyIdGopayEnabled">
             <el-input v-model="form.proxyIdGopayTemplate" placeholder="http://user:pass_country-id_session-{sid}@host:port" style="width: 480px" />
