@@ -1,5 +1,6 @@
 // 端到端：GoPayEngine.start([email]) 批量驱动 login→gopay 管线。
-// 接缝：engine._injectDeps.__runProtocolRegister 替换协议登录；__setSpawnImpl 替换 gopay Python。
+// 接缝：engine._injectDeps.__runProtocolRegister 替换协议登录（返回带 planType，匹配 protocol_register.py:887）；
+//       __setSpawnGopayImpl（高层接缝）替换 gopay Python spawn。
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
@@ -15,7 +16,7 @@ realPath.join = function (...args) {
   return origJoin.apply(this, args);
 };
 const { initDB, accountsDB, statusDB, save } = require('../db');
-const { __setSpawnImpl } = require('../../server/pipeline/steps/_gopay-spawn');
+const { __setSpawnGopayImpl } = require('../../server/pipeline/steps/_gopay-spawn');
 const engine = require('../../server/gopay-engine');
 realPath.join = origJoin;
 
@@ -39,15 +40,14 @@ test('setup: init db + seed account', async () => {
 });
 
 test('start([email]): login→gopay success → account-status plus_gopay + account_status 写入', async () => {
+  // 协议登录成功：返回带 planType（与 protocol_register.py 一致）
   engine._injectDeps = {
     __runProtocolRegister: async () => ({
-      status: 'success', accessToken: 'at-xyz',
+      status: 'success', accessToken: 'at-xyz', planType: 'free',
       session: { account: { planType: 'free' } },
     }),
   };
-  let call = 0;
-  __setSpawnImpl((script, input) => {
-    call++;
+  __setSpawnGopayImpl((script, input) => {
     if (input.mode === 'register') return Promise.resolve({ status: 'registered', account: { local: '1', aid: 'a', phone: '+62x' }, proxy: 'http://p', phone: '+62x' });
     if (input.mode === 'pay') return Promise.resolve({ status: 'success', phone: '+62x', transaction_status: 'settlement' });
     return Promise.resolve({ status: 'error', detail: 'unexpected' });
@@ -57,7 +57,7 @@ test('start([email]): login→gopay success → account-status plus_gopay + acco
   await engine.start(0, ['g1@x.com']);
   await waitIdle();
   col.stop();
-  __setSpawnImpl(null);
+  __setSpawnGopayImpl(null);
   engine._injectDeps = null;
 
   const finals = col.events.filter(e => e.status === 'plus_gopay');
@@ -70,18 +70,18 @@ test('start([email]): login→gopay success → account-status plus_gopay + acco
 test('start([email]): planType=plus → already_plus, gopay 步跳过', async () => {
   engine._injectDeps = {
     __runProtocolRegister: async () => ({
-      status: 'success', accessToken: 'at-plus',
+      status: 'success', accessToken: 'at-plus', planType: 'plus',
       session: { account: { planType: 'plus' } },
     }),
   };
   let spawned = false;
-  __setSpawnImpl(() => { spawned = true; return Promise.resolve({ status: 'registered', account: {}, proxy: '' }); });
+  __setSpawnGopayImpl(() => { spawned = true; return Promise.resolve({ status: 'registered', account: {}, proxy: '' }); });
 
   const col = collectStatuses();
   await engine.start(0, ['g1@x.com']);
   await waitIdle();
   col.stop();
-  __setSpawnImpl(null);
+  __setSpawnGopayImpl(null);
   engine._injectDeps = null;
 
   assert.strictEqual(spawned, false, 'already-Plus → gopay register/pay 未 spawn');
@@ -89,17 +89,18 @@ test('start([email]): planType=plus → already_plus, gopay 步跳过', async ()
 });
 
 test('start([email]): login 失败 → error, gopay 步不跑', async () => {
+  // 真实 runProtocolRegister 出错是 throw/reject（非 resolve 非 success 对象）；login.js catch 处理
   engine._injectDeps = {
-    __runProtocolRegister: async () => ({ status: 'error', error: 'bad creds' }),
+    __runProtocolRegister: async () => { throw new Error('bad creds'); },
   };
   let spawned = false;
-  __setSpawnImpl(() => { spawned = true; return Promise.resolve({ status: 'registered' }); });
+  __setSpawnGopayImpl(() => { spawned = true; return Promise.resolve({ status: 'registered' }); });
 
   const col = collectStatuses();
   await engine.start(0, ['g1@x.com']);
   await waitIdle();
   col.stop();
-  __setSpawnImpl(null);
+  __setSpawnGopayImpl(null);
   engine._injectDeps = null;
 
   assert.strictEqual(spawned, false, 'login 失败 → gopay 未 spawn');
