@@ -253,28 +253,47 @@ async function loginAccount(browser, account) {
         googleVisible = await googleBtn.isVisible({ timeout: 8000 }).catch(() => false);
       }
       if (!googleVisible) throw new Error('Google login button not found after retries');
+
+      // Google OAuth may open as popup or same-page redirect
+      const popupPromise = page.context().waitForEvent('page', { timeout: 10000 }).catch(() => null);
       await googleBtn.click();
       await randomDelay(1000, 2000);
 
       console.log(`  [4/10] Entering email...`);
-      await page.waitForLoadState('domcontentloaded');
-      const emailInput = page.locator('input[type="email"]:not([disabled]), #identifierId:not([disabled])').first();
+      let googlePage = page; // default: same-page redirect
+      const popup = await popupPromise;
+      if (popup) {
+        console.log(`  [4/10] Google opened in popup, switching...`);
+        await popup.waitForLoadState('domcontentloaded');
+        googlePage = popup;
+      } else {
+        await page.waitForLoadState('domcontentloaded');
+      }
+
+      const emailInput = googlePage.locator('input[type="email"]:not([disabled]), #identifierId:not([disabled])').first();
       await emailInput.waitFor({ state: 'visible', timeout: 60000 });
       await emailInput.click();
-      await typeHumanLike(page, account.email);
+      await typeHumanLike(googlePage, account.email);
       await randomDelay(800, 1500);
-      await page.locator('#identifierNext').first().click();
+      await googlePage.locator('#identifierNext').first().click();
       await randomDelay(1000, 2000);
 
       console.log(`  [5/10] Entering password...`);
-      await page.waitForLoadState('domcontentloaded');
-      const passwordInput = page.locator('input[type="password"], input[name="Passwd"]').first();
+      await googlePage.waitForLoadState('domcontentloaded');
+      const passwordInput = googlePage.locator('input[type="password"], input[name="Passwd"]').first();
       await passwordInput.waitFor({ state: 'visible', timeout: 15000 });
       await passwordInput.click();
-      await typeHumanLike(page, account.password);
+      await typeHumanLike(googlePage, account.password);
       await randomDelay(800, 1500);
-      await page.locator('#passwordNext').first().click();
+      await googlePage.locator('#passwordNext').first().click();
       await randomDelay(2000, 3000);
+
+      // If popup, wait for it to close (OAuth callback redirects back to ChatGPT)
+      if (popup) {
+        console.log(`  [5/10] Waiting for popup to close...`);
+        await popup.waitForEvent('close', { timeout: 30000 }).catch(() => {});
+        await randomDelay(1000, 2000);
+      }
 
       console.log(`  [6/10] Handling 2FA...`);
       await page.waitForLoadState('domcontentloaded');
